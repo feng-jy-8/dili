@@ -185,6 +185,7 @@ test('mobile navigation and the dialog stay usable at narrow widths', async ({ p
   // groups live in the desktop rail only.
   await expect(page.getByRole('navigation', { name: '工作空间导航' }).getByRole('button', { name: '联系人', exact: true })).toBeInViewport();
   await expect(page.getByRole('button', { name: '新建联系人', exact: true })).toBeInViewport();
+  await expect(page.getByRole('button', { name: '导入会话', exact: true })).toBeInViewport();
   await expect(page.getByRole('navigation', { name: '协作群组', exact: true })).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await page.setViewportSize({ width: 1440, height: 900 });

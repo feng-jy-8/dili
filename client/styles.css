@@ -129,6 +129,9 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .topbar-actions .search-field input { width: 100%; }
 .topbar-actions .button { margin-left: 8px; height: 32px; }
 .topbar-actions .new-contact { width: 32px; padding: 0; justify-content: center; border-radius: 9px; }
+.contact-actions { display: flex; align-items: center; gap: 4px; margin-left: 8px; flex-shrink: 0; }
+.topbar-actions .contact-actions .button { margin-left: 0; }
+.topbar-actions .import-contact { padding: 0 9px; border-radius: 9px; }
 .more-menu { position: relative; }
 .more-menu .dropdown-menu { right: 0; left: auto; top: 38px; }
 .more-menu .dropdown-menu button.active { color: var(--accent); }
@@ -675,6 +678,9 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
   .topbar-actions .search-field { flex: 0 1 120px; min-width: 36px; }
   .topbar-actions .icon-button, .topbar-actions .new-contact, .topbar-actions .filter-menu { flex-shrink: 0; }
   .topbar-actions .button { margin-left: 4px; }
+  .contact-actions { margin-left: 4px; gap: 3px; }
+  .topbar-actions .import-contact { width: 32px; padding: 0; }
+  .import-contact>span { display: none; }
   .rail-footer { flex-direction: row; margin: 0; padding: 0; border: 0; }
   .rail-footer .more-menu .dropdown-menu { left: auto; right: 0; bottom: 56px; }
   .topbar-row { height: auto; min-height: 48px; padding: calc(4px + env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 4px max(12px, env(safe-area-inset-left)); }

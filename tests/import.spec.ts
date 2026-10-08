@@ -4,8 +4,7 @@ import type { AppState, DiscoveredSession, Session } from '../shared/types';
 
 async function openImport(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: '更多', exact: true }).click();
-  await page.getByRole('menuitem', { name: '导入会话', exact: true }).click();
+  await page.getByRole('button', { name: '导入会话', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '导入已有会话', exact: true });
   await dialog.getByRole('button', { name: /Codex/ }).click();
   return dialog;
