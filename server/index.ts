@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { statSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { chmod, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Store } from './store.ts';
@@ -29,7 +29,7 @@ import { ConversationReader, conversationPreview } from './conversation.ts';
 import { gitDiff, gitStatus, listWorkspace, readWorkspaceFile } from './workspace.ts';
 import { registerCodexChat } from './chat-api.ts';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES, type TerminalImageType } from '../shared/terminal-images.ts';
-import type { Backend, BackendInfo, Session, AppState, SessionStatus, ConversationTranscript } from '../shared/types.ts';
+import type { Backend, BackendInfo, Session, AppState, SessionStatus, ConversationTranscript, DiscoveredSession } from '../shared/types.ts';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const port = Number(process.env.PORT || process.env.SESSIONDECK_PORT || 4317);
@@ -192,7 +192,7 @@ function status(id: string, patch: Partial<Session>, activity?: string) {
     // The generic native waiting flag can arrive before its item-specific
     // approval request. Enriching the identity is still the same interruption.
     && !(patch.status === 'waiting_approval' && old.status === 'waiting_approval');
-  const updated = store.updateSession(id, { ...patch, ...(attention ? { unread: old.unread + 1 } : {}) });
+  const updated = store.updateSession(id, { ...(patch.status && patch.status !== 'error' ? { errorCode: null } : {}), ...patch, ...(attention ? { unread: old.unread + 1 } : {}) });
   if (activity) store.activity(id, 'status', activity);
   scheduleBroadcast();
   return updated;
@@ -494,10 +494,14 @@ app.get('/api/events', (req, res) => {
 app.post('/api/backends/refresh', async (_req, res) => { backends = demo ? demoBackends : await getBackendInfo(); publisher.setBackends(backends); broadcast(); res.json(backends); });
 app.get('/api/discover', async (req, res) => {
   const filter = req.query.backend ? backend(req.query.backend) : undefined;
-  if (demo) return res.json({ sessions: [{ backend: 'codex', nativeSessionId: 'demo-import', title: '可导入的演示会话', cwd: process.cwd(), lastActivity: new Date().toISOString() }] });
   const existing = new Set(publisher.sessions().filter(s => !s.forkPending).map(s => `${s.backend}:${s.nativeSessionId}`));
-  const found = await discoverSessions(filter);
-  res.json({ sessions: found.filter(s => !existing.has(`${s.backend}:${s.nativeSessionId}`)) });
+  const found: DiscoveredSession[] = demo
+    ? !filter || filter === 'codex' ? [{ backend: 'codex', nativeSessionId: 'demo-import', title: '可导入的演示会话', cwd: process.cwd(), lastActivity: new Date().toISOString() }] : []
+    : await discoverSessions(filter);
+  const sessions = await Promise.all(found.filter(s => !existing.has(`${s.backend}:${s.nativeSessionId}`)).map(async item => ({
+    ...item, cwdAvailable: await stat(item.cwd).then(value => value.isDirectory(), () => false),
+  })));
+  res.json({ sessions });
 });
 app.post('/api/import', (req, res) => {
   const id = backend(req.body.backend);
@@ -507,7 +511,11 @@ app.post('/api/import', (req, res) => {
   if (!info(id).capabilities.resume) fail('这个后端尚不支持恢复会话');
   const existing = publisher.sessions().find(s => s.backend === id && s.nativeSessionId === nativeSessionId && !s.forkPending);
   if (existing) return res.json(existing);
-  const item = store.addSession({ backend: id, title: text(req.body.title, '名称'), cwd: directory(req.body.cwd), nativeSessionId, origin: 'imported', status: 'unknown', statusDetail: '已导入历史，启动后通过原生能力恢复' });
+  const title = text(req.body.title, '名称');
+  let cwd: string;
+  try { cwd = directory(req.body.cwd); }
+  catch (cause) { throw Object.assign(cause instanceof Error ? cause : new Error('工作目录不可用'), { code: 'IMPORT_CWD_UNAVAILABLE' }); }
+  const item = store.addSession({ backend: id, title, cwd, nativeSessionId, origin: 'imported', status: 'unknown', statusDetail: '已导入历史，启动后通过原生能力恢复' });
   store.activity(item.id, 'import', `导入了 ${item.title}`); broadcast(); res.status(201).json(item);
 });
 app.post('/api/sessions', (req, res) => {
@@ -617,7 +625,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
           if (!item.nativeSessionId) fail('Codex Fork 来源 ID 尚未确定');
           native = await bridge.forkSession(item.nativeSessionId, item.cwd);
         } else if (item.nativeSessionId) {
-          native = await bridge.openSession(item.nativeSessionId, item.cwd);
+          native = await bridge.openSession(item.nativeSessionId, item.cwd, { allowCwdChange: item.origin === 'imported' });
         } else {
           native = await bridge.createSession(item.cwd, item.title);
         }
@@ -653,7 +661,8 @@ app.post('/api/sessions/:id/start', async (req, res) => {
     const nativeRun = codexRuns.get(item.id);
     codexRuns.delete(item.id);
     if (nativeRun) codexBridge.releaseSession(nativeRun.nativeId);
-    status(item.id, { running: false, status: 'error', statusSource: 'process', statusDetail: error instanceof Error ? error.message : '启动失败' });
+    const errorCode = error instanceof Error && 'code' in error && error.code === 'NATIVE_SESSION_BUSY' ? error.code : null;
+    status(item.id, { running: false, status: 'error', errorCode, statusSource: 'process', statusDetail: error instanceof Error ? error.message : '启动失败' });
     throw error;
   } finally { starting.delete(item.id); }
 });
@@ -1015,8 +1024,8 @@ if (process.argv.includes('--dev')) {
   app.use(express.static(dist));
   app.get('/{*path}', (_req, res) => res.sendFile(join(dist, 'index.html')));
 }
-app.use((error: Error & { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  res.status(error.status || 400).json({ error: error.message || '操作失败' });
+app.use((error: Error & { status?: number; code?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  res.status(error.status || 400).json({ error: error.message || '操作失败', code: error.code });
 });
 
 server.once('error', error => {

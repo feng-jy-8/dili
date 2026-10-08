@@ -24,6 +24,8 @@ export interface Session {
   status: SessionStatus;
   statusSource: StatusSource;
   statusDetail: string;
+  /** Recoverable native startup errors, persisted so reconnects retain their actions. */
+  errorCode?: string | null;
   lastActivity: string;
   /** Short excerpt from the latest persisted human input; never terminal output. */
   lastUserInput?: string | null;
@@ -47,6 +49,8 @@ export interface DiscoveredSession {
   title: string;
   cwd: string;
   lastActivity: string;
+  /** Availability on the machine running SessionDeck, checked at discovery time. */
+  cwdAvailable?: boolean;
 }
 
 export interface ConversationMessage {

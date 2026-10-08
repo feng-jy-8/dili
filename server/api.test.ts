@@ -118,6 +118,24 @@ test('local HTTP and real demo PTYs complete the contact, fork and group flow', 
   let member: Session;
   let reviewer: Session;
   let source: Session;
+  await t.test('imports offer a recoverable directory error and retry without duplicate contacts', async () => {
+    const before = (await request<AppState>('/api/state')).sessions.length;
+    const body = { backend: 'codex', nativeSessionId: 'demo-api-moved-project', title: '迁移项目历史', cwd: join(directory, 'removed-project') };
+    const error = await request('/api/import', 'POST', body, 400);
+    assert.equal(error.code, 'IMPORT_CWD_UNAVAILABLE');
+    assert.equal((await request<AppState>('/api/state')).sessions.length, before);
+    const imported = await request<Session>('/api/import', 'POST', { ...body, cwd: pathToFileURL(directory).href }, 201);
+    assert.equal(imported.cwd, directory);
+    assert.equal(imported.origin, 'imported');
+    assert.equal(imported.nativeSessionId, body.nativeSessionId);
+    // Retrying after a lost response must return the existing contact, even if
+    // the caller still has the stale original directory.
+    assert.equal((await request<Session>('/api/import', 'POST', body)).id, imported.id);
+    assert.equal((await request<AppState>('/api/state')).sessions.length, before + 1);
+    const discovered = await request<{ sessions: { cwdAvailable?: boolean }[] }>('/api/discover?backend=codex');
+    assert.equal(discovered.sessions[0]?.cwdAvailable, true);
+    assert.deepEqual((await request<{ sessions: unknown[] }>('/api/discover?backend=claude')).sessions, []);
+  });
   await t.test('directory browsing requires local token; pasted file links normalize without creating a session', async () => {
     const before = (await request<AppState>('/api/state')).sessions.length;
     const body = { path: pathToFileURL(directory).href };

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -43,6 +43,62 @@ test('Codex app-server creates exact IDs, names and native forks without a model
     assert.equal(process.env.SESSIONDECK_CODEX_TOKEN, undefined);
   } finally {
     await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex imports resume moved projects through native cwd override without changing identity', async t => {
+  const executable = await findExecutable('codex');
+  if (!executable) return t.skip('codex CLI is not installed');
+  const root = await mkdtemp(join(tmpdir(), 'sessiondeck-codex-import-'));
+  const original = join(root, 'original-project');
+  const moved = join(root, 'moved-project');
+  await mkdir(original);
+  const bridge = new CodexBridge({ executable, dataDir: join(root, 'data'), port: 0, env: { ...process.env, CODEX_HOME: join(root, 'home') } });
+  try {
+    const session = await bridge.createSession(original, 'Moved project probe');
+    bridge.releaseSession(session.nativeSessionId);
+    await rename(original, moved);
+    await assert.rejects(bridge.openSession(session.nativeSessionId, moved), /工作目录与联系人不一致/);
+    const resumed = await bridge.openSession(session.nativeSessionId, moved, { allowCwdChange: true });
+    assert.equal(resumed.nativeSessionId, session.nativeSessionId);
+    // Native metadata must agree after reconnect, not just the local card.
+    bridge.releaseSession(session.nativeSessionId);
+    await bridge.openSession(session.nativeSessionId, moved);
+    bridge.releaseSession(session.nativeSessionId);
+    await assert.rejects(bridge.openSession(session.nativeSessionId, original), /工作目录与联系人不一致/);
+  } finally {
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex imports expose native writer conflicts and can fork without stopping the owner', async t => {
+  const executable = await findExecutable('codex');
+  if (!executable) return t.skip('codex CLI is not installed');
+  const root = await mkdtemp(join(tmpdir(), 'sessiondeck-codex-writer-'));
+  const env = { ...process.env, CODEX_HOME: join(root, 'home') };
+  const owner = new CodexBridge({ executable, dataDir: join(root, 'owner'), port: 0, env });
+  const importer = new CodexBridge({ executable, dataDir: join(root, 'importer'), port: 0, env });
+  try {
+    const session = await owner.createSession(root, 'Owned native session');
+    await assert.rejects(importer.openSession(session.nativeSessionId, root), error => {
+      assert.ok(error instanceof Error && 'code' in error && 'status' in error);
+      assert.equal(error.code, 'NATIVE_SESSION_BUSY');
+      assert.equal(error.status, 409);
+      assert.match(error.message, /其他原生客户端占用/);
+      return true;
+    });
+    const fork = await importer.forkSession(session.nativeSessionId, root);
+    assert.notEqual(fork.nativeSessionId, session.nativeSessionId);
+    assert.equal((await importer.getStatus(fork.nativeSessionId)).status, 'idle');
+    assert.equal((await owner.getStatus(session.nativeSessionId)).status, 'idle');
+    // Releasing the owning app-server allows retrying the original exact ID.
+    await owner.close();
+    assert.equal((await importer.openSession(session.nativeSessionId, root)).nativeSessionId, session.nativeSessionId);
+  } finally {
+    await importer.close();
+    await owner.close();
     await rm(root, { recursive: true, force: true });
   }
 });

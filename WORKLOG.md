@@ -297,3 +297,11 @@
 - 侧栏不再随鼠标悬停伸缩，默认收起，底部新增「展开/收起侧栏」按钮，状态记在 localStorage。底部「…」菜单之前被 `.rail { overflow: hidden }` 裁掉一半，现在侧栏不再裁剪子元素（只给品牌、导航、群组列表各自加 overflow），菜单提升 z-index，向右上弹出。探针确认：悬停宽度不变、切换后 208px 且刷新保留、菜单 3 项全部可见且未被遮挡。`npm run verify`：181 项后端、67 项浏览器通过。
 - Codex 沙箱：读取 `personal`（2026-10-02）与 `zem-webui CI 异常`（2026-10-01）两个会话记录，所有命令（含 `id`）在执行前失败于 `bwrap: setting up uid map: Permission denied`。在本机交互 shell 直接运行 `unshare -U -r id` 和 `bwrap --unshare-user` 得到同样错误，与 SessionDeck 无关：systemd 单元无 RestrictNamespaces/NoNewPrivileges 等限制，服务环境与登录 shell 一致。根因是 Ubuntu 24.04 的 `kernel.apparmor_restrict_unprivileged_userns = 1`：无 AppArmor 配置文件的二进制（`/usr/bin/bwrap` 没有）被禁止创建用户命名空间，而 Codex 的 Linux 沙箱正是 bwrap。rollout 的 `turn_context` 确认策略为 `approval_policy=never, sandbox=workspace-write`。修复需要 root（为 bwrap 添加允许 `userns` 的 AppArmor 配置），已把命令交给用户；临时绕过可在 Codex 配置里改 `sandbox_mode = "danger-full-access"`，但会失去沙箱。
 - 新增 `scripts/fix-codex-sandbox.sh`：检查 `apparmor_restrict_unprivileged_userns`，按需安装 apparmor-utils，写入并加载授予 `userns` 的 `/etc/apparmor.d/bwrap`，最后用 `bwrap --unshare-user` 自检。需要 sudo，由用户在终端执行；未在本机运行。README 补充说明。
+
+## 2026-10-08：导入会话恢复失败与目录修复
+
+- 正式实例最新导入的 Codex 联系人报错 `already has an active writer`，会话仍由外部原生客户端持有写入锁。恢复冲突映射为 HTTP 409 / `NATIVE_SESSION_BUSY`，错误标识保存在联系人上；私聊页提供「重试恢复」与「Fork 后继续」。Fork 复用现有原生接口和弹窗，保留原会话 ID、历史及外部客户端。页面兼容旧服务保存的英文报错，刷新后即可使用新入口。
+- 导入列表检查工作目录可用性；目录已移动、已删除或不可访问时支持重新浏览或粘贴现有目录。添加时目录再次失效也提供修复入口，失败不创建联系人，重复添加返回已有联系人。Codex 通过原生 `thread/resume` 的 cwd 参数恢复到所选目录并验证返回路径；普通联系人仍保留目录一致性检查。项目文件不随历史迁移。
+- 发现失败单独显示错误并支持重试；导入搜索框回车不触发其他表单流程；待 Fork 联系人不再误阻止导入其原生来源。
+- 验证：隔离的两个真实 Codex app-server 复现写入占用，验证原生 Fork 可独立恢复且原客户端仍可用；原客户端退出后恢复原 ID 成功。另用隔离 Codex 验证目录迁移后的原 ID 及原生目录持久化。类型检查、184 项服务端测试、71 项浏览器测试全部通过。
+- 前端使用 `npm run build` 原子更新；未重启正式服务或中断任何已有会话。后端错误码及目录恢复增强在下次正常重启后生效。

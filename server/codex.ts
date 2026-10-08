@@ -485,6 +485,11 @@ export class CodexBridge {
   }
 
   private rpcError(response: RpcMessage, fallback: string): Error {
+    if (/already has an active writer/i.test(response.error?.message ?? '')) {
+      return Object.assign(new Error('这个 Codex 会话正被其他原生客户端占用。关闭原客户端后重试恢复，或 Fork 为独立会话继续。'), {
+        status: 409, code: 'NATIVE_SESSION_BUSY',
+      });
+    }
     return new Error(response.error?.message ? `Codex：${response.error.message}` : fallback);
   }
 
@@ -611,7 +616,7 @@ export class CodexBridge {
     }
   }
 
-  private async observe(threadId: string): Promise<void> {
+  private async observe(threadId: string, cwd?: string): Promise<void> {
     const version = this.observationVersions.get(threadId) ?? 0;
     const pending = this.observing.get(threadId);
     if (pending?.version === version) return pending.promise;
@@ -631,11 +636,12 @@ export class CodexBridge {
         this.retainObserver(threadId, connection);
         // Include the native turns once on (re)connection. A completion can
         // occur while our observer is offline, without the TUI disconnecting.
-        const response = await this.call(connection, 'thread/resume', { threadId, excludeTurns: false });
+        const response = await this.call(connection, 'thread/resume', { threadId, excludeTurns: false, ...(cwd ? { cwd: resolve(cwd) } : {}) });
         assertActive();
         if (response.error) throw this.rpcError(response, 'Codex 会话恢复失败');
         const thread = (response.result as { thread?: Thread } | undefined)?.thread;
         if (thread?.id !== threadId) throw new Error('Codex 返回了不匹配的恢复会话');
+        if (cwd && (!thread.cwd || !await sameDirectory(thread.cwd, cwd))) throw new Error('Codex 恢复后未使用所选工作目录');
         const newerTurn = this.chat.turnChanged(threadId, basis);
         this.chat.reconcile(threadId, thread, basis, true);
         if (!newerTurn) this.emitStatus(threadId, this.restoreNativeState(thread));
@@ -686,13 +692,15 @@ export class CodexBridge {
     }
   }
 
-  async openSession(id: string, cwd?: string): Promise<CodexNativeSession> {
+  async openSession(id: string, cwd?: string, options: { allowCwdChange?: boolean } = {}): Promise<CodexNativeSession> {
     validateNativeId('codex', id);
     const result = await this.rpc<{ thread?: Thread }>('thread/read', { threadId: id, includeTurns: false });
     const thread = result.thread;
     if (thread?.id !== id) throw new Error('Codex 返回了不匹配的原生会话');
-    if (cwd && thread.cwd && !await sameDirectory(thread.cwd, cwd)) throw new Error('Codex 会话工作目录与联系人不一致');
-    await this.observe(id);
+    const changedCwd = cwd && thread.cwd && !await sameDirectory(thread.cwd, cwd);
+    if (changedCwd && !options.allowCwdChange) throw new Error('Codex 会话工作目录与联系人不一致');
+    if (changedCwd && (this.observers.has(id) || this.observing.has(id))) throw new Error('Codex 会话已连接，请先停止再更换工作目录');
+    await this.observe(id, changedCwd ? cwd : undefined);
     return { nativeSessionId: id, remoteUrl: this.endpoint };
   }
 

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import type { AppState, StatePatch, Backend, DiscoveredSession, Delivery, Group, GroupDetail, GroupMessage, Session, SessionStatus } from '../shared/types';
 import { applyStatePatch } from './state';
-import { api, getToken } from './api';
+import { api, ApiError, getToken } from './api';
 import { useGroupHistory } from './group-history';
 import TerminalPane from './TerminalPane';
 import ConversationPane from './ConversationPane';
@@ -470,6 +470,8 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const title = currentGroup?.title ?? ({ contacts: '会话联系人', attention: '需要你处理', running: '正在运行', activity: '最近活动', archive: '已归档', backends: '连接与能力' } as Record<string, string>)[view] ?? '会话联系人';
   const filtered = !!query || backendFilter !== 'all' || statusFilter !== 'all';
   const selectedBackend = selected ? state?.backends.find((backend) => backend.id === selected.backend) : undefined;
+  const nativeSessionBusy = selected?.backend === 'codex' && !selected.running && selected.status === 'error'
+    && (selected.errorCode === 'NATIVE_SESSION_BUSY' || /already has an active writer/i.test(selected.statusDetail));
   const codexChatAvailable = selected?.backend === 'codex' && !state?.demo && !!selectedBackend?.capabilities.graphicalChat;
   // DeepSeek Harness without dsh-tui has no PTY: it shows its native Web UI.
   const dshWebOnly = selected?.backend === 'dsh' && !state?.demo && !selectedBackend?.capabilities.terminal;
@@ -599,7 +601,8 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         </div>
       </header>
       {connectionError && <div role="alert" className="error-banner connection-error"><span>{connectionError}</span><button className="text-button" onClick={() => void refresh().catch(() => {})}>重试连接</button></div>}
-      {error && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label="关闭会话错误提示" onClick={() => setError('')}><X size={15} /></button></div>}
+      {nativeSessionBusy && <div role="alert" className="error-banner native-session-busy"><span>这个 Codex 会话正被其他原生客户端占用。关闭原客户端后可重试恢复；也可以 Fork 继承上下文，独立继续。</span><div><button className="button secondary small-button" disabled={!!busy} onClick={() => void startSelected()}>重试恢复</button><button className="button secondary small-button" disabled={!!busy || !selectedBackend?.capabilities.fork || !selected.nativeSessionId || selected.forkPending} onClick={() => { setError(''); setModal({ type: 'fork', session: selected, groupId: selected.groupId ?? undefined }); }}><GitFork size={13} />Fork 后继续</button></div></div>}
+      {error && !nativeSessionBusy && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label="关闭会话错误提示" onClick={() => setError('')}><X size={15} /></button></div>}
       <div className="session-conversation">
       {dshWebOnly ? selected.nativeUrl ? <div className="native-web"><iframe title="DeepSeek Harness 会话" src={selected.nativeUrl} allow="clipboard-read; clipboard-write" /></div> : <div className="terminal-empty"><BackendAvatar backend="dsh" /><h3>直接使用 Harness 原生界面</h3><p>{busy === `start:${selected.id}` ? '正在启动原生会话…' : '启动会话后，在这里继续这个联系人的上下文。'}</p></div> : privateView === 'chat' ? <Suspense fallback={<div className="loading-state"><LoaderCircle size={22} className="spin" /><p>正在加载对话…</p></div>}><CodexChatPane key={selected.id} session={selected} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /></Suspense> : privateView === 'conversation' ? <ConversationPane key={selected.id} session={selected} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /> : codexChatAvailable && selected.running && selected.interactionMode === 'chat' ? <div className="terminal-empty"><Command size={26} /><h3>连接同一个 Codex 会话</h3><button className="button primary" disabled={!!busy} onClick={() => switchPrivateView('terminal')}>连接原生终端</button></div> : <TerminalPane key={selected.id} sessionId={selected.id} running={selected.running} status={selected.status} allowImages={selected.backend === 'codex' && !state.demo} onSelection={setSelection} />}
       </div>
@@ -846,6 +849,9 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [discovered, setDiscovered] = useState<DiscoveredSession[] | null>(null);
+  const [discoveryError, setDiscoveryError] = useState('');
+  const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
+  const [importDirectory, setImportDirectory] = useState<{ id: string; cwd: string } | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [discoverQuery, setDiscoverQuery] = useState('');
   const [importId, setImportId] = useState<string | null>(null);
@@ -854,12 +860,14 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
   const filteredDiscovered = discovered?.filter((session) => `${session.title} ${session.cwd}`.toLowerCase().includes(discoverQuery.trim().toLowerCase()));
   useEffect(() => {
     if (modal.type !== 'import') return;
-    let active = true; setDiscovered(null); setWarnings([]); setError('');
-    api<{ sessions: DiscoveredSession[]; warnings?: string[] }>(`/discover?backend=${backend}`).then((result) => { if (active) { setDiscovered(result.sessions); setWarnings(result.warnings ?? []); } }).catch((cause) => { if (active) { setError(cause.message); setDiscovered([]); } });
+    let active = true; setDiscovered(null); setWarnings([]); setError(''); setDiscoveryError(''); setImportDirectory(null);
+    api<{ sessions: DiscoveredSession[]; warnings?: string[] }>(`/discover?backend=${backend}`).then((result) => { if (active) { setDiscovered(result.sessions); setWarnings(result.warnings ?? []); } }).catch((cause) => { if (active) { setDiscoveryError(cause instanceof Error ? cause.message : '发现会话失败'); setDiscovered([]); } });
     return () => { active = false; };
-  }, [backend, modal.type]);
+  }, [backend, modal.type, discoveryAttempt]);
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError('');
+    event.preventDefault();
+    if (modal.type === 'import') return;
+    setBusy(true); setError('');
     try {
       if (modal.type === 'rename') { await api(`/sessions/${modal.session.id}`, { title: title.trim() }, 'PATCH'); await done(); }
       if (modal.type === 'create') { const session = await api<Session>('/sessions', { title: title.trim(), backend, cwd: cwd.trim(), groupId: modal.groupId || undefined }); await done(session); }
@@ -875,9 +883,17 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
     finally { setBusy(false); }
   };
   const importSession = async (session: DiscoveredSession) => {
+    if (session.cwdAvailable === false && importDirectory?.id !== session.nativeSessionId) {
+      setImportDirectory({ id: session.nativeSessionId, cwd: session.cwd }); setError(''); return;
+    }
     setBusy(true); setImportId(session.nativeSessionId); setError('');
-    try { const imported = await api<Session>('/import', { backend: session.backend, nativeSessionId: session.nativeSessionId, title: session.title, cwd: session.cwd }); notify('已连接原生会话'); await done(imported); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '导入失败'); }
+    const cwd = importDirectory?.id === session.nativeSessionId ? importDirectory.cwd : session.cwd;
+    try { const imported = await api<Session>('/import', { backend: session.backend, nativeSessionId: session.nativeSessionId, title: session.title, cwd }); notify('已导入原生会话'); await done(imported); }
+    catch (cause) {
+      const unavailable = cause instanceof ApiError && (cause.code === 'IMPORT_CWD_UNAVAILABLE' || cause.status === 400 && /^工作目录/.test(cause.message));
+      if (unavailable) { setImportDirectory({ id: session.nativeSessionId, cwd }); setError('原工作目录不存在或无法访问，请选择现有目录后重试。'); }
+      else setError(cause instanceof Error ? cause.message : '导入失败');
+    }
     finally { setBusy(false); setImportId(null); }
   };
   const titleLabel = modal.type === 'create' ? '新建会话联系人' : modal.type === 'rename' ? '给联系人改个名字' : modal.type === 'fork' ? 'Fork 会话' : modal.type === 'group' ? modal.group ? '编辑群组' : '创建协作群组' : modal.type === 'addMember' ? '添加群组成员' : modal.type === 'share' ? '分享结果到群组' : '导入已有会话';
@@ -887,9 +903,10 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
   const cwdField = <div className="cwd-field"><DirectoryField label="工作目录" value={cwd} onChange={setCwd} disabled={busy} help="Agent 将在运行 SessionDeck 的机器上使用这个目录。" />{recentDirectories.length > 0 && <details className="recent-directories"><summary>最近使用的目录</summary><div>{recentDirectories.map(directory => <button key={directory} type="button" title={directory} onClick={() => setCwd(directory)}><Folder size={13} /><span>{directory}</span>{cwd === directory && <Check size={13} />}</button>)}</div></details>}</div>;
   return <ModalShell title={titleLabel} subtitle={subtitle} close={busy ? () => {} : close} wide={modal.type === 'import'}><form onSubmit={submit}>
     {modal.type === 'import' ? <>{backendPicker}<label className="search-field import-search"><Search size={16} /><input aria-label="搜索可导入会话" placeholder="搜索标题或工作目录…" value={discoverQuery} onChange={(event) => setDiscoverQuery(event.target.value)} /></label>{warnings.map((warning) => <p className="form-note" key={warning}>{warning}</p>)}<div className="discovered-list">{discovered === null ? <div className="discovery-empty"><LoaderCircle size={24} className="spin" /><p>正在发现本机会话…</p></div> : filteredDiscovered?.map((session) => {
-      const exists = state.sessions.some((item) => item.backend === session.backend && item.nativeSessionId === session.nativeSessionId);
-      return <div className="discovered-item" key={session.nativeSessionId}><BackendAvatar backend={session.backend} small /><div><strong>{session.title || session.nativeSessionId.slice(0, 12)}</strong><small title={session.cwd}>{shortPath(session.cwd)} · {relativeTime(session.lastActivity)}</small><code>{session.nativeSessionId.slice(0, 24)}</code></div><button className="button secondary small-button" type="button" disabled={busy || exists} onClick={() => void importSession(session)}>{importId === session.nativeSessionId ? <LoaderCircle size={14} className="spin" /> : exists ? <Check size={14} /> : <Plus size={14} />}{exists ? '已添加' : '添加'}</button></div>;
-    })}{!!discovered?.length && !filteredDiscovered?.length && <div className="discovery-empty"><Search size={26} /><p>没有匹配的原生会话</p><button type="button" className="text-button" onClick={() => setDiscoverQuery('')}>清除搜索</button></div>}{discovered?.length === 0 && <div className="discovery-empty"><Search size={26} /><p>尚未发现 {BACKEND[backend].short} 会话</p><small>先在原生工具中创建会话，或直接新建联系人。</small></div>}</div></> : <div className="modal-fields">
+      const exists = state.sessions.some((item) => item.backend === session.backend && item.nativeSessionId === session.nativeSessionId && !item.forkPending);
+      const editingDirectory = importDirectory?.id === session.nativeSessionId;
+      return <div className="discovered-entry" key={session.nativeSessionId}><div className="discovered-item"><BackendAvatar backend={session.backend} small /><div><strong>{session.title || session.nativeSessionId.slice(0, 12)}</strong><small title={session.cwd}>{shortPath(session.cwd)} · {relativeTime(session.lastActivity)}</small><div className="import-item-meta"><code>{session.nativeSessionId.slice(0, 24)}</code>{session.cwdAvailable === false && <span className="import-directory-warning">目录不可用</span>}{!exists && <button type="button" className="text-button" disabled={busy} onClick={() => { setImportDirectory(editingDirectory ? null : { id: session.nativeSessionId, cwd: session.cwd }); setError(''); }}>{editingDirectory ? '收起' : '更换目录'}</button>}</div></div><button className="button secondary small-button" type="button" disabled={busy || exists} onClick={() => void importSession(session)}>{importId === session.nativeSessionId ? <LoaderCircle size={14} className="spin" /> : exists ? <Check size={14} /> : <Plus size={14} />}{exists ? '已添加' : session.cwdAvailable === false && !editingDirectory ? '选择目录' : '添加'}</button></div>{editingDirectory && <div className="import-directory"><DirectoryField label="导入工作目录" value={importDirectory.cwd} onChange={cwd => setImportDirectory({ id: session.nativeSessionId, cwd })} disabled={busy} required={false} help="选择运行 SessionDeck 的机器上的现有目录。历史上下文会保留，原项目文件需要你自行迁移。" /></div>}</div>;
+    })}{!!discovered?.length && !filteredDiscovered?.length && <div className="discovery-empty"><Search size={26} /><p>没有匹配的原生会话</p><button type="button" className="text-button" onClick={() => setDiscoverQuery('')}>清除搜索</button></div>}{discoveryError ? <div className="discovery-empty"><p role="alert" className="form-error">{discoveryError}</p><button type="button" className="button secondary" onClick={() => setDiscoveryAttempt(value => value + 1)}>重新发现</button></div> : discovered?.length === 0 && <div className="discovery-empty"><Search size={26} /><p>尚未发现 {BACKEND[backend].short} 会话</p><small>先在原生工具中创建会话，或直接新建联系人。</small></div>}</div></> : <div className="modal-fields">
       {modal.type === 'addMember' && <div className="segmented-control"><button type="button" className={memberMode === 'new' ? 'selected' : ''} onClick={() => setMemberMode('new')}><Plus size={15} /> 新建会话</button><button type="button" className={memberMode === 'fork' ? 'selected' : ''} onClick={() => setMemberMode('fork')}><GitFork size={15} /> 从已有联系人 Fork</button></div>}
       {(modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new')) && backendPicker}
       {modal.type === 'addMember' && memberMode === 'fork' && <><label className="form-label">来源联系人<select required value={sourceId} onChange={(event) => { setSourceId(event.target.value); const source = state.sessions.find((session) => session.id === event.target.value); if (source) setTitle(`${source.title} · 群组`); }}><option value="">选择要延续的会话…</option>{state.sessions.filter((session) => !session.archived && !!session.nativeSessionId && !session.forkPending && state.backends.find((item) => item.id === session.backend)?.capabilities.fork).map((session) => <option key={session.id} value={session.id}>{session.title} · {BACKEND[session.backend].short}</option>)}</select></label><div className="form-note"><GitFork size={16} />通过后端原生能力 Fork 上下文。群组内的新会话独立运行，外面的原联系人保持不变。</div></>}
