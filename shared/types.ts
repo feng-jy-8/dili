@@ -40,7 +40,7 @@ export interface Session {
   running: boolean;
   /** Codex can run without a PTY; terminal attachment keeps the same native thread. */
   interactionMode?: 'chat' | 'terminal';
-  origin: 'created' | 'imported' | 'forked';
+  origin: 'created' | 'imported' | 'forked' | 'handoff';
 }
 
 export interface DiscoveredSession {

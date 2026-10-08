@@ -62,6 +62,7 @@ export const ROUTES: Route[] = [
   { method: 'POST', path: '/api/sessions', access: 'owner' },
   { method: 'PATCH', path: '/api/sessions/:id', access: 'owner' },
   { method: 'POST', path: '/api/sessions/:id/fork', access: 'owner' },
+  { method: 'POST', path: '/api/sessions/:id/handoff', access: 'owner' },
   { method: 'POST', path: '/api/groups', access: 'owner' },
   { method: 'PATCH', path: '/api/groups/:id', access: 'owner' },
   { method: 'GET', path: '/api/groups/:id', access: 'owner' },

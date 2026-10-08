@@ -30,7 +30,7 @@ import { CodexBridge } from './codex.ts';
 import { DeliveryNotAcceptedError, sendDelivery } from './delivery.ts';
 import { StatePublisher } from './state.ts';
 import { listDirectories, normalizeDirectoryInput } from './directories.ts';
-import { ConversationReader, conversationPreview } from './conversation.ts';
+import { ConversationReader, conversationPreview, handoffPrompt } from './conversation.ts';
 import { gitDiff, gitStatus, listWorkspace, readWorkspaceFile } from './workspace.ts';
 import { registerCodexChat } from './chat-api.ts';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES, type TerminalImageType } from '../shared/terminal-images.ts';
@@ -636,6 +636,19 @@ app.post('/api/sessions/:id/fork', async (req, res) => {
     child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, origin: 'forked', nativeSessionId: demo ? `demo-${randomUUID()}` : parent.nativeSessionId, forkPending: !demo, statusDetail: demo ? '演示分支已创建' : '待启动：将调用原生 Fork，原会话保持独立' });
   }
   store.activity(child.id, 'fork', `从 ${parent.title} 分叉为 ${child.title}`); broadcast(); res.status(201).json(child);
+});
+
+app.post('/api/sessions/:id/handoff', async (req, res) => {
+  const parent = session(String(req.params.id));
+  const target = backend(req.body?.backend);
+  if (target === parent.backend) fail('同平台请使用原生 Fork');
+  const title = text(req.body?.title || `${parent.title} · ${info(target).label}`, '名称');
+  const cwd = req.body?.cwd ? directory(req.body.cwd) : parent.cwd;
+  const transcript = demo ? { messages: [], truncated: false } : await conversations.read(parent);
+  const prompt = handoffPrompt(parent, transcript, target, typeof req.body?.summary === 'string' ? req.body.summary : undefined);
+  const child = store.addSession({ backend: target, title, cwd, groupId: parent.groupId, parentId: parent.id, origin: 'handoff', statusDetail: '已创建跨平台交接联系人，等待继续工作' });
+  store.activity(child.id, 'handoff', `从 ${parent.title} 交接到 ${info(target).label}`); broadcast();
+  res.status(201).json({ session: child, prompt, source: parent.id, target: target });
 });
 
 app.post('/api/sessions/:id/start', async (req, res) => {

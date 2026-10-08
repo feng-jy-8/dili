@@ -146,6 +146,15 @@ export function conversationPreview(transcript: ConversationTranscript): { text:
   return { text: chars.length > 240 ? chars.slice(0, 239).join('') + '…' : normalized, ...(user.createdAt ? { createdAt: user.createdAt } : {}) };
 }
 
+/** Bounded, portable context for continuing a conversation in another agent. */
+export function handoffPrompt(source: Pick<Session, 'backend' | 'title' | 'cwd' | 'id'>, transcript: ConversationTranscript, target: Backend, customSummary?: string): string {
+  const label: Record<Backend, string> = { claude: 'Claude Code', codex: 'Codex', dsh: 'DeepSeek Harness' };
+  const messages = transcript.messages.slice(-20);
+  const body = messages.map(item => `### ${item.role === 'user' ? '用户' : 'Agent'}\n${item.text.slice(0, 6000)}`).join('\n\n');
+  const summary = customSummary?.trim() || '请先检查当前工作区和文件状态，再继续完成原任务。';
+  return `# 跨平台会话交接\n\n来源平台：${label[source.backend]}\n目标平台：${label[target]}\n来源会话：${source.title}\n工作目录：${source.cwd}\n\n## 当前目标与进展\n${summary}\n\n## 最近对话\n${body || '暂无可读取的历史对话。'}\n\n## 继续要求\n这是从 ${label[source.backend]} 转交来的上下文。请基于以上信息继续工作，不要假设来源工具已经执行过未核实的操作；先确认当前文件状态，再执行必要操作。`;
+}
+
 /** Read-only views of exact native identities. No native process is launched,
  * no prompt is submitted, and no transcript is copied into SessionDeck's DB. */
 export class ConversationReader {

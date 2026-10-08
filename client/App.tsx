@@ -1,7 +1,7 @@
 import { appUrl } from './urls';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import {
-  ArrowDownToLine, ArrowLeft, ArrowRight, Archive, Bell, BellOff, Check, CheckCheck,
+  ArrowDownToLine, ArrowLeft, ArrowRight, ArrowRightLeft, Archive, Bell, BellOff, Check, CheckCheck,
   CircleHelp, Clock3, Command, Copy, Ellipsis, ExternalLink, Folder,
   GitFork, LoaderCircle, MessageSquare, Pencil, Pin, PinOff, Play, Plus,
   Radio, Search, Send, Settings2, Share2, SlidersHorizontal, Square, UsersRound, X,
@@ -38,7 +38,7 @@ export const STATUS: Record<SessionStatus, { label: string; className: string }>
   error: { label: '异常', className: 'error' }, stopped: { label: '已停止', className: 'idle' }, unknown: { label: '状态未知', className: 'unknown' },
 };
 type Modal = { type: 'create'; groupId?: string; backend?: Backend } | { type: 'import' } | { type: 'rename'; session: Session }
-  | { type: 'fork'; session: Session; groupId?: string } | { type: 'group'; group?: Group }
+  | { type: 'fork'; session: Session; groupId?: string } | { type: 'handoff'; session: Session } | { type: 'group'; group?: Group }
   | { type: 'replaceDraft'; draft: string; sourceName: string; proceed: () => void } | { type: 'help' } | { type: 'shareLink'; session: Session } | { type: 'addMember'; groupId: string } | { type: 'share'; session: Session; text: string } | null;
 type GroupDraft = { text: string; kind: GroupMessage['kind']; recipients: string[]; sourceMessageId: string | null };
 function readGroupDraft(groupId: string): GroupDraft {
@@ -598,6 +598,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
             {selected.groupId && <button className="text-button compact-extra-action" onClick={() => setModal({ type: 'share', session: selected, text: selection })}><Share2 size={13} />分享结果到群组</button>}
             {selected.nativeUrl && <a className="text-button compact-extra-action" aria-label="原生窗口" target="_blank" rel="noreferrer" href={selected.nativeUrl}><ExternalLink size={13} />打开原生窗口</a>}
             <button className="text-button" disabled={!selectedBackend?.capabilities.fork || !selected.nativeSessionId || selected.forkPending} title={!selected.nativeSessionId || selected.forkPending ? '请先启动来源会话并完成初始化，再进行 Fork' : '分叉当前上下文'} onClick={() => setModal({ type: 'fork', session: selected, groupId: selected.groupId ?? undefined })}><GitFork size={13} />Fork 会话</button>
+            <button className="text-button" onClick={() => setModal({ type: 'handoff', session: selected })}><ArrowRightLeft size={13} />转到其他平台</button>
             <button className="text-button" onClick={() => setModal({ type: 'shareLink', session: selected })}><Link2 size={13} />分享给同事</button>
             <button className="text-button" onClick={() => void copyText(`${location.origin}${location.pathname}${location.search}${workspaceHash({ view, selectedId: selected.id })}`, '会话链接')}><Copy size={13} />复制会话链接</button>
             <div><span>{selected.forkPending ? '来源会话标识' : '原生会话标识'}</span>{selected.nativeSessionId ? <><code>{selected.nativeSessionId}</code><button className="icon-button" aria-label="复制原生会话标识" title="复制原生会话标识" onClick={() => void copyText(selected.nativeSessionId!, '原生会话标识')}><Copy size={13} /></button></> : <small>首次启动后生成</small>}</div>{selected.forkPending && <p>原生 Fork 尚未完成；启动后会获得独立的会话标识。</p>}
@@ -835,8 +836,8 @@ function GroupBoard({ detail, members, demo, busy, post, deliver, cancel, open, 
 }
 
 function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNullable<Modal>, { type: 'help' | 'replaceDraft' | 'shareLink' }>; state: AppState; close: () => void; done: (session?: Session, group?: Group) => Promise<void>; notify: (message: string) => void }) {
-  const [title, setTitle] = useState(modal.type === 'rename' ? modal.session.title : modal.type === 'fork' ? `${modal.session.title} · Fork` : modal.type === 'group' ? modal.group?.title ?? '' : '');
-  const [backend, setBackend] = useState<Backend>((modal.type === 'create' ? modal.backend : undefined) ?? state.backends.find((item) => item.installed)?.id ?? 'claude');
+  const [title, setTitle] = useState(modal.type === 'rename' ? modal.session.title : modal.type === 'fork' ? `${modal.session.title} · Fork` : modal.type === 'handoff' ? `${modal.session.title} · 交接` : modal.type === 'group' ? modal.group?.title ?? '' : '');
+  const [backend, setBackend] = useState<Backend>((modal.type === 'create' ? modal.backend : undefined) ?? state.backends.find((item) => item.installed && (modal.type !== 'handoff' || item.id !== modal.session.backend))?.id ?? 'claude');
   const recentSessions = useMemo(() => [...state.sessions].sort((first, second) => second.lastActivity.localeCompare(first.lastActivity)), [state.sessions]);
   const recentDirectories = [...new Set(recentSessions.map(session => session.cwd).filter(Boolean))].slice(0, 5);
   const creationGroupId = modal.type === 'create' || modal.type === 'addMember' ? modal.groupId : undefined;
@@ -849,6 +850,7 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
   const [forkCwd, setForkCwd] = useState(modal.type === 'fork' ? modal.session.cwd : state.defaultCwd);
   const [goal, setGoal] = useState(modal.type === 'group' ? modal.group?.goal ?? '' : '');
   const [text, setText] = useState(modal.type === 'share' ? modal.text : '');
+  const [handoffSummary, setHandoffSummary] = useState('请先检查当前工作区和文件状态，再继续完成原任务。');
   const [groupId, setGroupId] = useState(modal.type === 'fork' || modal.type === 'create' ? modal.groupId ?? '' : '');
   const [sourceId, setSourceId] = useState('');
   const [memberMode, setMemberMode] = useState<'new' | 'fork'>('new');
@@ -878,6 +880,7 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
       if (modal.type === 'rename') { await api(`/sessions/${modal.session.id}`, { title: title.trim() }, 'PATCH'); await done(); }
       if (modal.type === 'create') { const session = await api<Session>('/sessions', { title: title.trim(), backend, cwd: cwd.trim(), groupId: modal.groupId || undefined }); await done(session); }
       if (modal.type === 'fork') { const session = await api<Session>(`/sessions/${modal.session.id}/fork`, { title: title.trim(), groupId: groupId || undefined, cwd: modal.session.backend === 'dsh' ? undefined : forkCwd.trim() }); notify('已创建 Fork 联系人，原会话保留'); await done(session); }
+      if (modal.type === 'handoff') { const result = await api<{ session: Session; prompt: string }>(`/sessions/${modal.session.id}/handoff`, { title: title.trim(), backend, cwd: cwd.trim(), summary: handoffSummary.trim() }); await copyToClipboard(result.prompt); notify('已创建目标联系人，交接内容已复制'); await done(result.session); }
       if (modal.type === 'group') { const group = modal.group ? await api<Group>(`/groups/${modal.group.id}`, { title: title.trim(), goal: goal.trim() }, 'PATCH') : await api<Group>('/groups', { title: title.trim(), goal: goal.trim() }); await done(undefined, group); }
       if (modal.type === 'addMember') {
         if (memberMode === 'fork' && !sourceId) throw new Error('请选择要 Fork 的联系人');
@@ -902,9 +905,9 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
     }
     finally { setBusy(false); setImportId(null); }
   };
-  const titleLabel = modal.type === 'create' ? '新建会话联系人' : modal.type === 'rename' ? '给联系人改个名字' : modal.type === 'fork' ? 'Fork 会话' : modal.type === 'group' ? modal.group ? '编辑群组' : '创建协作群组' : modal.type === 'addMember' ? '添加群组成员' : modal.type === 'share' ? '分享结果到群组' : '导入已有会话';
-  const subtitle = modal.type === 'create' ? '选择 Agent，让下一段工作拥有独立的上下文。' : modal.type === 'fork' ? '延续这段上下文，开启另一条思路。原会话会保留。' : modal.type === 'group' ? '把相关的会话组织起来，围绕同一个目标工作。' : modal.type === 'import' ? '发现本机已有的原生会话，添加到联系人列表。' : modal.type === 'addMember' ? '每一位成员都有独立私聊，可以随时进入并纠正。' : modal.type === 'share' ? '检查并编辑内容，再将它作为成员结果记录到群组。' : '名称只影响 SessionDeck 中的显示。';
-  const backendPicker = <fieldset className="backend-picker"><legend>选择后端</legend>{state.backends.map((item) => <button type="button" key={item.id} aria-pressed={backend === item.id} disabled={busy || (modal.type !== 'import' && !item.installed)} className={backend === item.id ? 'selected' : ''} onClick={() => setBackend(item.id)}><BackendAvatar backend={item.id} small /><strong>{BACKEND[item.id].short}</strong><small>{item.installed ? '本机已安装' : '未安装'}</small>{backend === item.id && <Check size={14} />}</button>)}</fieldset>;
+  const titleLabel = modal.type === 'create' ? '新建会话联系人' : modal.type === 'rename' ? '给联系人改个名字' : modal.type === 'fork' ? 'Fork 会话' : modal.type === 'handoff' ? '转到其他平台' : modal.type === 'group' ? modal.group ? '编辑群组' : '创建协作群组' : modal.type === 'addMember' ? '添加群组成员' : modal.type === 'share' ? '分享结果到群组' : '导入已有会话';
+  const subtitle = modal.type === 'create' ? '选择 Agent，让下一段工作拥有独立的上下文。' : modal.type === 'fork' ? '延续这段上下文，开启另一条思路。原会话会保留。' : modal.type === 'handoff' ? '创建一个新的平台联系人，原会话保持不变。交接内容会复制到剪贴板。' : modal.type === 'group' ? '把相关的会话组织起来，围绕同一个目标工作。' : modal.type === 'import' ? '发现本机已有的原生会话，添加到联系人列表。' : modal.type === 'addMember' ? '每一位成员都有独立私聊，可以随时进入并纠正。' : modal.type === 'share' ? '检查并编辑内容，再将它作为成员结果记录到群组。' : '名称只影响 SessionDeck 中的显示。';
+  const backendPicker = <fieldset className="backend-picker"><legend>选择后端</legend>{state.backends.map((item) => <button type="button" key={item.id} aria-pressed={backend === item.id} disabled={busy || (modal.type !== 'import' && !item.installed) || (modal.type === 'handoff' && item.id === modal.session.backend)} className={backend === item.id ? 'selected' : ''} onClick={() => setBackend(item.id)}><BackendAvatar backend={item.id} small /><strong>{BACKEND[item.id].short}</strong><small>{item.id === (modal.type === 'handoff' ? modal.session.backend : '') ? '当前平台' : item.installed ? '本机已安装' : '未安装'}</small>{backend === item.id && <Check size={14} />}</button>)}</fieldset>;
   const nameField = <label className="form-label">联系人名称<input autoComplete="off" placeholder="例如：登录功能实现" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} required /></label>;
   const cwdField = <div className="cwd-field"><DirectoryField label="工作目录" value={cwd} onChange={setCwd} disabled={busy} help="Agent 将在运行 SessionDeck 的机器上使用这个目录。" />{recentDirectories.length > 0 && <details className="recent-directories"><summary>最近使用的目录</summary><div>{recentDirectories.map(directory => <button key={directory} type="button" title={directory} onClick={() => setCwd(directory)}><Folder size={13} /><span>{directory}</span>{cwd === directory && <Check size={13} />}</button>)}</div></details>}</div>;
   return <ModalShell title={titleLabel} subtitle={subtitle} close={busy ? () => {} : close} wide={modal.type === 'import'}><form onSubmit={submit}>
@@ -919,11 +922,12 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
       {['create', 'rename', 'fork', 'addMember'].includes(modal.type) && nameField}
       {(modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new')) && cwdField}
       {modal.type === 'fork' && <><div className="fork-source"><BackendAvatar backend={modal.session.backend} small /><div><small>来源会话</small><strong>{modal.session.title}</strong></div><GitFork size={18} /></div><label className="form-label">新联系人放在哪里<select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">独立联系人</option>{state.groups.map((group) => <option key={group.id} value={group.id}>群组 · {group.title}</option>)}</select></label>{modal.session.backend === 'dsh' ? <p className="form-note"><CircleHelp size={16} />DeepSeek Harness 的 Fork 由原生界面处理，继续使用原工作目录。</p> : <DirectoryField label="新的工作目录" value={forkCwd} onChange={setForkCwd} disabled={busy} placeholder={modal.session.cwd} help="可沿用来源目录，或选择已有的隔离目录。" />}<p className="form-note"><CircleHelp size={16} />Fork 继承上下文；它不会自动创建 Git 分支或隔离文件。</p></>}
+      {modal.type === 'handoff' && <><div className="fork-source"><BackendAvatar backend={modal.session.backend} small /><div><small>来源会话</small><strong>{modal.session.title}</strong></div><ArrowRightLeft size={18} /></div>{backendPicker}<label className="form-label">目标联系人名称<input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={120} /></label><DirectoryField label="工作目录" value={cwd} onChange={setCwd} disabled={busy} help="默认沿用来源会话的工作目录。" /><label className="form-label">交接说明<textarea rows={5} value={handoffSummary} onChange={(event) => setHandoffSummary(event.target.value)} maxLength={12000} /></label><p className="form-note">会自动附加最近对话、来源平台和工作目录；创建后会复制完整交接内容。</p></>}
       {modal.type === 'group' && <><label className="form-label">群组名称<input placeholder="例如：完成登录功能" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={120} /></label><label className="form-label">共同目标<textarea placeholder="希望完成什么？怎样算完成？" value={goal} onChange={(event) => setGoal(event.target.value)} rows={4} maxLength={4000} /></label><p className="form-note"><UsersRound size={16} />创建后可添加新会话，或将现有联系人 Fork 入群。</p></>}
       {modal.type === 'share' && <><div className="fork-source"><BackendAvatar backend={modal.session.backend} small /><div><small>结果来自</small><strong>{modal.session.title}</strong></div></div><label className="form-label">分享内容<textarea rows={8} required placeholder="粘贴或整理成员的输出、结论与下一步…" value={text} onChange={(event) => setText(event.target.value)} maxLength={30000} /></label><p className="form-note">可以先在终端选中内容，再打开“分享结果”；也可以直接粘贴内容。</p></>}
       {((modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new')) && !backendInfo?.installed) && <p className="form-error">请先在本机安装所选后端，再到“连接与能力”刷新检测。</p>}
     </div>}
     {error && <p role="alert" className="form-error modal-error">{error}</p>}
-    <div className="modal-footer"><button type="button" className="button secondary" disabled={busy} onClick={close}>{modal.type === 'import' ? '完成' : '取消'}</button>{modal.type !== 'import' && <button className="button primary" disabled={busy || ((modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new')) && !backendInfo?.installed)}>{busy ? <LoaderCircle size={15} className="spin" /> : modal.type === 'fork' ? <GitFork size={15} /> : modal.type === 'share' ? <Share2 size={15} /> : modal.type === 'rename' || (modal.type === 'group' && modal.group) ? <Check size={15} /> : <Plus size={15} />}{modal.type === 'rename' || (modal.type === 'group' && modal.group) ? '保存修改' : modal.type === 'fork' ? '创建 Fork' : modal.type === 'group' ? '创建群组' : modal.type === 'share' ? '分享到群组' : modal.type === 'addMember' ? memberMode === 'fork' ? 'Fork 入群' : '添加成员' : '创建联系人'}</button>}</div>
+    <div className="modal-footer"><button type="button" className="button secondary" disabled={busy} onClick={close}>{modal.type === 'import' ? '完成' : '取消'}</button>{modal.type !== 'import' && <button className="button primary" disabled={busy || ((modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new') || modal.type === 'handoff') && !backendInfo?.installed)}>{busy ? <LoaderCircle size={15} className="spin" /> : modal.type === 'fork' ? <GitFork size={15} /> : modal.type === 'handoff' ? <ArrowRightLeft size={15} /> : modal.type === 'share' ? <Share2 size={15} /> : modal.type === 'rename' || (modal.type === 'group' && modal.group) ? <Check size={15} /> : <Plus size={15} />}{modal.type === 'rename' || (modal.type === 'group' && modal.group) ? '保存修改' : modal.type === 'fork' ? '创建 Fork' : modal.type === 'handoff' ? '创建并继续' : modal.type === 'group' ? '创建群组' : modal.type === 'share' ? '分享到群组' : modal.type === 'addMember' ? memberMode === 'fork' ? 'Fork 入群' : '添加成员' : '创建联系人'}</button>}</div>
   </form></ModalShell>;
 }

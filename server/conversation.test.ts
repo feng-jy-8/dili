@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { zstdCompressSync } from 'node:zlib';
-import { ConversationReader, conversationPreview, type ConversationSession } from './conversation.ts';
+import { ConversationReader, conversationPreview, handoffPrompt, type ConversationSession } from './conversation.ts';
 import { DshBridge } from './dsh.ts';
 
 const date = '2026-09-29T08:00:00.000Z';
@@ -212,4 +212,15 @@ test('preview collapses whitespace and preserves whole Unicode characters', () =
   assert.equal(result!.text.endsWith('…'), true);
   assert.equal(result!.text.includes('\ufffd'), false);
   assert.equal(result!.createdAt, date);
+});
+
+test('handoff prompt carries bounded portable context and target platform', () => {
+  const prompt = handoffPrompt({ id: 'source', backend: 'codex', title: '登录任务', cwd: '/work/app' }, {
+    messages: [{ id: 'u', role: 'user', text: '请继续实现登录流程' }, { id: 'a', role: 'assistant', text: '已经完成接口草稿' }], truncated: false,
+  }, 'claude', '先检查测试并继续实现');
+  assert.match(prompt, /来源平台：Codex/);
+  assert.match(prompt, /目标平台：Claude Code/);
+  assert.match(prompt, /工作目录：\/work\/app/);
+  assert.match(prompt, /先检查测试并继续实现/);
+  assert.match(prompt, /请继续实现登录流程/);
 });
