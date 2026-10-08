@@ -835,3 +835,9 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
   .topbar { -webkit-app-region: drag; }
   .topbar button, .topbar input, .topbar a { -webkit-app-region: no-drag; }
 }
+
+.invite-pairing { display: grid; gap: 12px; margin: 12px 0 18px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; }
+.invite-pairing textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface, white); color: inherit; }
+.invite-pairing .share-created a { min-width: 0; overflow-wrap: anywhere; flex: 1; font-size: 12px; }
+.invite-actions { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.invite-actions a { font-size: 12px; }

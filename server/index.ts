@@ -13,6 +13,11 @@ import { ShellTerminals } from './shell-terminals.ts';
 import { allowedRemoteRequest, allowedRequest, readCookie, validToken } from './security.ts';
 import { AuthStore, type Principal } from './auth.ts';
 import { authorize } from './access.ts';
+import { FrpTunnel } from './frp.ts';
+import { ensureFrp } from './frp-install.ts';
+import { pendingPairing, redeemPairing, revokePairing, type PendingPairing } from './pairing.ts';
+import type { RelayPairing } from '../shared/pairing.ts';
+import { remoteBase, remoteHtml, remoteManifest } from './remote-base.ts';
 import { caddyConfig, DEFAULT_REMOTE, normalizeRemote, SecretBox, secretKey, Tunnel } from './remote.ts';
 import type { AuthStatus, RemoteSettings, RemoteStatus, ShareMode } from '../shared/auth.ts';
 import { demoBackends, seedDemo, demoCommand } from './demo.ts';
@@ -67,7 +72,23 @@ function remoteSettings(): RemoteSettings {
   const { hasPassword: _stale, ...saved } = auth.setting<Partial<RemoteSettings>>('remote') ?? {};
   return { ...DEFAULT_REMOTE, localPort: envRemotePort ?? port + 1, ...saved, ...(envRemotePort ? { localPort: envRemotePort } : {}), hasPassword: !!auth.setting('remote-ssh-password') };
 }
+function sealedSetting<T>(key: string): T | null {
+  const value = auth.setting<string>(key);
+  if (!value) return null;
+  try { return JSON.parse(secrets.open(value)) as T; } catch { return null; }
+}
+const pairing = () => sealedSetting<RelayPairing>('remote-pairing');
 const tunnel = new Tunnel(dataDir);
+const frpTunnel = new FrpTunnel(dataDir);
+let remoteBusy = false;
+async function changeRemote<T>(operation: () => Promise<T>): Promise<T> {
+  if (remoteBusy) throw Object.assign(new Error('远程设置正在处理中，请稍候再试'), { status: 409 });
+  remoteBusy = true;
+  try { return await operation(); } finally { remoteBusy = false; }
+}
+function cookiePath(req: express.Request) {
+  return isRemote(req) ? `${remoteBase(remoteSettings())}/` : '/';
+}
 const terminals = new Terminals();
 const shells = new ShellTerminals();
 const nativeStatus = new NativeStatusWatcher();
@@ -343,7 +364,7 @@ function authStatus(res: express.Response): AuthStatus {
 function setDevice(req: express.Request, res: express.Response, token: string, expiresAt: string | null) {
   const secure = req.headers['x-forwarded-proto'] === 'https';
   const maxAge = expiresAt ? Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000)) : 10 * 365 * 86400;
-  res.setHeader('Set-Cookie', `${DEVICE_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`);
+  res.setHeader('Set-Cookie', `${DEVICE_COOKIE}=${encodeURIComponent(token)}; Path=${cookiePath(req)}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`);
 }
 const clientAddress = (req: express.Request) => String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
 const userAgent = (req: express.Request) => String(req.headers['user-agent'] ?? '').slice(0, 200);
@@ -363,10 +384,10 @@ app.post('/api/auth/redeem', (req, res) => {
   res.locals.principal = auth.principal(device);
   res.json(authStatus(res));
 });
-app.post('/api/auth/logout', (_req, res) => {
+app.post('/api/auth/logout', (req, res) => {
   const principal = res.locals.principal as Principal | null;
   if (principal) auth.logout(principal);
-  res.setHeader('Set-Cookie', `${DEVICE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  res.setHeader('Set-Cookie', `${DEVICE_COOKIE}=; Path=${cookiePath(req)}; HttpOnly; SameSite=Lax; Max-Age=0`);
   revalidateViewers();
   res.json({ ok: true });
 });
@@ -380,7 +401,8 @@ app.delete('/api/auth/devices/:id', (req, res) => { auth.revokeDevice(String(req
 
 function remoteStatus(): RemoteStatus {
   const settings = remoteSettings();
-  return { settings, tunnel: tunnel.status(), listening: remoteServer.listening, caddy: caddyConfig(settings) };
+  const pair = pairing();
+  return { settings, tunnel: settings.mode === 'invite' ? frpTunnel.status() : tunnel.status(), listening: remoteServer.listening, caddy: settings.mode === 'invite' ? '' : caddyConfig(settings), pairing: pair ? { deviceId: pair.deviceId, name: pair.name, serverUrl: pair.serverUrl, pairedAt: pair.pairedAt } : null };
 }
 async function applyRemote() {
   const settings = remoteSettings();
@@ -398,22 +420,58 @@ async function applyRemote() {
       remoteServer.listen(settings.localPort, '127.0.0.1', () => { remoteServer.off('error', failed); accept(); });
     });
   }
-  await tunnel.configure(settings.enabled && remoteServer.listening ? settings : null, sshPassword());
+  await tunnel.configure(settings.mode !== 'invite' && settings.enabled && remoteServer.listening ? settings : null, sshPassword());
+  const pair = pairing();
+  if (settings.mode === 'invite' && settings.enabled && !pair) fail('配对信息不可用，请重新输入邀请码', 409);
+  await frpTunnel.configure(settings.mode === 'invite' && settings.enabled && remoteServer.listening ? pair : null, settings.localPort);
 }
 app.get('/api/remote', (_req, res) => res.json(remoteStatus()));
-app.post('/api/remote', async (req, res) => {
-  const next = normalizeRemote(req.body, remoteSettings());
+app.post('/api/remote', async (req, res) => res.json(await changeRemote(async () => {
+  const current = remoteSettings();
+  const mode = req.body.mode ?? current.mode ?? 'ssh';
+  if (!['ssh', 'invite'].includes(mode)) fail('远程连接方式无效');
+  const pair = pairing();
+  let next: RemoteSettings;
+  if (mode === 'invite') {
+    if (!pair) fail('请先输入邀请码完成配对', 409);
+    // The relay assigns these values; never accept a URL or port from the browser.
+    next = { ...current, mode, publicUrl: pair!.publicUrl, serverPort: pair!.serverPort, enabled: req.body.enabled === true };
+  } else next = { ...normalizeRemote(req.body, { ...current, mode: 'ssh' }), mode: 'ssh' };
   if (next.localPort === port) fail('远程监听端口不能与本机 Web 端口相同');
-  // The password is write-only: omitted keeps it, '' clears it.
-  if (typeof req.body.sshPassword === 'string') {
-    if (req.body.sshPassword) auth.setSetting('remote-ssh-password', secrets.seal(req.body.sshPassword));
-    else auth.setSetting('remote-ssh-password', null);
-  }
+  if (next.enabled && !auth.hasPassword()) fail('请先设置所有者密码');
+  if (typeof req.body.sshPassword === 'string') auth.setSetting('remote-ssh-password', req.body.sshPassword ? secrets.seal(req.body.sshPassword) : null);
   const { localPort, hasPassword: _hasPassword, ...saved } = next;
   auth.setSetting('remote', envRemotePort ? saved : { ...saved, localPort });
   await applyRemote();
-  res.json(remoteStatus());
-});
+  return remoteStatus();
+})));
+app.post('/api/remote/pair', async (req, res) => res.json(await changeRemote(async () => {
+  if (!auth.hasPassword()) fail('请先设置所有者密码');
+  if (pairing()) fail('请先解除已有配对，再使用新的邀请码', 409);
+  const input = pendingPairing(req.body.invite, req.body.name);
+  const saved = sealedSetting<PendingPairing>('remote-pairing-pending');
+  const pending = saved?.invite === input.invite ? saved : input;
+  // Persist the claim before redeeming: a lost HTTP response can be retried safely.
+  auth.setSetting('remote-pairing-pending', secrets.seal(JSON.stringify(pending)));
+  await ensureFrp(dataDir);
+  const pair = await redeemPairing(pending);
+  auth.setSetting('remote-pairing', secrets.seal(JSON.stringify(pair)));
+  auth.setSetting('remote-pairing-pending', null);
+  auth.setSetting('remote', { ...remoteSettings(), mode: 'invite', enabled: true, publicUrl: pair.publicUrl, serverPort: pair.serverPort });
+  await applyRemote();
+  return remoteStatus();
+})));
+app.delete('/api/remote/pair', async (_req, res) => res.json(await changeRemote(async () => {
+  const pair = pairing();
+  if (!pair) fail('尚未配对', 409);
+  // Stop exposure even if the relay is offline; retain credentials for retrying revoke.
+  auth.setSetting('remote', { ...remoteSettings(), enabled: false });
+  await applyRemote();
+  await revokePairing(pair!);
+  auth.setSetting('remote-pairing', null);
+  auth.setSetting('remote', { ...remoteSettings(), mode: 'ssh', enabled: false, publicUrl: '' });
+  return remoteStatus();
+})));
 
 const shareUrl = (secret: string) => `${remoteSettings().publicUrl || `http://127.0.0.1:${remoteSettings().localPort}`}/#/share/${secret}`;
 app.get('/api/sessions/:id/shares', (req, res) => { session(String(req.params.id)); res.json(auth.shares(String(req.params.id))); });
@@ -1021,8 +1079,16 @@ if (process.argv.includes('--dev')) {
 } else {
   const dist = resolve(process.env.SESSIONDECK_CLIENT_DIR || join(root, 'dist/client'));
   if (!existsSync(join(dist, 'index.html'))) console.warn('尚未构建前端，请先 npm run build，或使用 npm run dev。');
-  app.use(express.static(dist));
-  app.get('/{*path}', (_req, res) => res.sendFile(join(dist, 'index.html')));
+  app.get('/manifest.webmanifest', (req, res, next) => {
+    const base = isRemote(req) ? remoteBase(remoteSettings()) : '';
+    if (!base) return next();
+    res.type('application/manifest+json').send(remoteManifest(readFileSync(join(dist, 'manifest.webmanifest'), 'utf8'), base));
+  });
+  app.use(express.static(dist, { index: false }));
+  app.get('/{*path}', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(remoteHtml(readFileSync(join(dist, 'index.html'), 'utf8'), isRemote(req) ? remoteBase(remoteSettings()) : ''));
+  });
 }
 app.use((error: Error & { status?: number; code?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(error.status || 400).json({ error: error.message || '操作失败', code: error.code });
@@ -1059,7 +1125,7 @@ function shutdown(exitCode = 0) {
   // Exiting directly in server.close used to orphan a slow native process and
   // let a replacement instance race it against the same native history.
   void (async () => {
-    const results = await Promise.allSettled([httpClosed, tunnel.close(), terminals.close(), shells.close(), dsh.close(), codexBridge.close()]);
+    const results = await Promise.allSettled([httpClosed, tunnel.close(), frpTunnel.close(), terminals.close(), shells.close(), dsh.close(), codexBridge.close()]);
     for (const result of results) if (result.status === 'rejected') { console.error('关闭原生资源失败：', result.reason instanceof Error ? result.reason.message : String(result.reason)); exitCode = 1; }
     try { publisher.close(); store.close(); }
     finally { await instanceLock.release(); }

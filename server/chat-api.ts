@@ -151,7 +151,8 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     const { created, submission } = submissions.begin(item.id, id, item.nativeSessionId!, text);
     if (!created) return res.status(submission.status === 'unknown' || submission.status === 'sending' ? 202 : 200).json(submission);
     try {
-      const result = await bridge.sendPrompt(item.nativeSessionId!, text);
+      const model = typeof req.body.model === 'string' && /^[a-zA-Z0-9._:-]{1,100}$/.test(req.body.model) ? req.body.model : undefined;
+      const result = await bridge.sendPrompt(item.nativeSessionId!, text, model);
       if (options.closing()) return;
       const accepted = submissions.finish(item.id, id, { status: 'accepted', turnId: result.turnId });
       res.json(accepted);

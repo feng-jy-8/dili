@@ -37,7 +37,7 @@ export function allowedRemoteRequest(req: Pick<IncomingMessage, 'headers' | 'met
   const hosts = new Set([`127.0.0.1:${localPort}`, `localhost:${localPort}`, ...(publicHost ? [publicHost] : [])]);
   if (!hosts.has(requestHost)) return false;
   const origin = req.headers.origin;
-  const origins = new Set([`http://127.0.0.1:${localPort}`, `http://localhost:${localPort}`, ...(publicUrl ? [publicUrl] : [])]);
+  const origins = new Set([`http://127.0.0.1:${localPort}`, `http://localhost:${localPort}`, ...(publicUrl ? [new URL(publicUrl).origin] : [])]);
   if (origin && !origins.has(origin)) return false;
   // Browsers always send Origin on cross-origin mutations; require it remotely
   // so a missing header cannot stand in for a same-origin request.

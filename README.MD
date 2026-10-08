@@ -485,3 +485,8 @@ scripts/restart-service.sh    # 每次重启：在独立会话里后台执行，
 **遇到请求超时。** 启动、停止或 Fork 需要等待原生程序响应，页面会保留更长的等待时间。若仍提示超时，先刷新状态并查看是否已经完成，再决定重试。投递显示“结果待确认”时，进入原生会话核对，再选择已收到或未收到；不要重复提交尚未核对的任务。
 
 **保存数据。** 联系人名称、群组和投递记录保存在本机 SQLite；使用 `npm run backup` 生成一致性备份。后端自身的对话历史仍保存在各原生工具中。群组草稿保存在当前浏览器；Codex 私聊草稿和待确认标识保存在当前标签页，均不包含在服务器数据库备份里。
+# 邀请码远程配对
+
+管理员打开 `https://discoverpaw.com/connect/`，使用服务器上的管理密钥生成一次性邀请码。本机 SessionDeck 在“连接与能力 → 远程访问”粘贴邀请码并填写设备名称，服务会自动安装并启动官方 frp 客户端，生成可复制的设备链接。手机打开设备链接后使用 SessionDeck 所有者密码登录。
+
+中继服务运行在 `paw` 的 `sessiondeck-relay.service`，frp 服务运行在 `sessiondeck-frps.service`；两个服务只监听回环地址，Caddy 通过 `/connect/` 和 `/~!frp` 转发。管理密钥保存在 `/var/lib/sessiondeck-relay/admin.token`，不会写入仓库或 URL。现有 SSH 远程方式仍可在高级设置中使用。

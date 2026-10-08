@@ -1,3 +1,4 @@
+import { appUrl } from './urls';
 let tokenPromise: Promise<string> | undefined;
 
 export class ApiError extends Error {
@@ -6,7 +7,7 @@ export class ApiError extends Error {
 
 async function request(url: string, options?: RequestInit, timeoutMs = 30_000) {
   try {
-    return await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+    return await fetch(appUrl(url), { ...options, signal: AbortSignal.timeout(timeoutMs) });
   } catch (cause) {
     if (cause instanceof Error && (cause.name === 'TimeoutError' || cause.name === 'AbortError')) {
       throw new Error(options?.method && options.method !== 'GET'
@@ -31,7 +32,7 @@ export async function api<T>(path: string, body?: unknown, method?: string): Pro
   const mutation = body !== undefined || (method && method !== 'GET');
   // A cold native start/Fork includes process readiness and several bounded
   // native RPCs. Let the server finish those before offering a retry in the UI.
-  const timeoutMs = mutation && /^\/sessions\/[^/]+\/(?:start|fork|stop)$/.test(path) ? 90_000 : 30_000;
+  const timeoutMs = path === '/remote/pair' ? 240_000 : mutation && /^\/sessions\/[^/]+\/(?:start|fork|stop)$/.test(path) ? 90_000 : 30_000;
   // Signing in happens before a device (and its CSRF token) exists; the server
   // checks Origin for these instead.
   const preAuth = /^\/auth\/(?:login|redeem|logout)$/.test(path);
@@ -62,7 +63,7 @@ export async function uploadTerminalImage(sessionId: string, terminalId: string,
   const timeout = window.setTimeout(() => controller.abort(), 60_000);
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
-  const send = async (token: string) => fetch(`/api/sessions/${encodeURIComponent(sessionId)}/terminal/image`, {
+  const send = async (token: string) => fetch(appUrl(`/api/sessions/${encodeURIComponent(sessionId)}/terminal/image`), {
     method: 'POST',
     headers: { 'Content-Type': image.type, 'X-SessionDeck-Token': token, 'X-SessionDeck-Terminal': terminalId },
     body: image,

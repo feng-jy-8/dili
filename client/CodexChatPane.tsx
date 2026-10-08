@@ -1,3 +1,4 @@
+import { appUrl } from './urls';
 import { memo, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowDownToLine, Check, ChevronRight, CircleAlert, LoaderCircle, MessageSquare, RefreshCw, Send, Square, TerminalSquare } from 'lucide-react';
 import type { Session } from '../shared/types';
@@ -84,6 +85,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [model, setModel] = useState(() => localStorage.getItem(`sessiondeck.codex-model.${session.id}`) || '');
   const [checking, setChecking] = useState(false);
   const [checkedUnknown, setCheckedUnknown] = useState(false);
   const [checkNotice, setCheckNotice] = useState('');
@@ -139,7 +141,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
       return refreshJob;
     }
     readSnapshot.current = refresh;
-    const source = new EventSource(`/api/sessions/${encodeURIComponent(session.id)}/chat/events`);
+    const source = new EventSource(appUrl(`/api/sessions/${encodeURIComponent(session.id)}/chat/events`));
     source.onopen = () => { if (!disposed) { sourceReset = true; setTransport(true); } };
     source.onerror = () => { if (!disposed) setTransport(false); };
     source.addEventListener('unavailable', event => {
@@ -240,7 +242,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
       const next = { ...draftRef.current, pending };
       if (!saveDraft(session.id, next)) throw new Error('无法保存本次发送状态。请允许此站点使用浏览器存储后重试。');
       updateDraft(next);
-      const result = await api<CodexChatSubmission>(`/sessions/${session.id}/chat/messages`, { text, requestId: pending.requestId });
+      const result = await api<CodexChatSubmission>(`/sessions/${session.id}/chat/messages`, { text, requestId: pending.requestId, ...(model ? { model } : {}) });
       if (result.status === 'accepted') accepted(pending);
       else if (result.status === 'rejected') { const current = active.current ? draftRef.current : readDraft(session.id); if (current.pending?.requestId === pending.requestId) updateDraft({ ...current, pending: null }); if (active.current) setError(result.error || '消息未被接收，草稿已保留。'); }
       else if (active.current) setCheckNotice(result.status === 'sending' ? '消息正在提交，请查询发送结果。' : '发送结果尚未确认，请查询结果后继续。');
@@ -257,7 +259,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const nativeAvailable = !session.running || !!snapshot?.connected;
   const canSend = !!draft.text.trim() && !busy && !draft.pending && transport && nativeAvailable && !hasTurn && !snapshot?.requests.length && !session.archived;
   return <section className="codex-chat-pane" aria-label="Codex 图形会话">
-    <header className="codex-chat-toolbar"><span><MessageSquare size={15} /><strong>Codex</strong><i className={transport && nativeAvailable ? 'online' : ''} />{!transport ? '连接中' : snapshot?.requests.length ? '需要你回复' : hasTurn ? '正在处理' : session.running ? '已连接' : '尚未启动'}</span><div><button className="icon-button" type="button" aria-label="刷新对话" title="刷新对话" onClick={() => void readSnapshot.current()}><RefreshCw size={14} /></button><button type="button" className="text-button" onClick={onTerminal}><TerminalSquare size={14} />原生终端</button></div></header>
+    <header className="codex-chat-toolbar"><span><MessageSquare size={15} /><strong>Codex</strong><i className={transport && nativeAvailable ? 'online' : ''} />{!transport ? '连接中' : snapshot?.requests.length ? '需要你回复' : hasTurn ? '正在处理' : session.running ? '已连接' : '尚未启动'}</span><div><label className="codex-model-select">模型<input aria-label="当前会话模型" list="codex-models" value={model} placeholder="默认" onChange={event => { setModel(event.target.value); localStorage.setItem(`sessiondeck.codex-model.${session.id}`, event.target.value); }} /></label><datalist id="codex-models"><option value="gpt-5-codex" /><option value="o3" /><option value="gpt-4.1" /></datalist><button className="icon-button" type="button" aria-label="刷新对话" title="刷新对话" onClick={() => void readSnapshot.current()}><RefreshCw size={14} /></button><button type="button" className="text-button" onClick={onTerminal}><TerminalSquare size={14} />原生终端</button></div></header>
     {!transport && !loading && <div className="codex-chat-banner" role="status">与本地服务的连接已中断，正在重连。草稿已保留。</div>}
     {error && <div className="codex-chat-error" role="alert"><span>{error}</span><button type="button" className="text-button" onClick={() => { setError(''); void readSnapshot.current(); }}>重新读取</button></div>}
     {snapshot?.notice && <p className="codex-chat-notice">{snapshot.notice}</p>}

@@ -1,3 +1,4 @@
+import { appUrl } from './urls';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, Archive, Bell, BellOff, Check, CheckCheck,
@@ -332,7 +333,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   }, [selectedId, markRead]);
   useEffect(() => {
     void refresh().catch(() => {});
-    const stream = new EventSource('/api/events');
+    const stream = new EventSource(appUrl('/api/events'));
     // Pings arrive every 20 s. A stream that goes quiet for longer is stuck
     // somewhere (a buffering proxy, a half-open connection), so poll the full
     // state until it recovers rather than showing stale cards indefinitely.

@@ -187,7 +187,7 @@ export class CodexBridge {
 
   /** The retained connection must own this request so approvals and questions
    * remain answerable after turn/start returns. No native policy is overridden. */
-  async sendPrompt(id: string, text: string): Promise<{ turnId: string }> {
+  async sendPrompt(id: string, text: string, model?: string): Promise<{ turnId: string }> {
     const rejected = (message: string): Error => Object.assign(new Error(message), { deliveryUnknown: false });
     try { validateNativeId('codex', id); } catch { throw rejected('无效的原生会话 ID'); }
     if (typeof text !== 'string' || !text.trim() || text.length > 32_000 || text.includes('\0')) throw rejected('消息不能为空且最多 32000 字符');
@@ -200,7 +200,7 @@ export class CodexBridge {
     const basis = snapshot?.revision ?? 0;
     try {
       let response: RpcMessage;
-      try { response = await this.call(connection, 'turn/start', { threadId: id, input: [{ type: 'text', text, text_elements: [] }] }); }
+      try { response = await this.call(connection, 'turn/start', { threadId: id, ...(model ? { model } : {}), input: [{ type: 'text', text, text_elements: [] }] }); }
       catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { deliveryUnknown: true }); }
       if (response.error) throw Object.assign(this.rpcError(response, 'Codex 未接受消息'), { deliveryUnknown: false });
       const turn = (response.result as { turn?: { id?: string } } | undefined)?.turn;

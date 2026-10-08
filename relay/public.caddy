@@ -1,0 +1,23 @@
+# Import inside your existing HTTPS site. No additional public ports or DNS.
+handle /~!frp {
+  reverse_proxy 127.0.0.1:18502
+}
+handle /connect/d/* {
+  forward_auth 127.0.0.1:18501 {
+    uri /internal/route
+    copy_headers X-SessionDeck-Upstream X-SessionDeck-Prefix
+  }
+  uri strip_prefix {http.request.header.X-SessionDeck-Prefix}
+  reverse_proxy {http.request.header.X-SessionDeck-Upstream} {
+    header_up -X-SessionDeck-Upstream
+    header_up -X-SessionDeck-Prefix
+    flush_interval -1
+  }
+}
+handle /connect/* {
+  reverse_proxy 127.0.0.1:18501 {
+    flush_interval -1
+  }
+}
+@connectRoot path /connect
+redir @connectRoot /connect/ 308

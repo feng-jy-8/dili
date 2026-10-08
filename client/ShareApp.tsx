@@ -1,3 +1,4 @@
+import { appUrl } from './urls';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Folder, Layers3, LoaderCircle, LogOut, MessageSquare, Play, Square, TerminalSquare } from 'lucide-react';
 import type { AppState, Session } from '../shared/types';
@@ -34,7 +35,7 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
   }, []);
   useEffect(() => {
     void api<AppState>('/state').then(accept).catch(cause => setError(cause.message));
-    const stream = new EventSource('/api/events');
+    const stream = new EventSource(appUrl('/api/events'));
     stream.onopen = () => setConnected(true);
     stream.onerror = () => setConnected(false);
     // Shares always receive filtered full snapshots, never workspace patches.

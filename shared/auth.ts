@@ -29,8 +29,9 @@ export type AuthStatus =
   | { kind: 'share'; remote: boolean; sessionId: string; mode: ShareMode; name: string };
 
 export interface RemoteSettings {
+  mode?: 'ssh' | 'invite';
   enabled: boolean;
-  /** Public origin, for example https://deck.example.com */
+  /** Public address; invite connections may include a device path. */
   publicUrl: string;
   /** Loopback port on this machine that the tunnel exposes. Always requires login. */
   localPort: number;
@@ -52,4 +53,5 @@ export interface RemoteStatus {
   tunnel: { state: TunnelState; since: string | null; error: string; attempts: number };
   listening: boolean;
   caddy: string;
+  pairing?: { deviceId: string; name: string; serverUrl: string; pairedAt: string } | null;
 }

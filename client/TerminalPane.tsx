@@ -1,3 +1,4 @@
+import { appUrl } from './urls';
 import { useEffect, useRef, useState, type ClipboardEvent, type ChangeEvent } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -193,7 +194,7 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
         const token = await getToken(true);
         if (disposed) return;
         const path = channel === 'shell' ? `/api/shells/${encodeURIComponent(sessionId)}/terminal` : `/api/terminal/${encodeURIComponent(sessionId)}`;
-        socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${path}?token=${encodeURIComponent(token)}`);
+        socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${appUrl(path)}?token=${encodeURIComponent(token)}`);
         socketRef.current = socket;
         socket.onopen = () => {
           if (disposed) { socket?.close(); return; }

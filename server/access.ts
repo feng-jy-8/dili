@@ -24,6 +24,8 @@ export const ROUTES: Route[] = [
   { method: 'DELETE', path: '/api/auth/devices/:id', access: 'owner' },
   { method: 'GET', path: '/api/remote', access: 'owner' },
   { method: 'POST', path: '/api/remote', access: 'local' },
+  { method: 'POST', path: '/api/remote/pair', access: 'local' },
+  { method: 'DELETE', path: '/api/remote/pair', access: 'local' },
   { method: 'GET', path: '/api/sessions/:id/shares', access: 'owner' },
   { method: 'POST', path: '/api/sessions/:id/shares', access: 'owner' },
   { method: 'DELETE', path: '/api/shares/:id', access: 'owner' },

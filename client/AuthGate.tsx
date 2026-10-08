@@ -1,3 +1,4 @@
+import { appUrl } from './urls';
 import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from 'react';
 import { KeyRound, Layers3, LoaderCircle, UserRound } from 'lucide-react';
 import type { AuthStatus } from '../shared/auth';
@@ -14,7 +15,7 @@ export default function AuthGate() {
   const [shareToken] = useState(() => SHARE_HASH.exec(location.hash)?.[1] ?? null);
   const load = useCallback(async () => {
     try {
-      const response = await fetch('/api/auth/status');
+      const response = await fetch(appUrl('/api/auth/status'));
       if (!response.ok) throw new Error(`无法连接 SessionDeck（${response.status}）`);
       setStatus(await response.json() as AuthStatus); setError('');
     } catch (cause) { setError(cause instanceof Error ? cause.message : '无法连接 SessionDeck'); }

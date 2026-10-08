@@ -70,6 +70,8 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
   const [remote, setRemote] = useState<RemoteStatus | null>(null);
   const [draft, setDraft] = useState<RemoteSettings | null>(null);
   const [sshPassword, setSshPassword] = useState('');
+  const [invite, setInvite] = useState('');
+  const [deviceName, setDeviceName] = useState('我的电脑');
   const [devices, setDevices] = useState<AuthDevice[]>([]);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -99,7 +101,7 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
   };
   const saveRemote = (enabled: boolean) => draft && run('remote', async () => {
     const { hasPassword: _saved, ...settings } = draft;
-    const status = await api<RemoteStatus>('/remote', { ...settings, enabled, ...(sshPassword ? { sshPassword } : {}) });
+    const status = await api<RemoteStatus>('/remote', remote?.settings.mode === 'invite' ? { mode: 'invite', enabled } : { ...settings, mode: 'ssh', enabled, ...(sshPassword ? { sshPassword } : {}) });
     setRemote(status); setDraft(status.settings); setSshPassword('');
   }, enabled ? '已保存并连接远程访问' : '已停用远程访问');
   const field = (key: keyof RemoteSettings, label: string, placeholder = '', type = 'text') => <label className="form-label">{label}<input disabled={!local} type={type} placeholder={placeholder} value={String(draft?.[key] ?? '')} onChange={event => setDraft(current => current && { ...current, [key]: type === 'number' ? Number(event.target.value) : event.target.value })} /></label>;
@@ -116,6 +118,26 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
     </form> : <p className="form-note">{passwordSet ? '已设置。' : '未设置。'}</p>}
 
     <h3>远程访问</h3>
+    <p className="form-note">在中继管理页生成邀请码，粘贴到这里。连接成功后，用远程链接和所有者密码即可在手机访问。</p>
+    {local && !passwordSet && <p className="form-note"><CircleAlert size={14} />请先设置所有者密码，再进行配对。</p>}
+    {remote?.pairing === undefined ? <p className="form-note">本机服务更新后支持邀请码配对。</p> : remote.pairing ? <div className="invite-pairing">
+      <strong><MonitorSmartphone size={15} /> {remote.pairing.name}</strong>
+      <div className="share-created"><Link2 size={14} /><a href={`${remote.settings.publicUrl}/`} target="_blank" rel="noreferrer">{remote.settings.publicUrl}/</a><button className="icon-button" aria-label="复制远程链接" onClick={() => void copyToClipboard(`${remote.settings.publicUrl}/`).then(() => notify('远程链接已复制'))}><Copy size={14} /></button></div>
+      <p className="form-note">已配对 · {when(remote.pairing.pairedAt)}</p>
+      {local && <button className="button secondary small-button" disabled={!!busy} onClick={() => {
+        if (!window.confirm('解除配对将撤销这台电脑的远程链接。继续？')) return;
+        void run('unpair', async () => { const status = await api<RemoteStatus>('/remote/pair', {}, 'DELETE'); setRemote(status); setDraft(status.settings); }, '已解除配对，旧链接已撤销');
+      }}><Unplug size={13} />解除配对</button>}
+    </div> : local && <form className="invite-pairing" onSubmit={event => {
+      event.preventDefault();
+      void run('pair', async () => { const status = await api<RemoteStatus>('/remote/pair', { invite: invite.trim(), name: deviceName.trim() }); setRemote(status); setDraft(status.settings); setInvite(''); }, '配对成功，远程链接已生成');
+    }}>
+      <label className="form-label">设备名称<input value={deviceName} maxLength={80} required onChange={event => setDeviceName(event.target.value)} placeholder="例如：家里的工作站" /></label>
+      <label className="form-label">邀请码<textarea aria-label="邀请码" value={invite} onChange={event => setInvite(event.target.value)} placeholder="粘贴 SD1. 开头的邀请码" rows={3} maxLength={1600} required spellCheck={false} autoComplete="off" /></label>
+      <div className="invite-actions"><button className="button primary small-button" disabled={!!busy || !passwordSet || !invite.trim() || !deviceName.trim()}>{busy === 'pair' ? <LoaderCircle size={13} className="spin" /> : <Link2 size={13} />}{busy === 'pair' ? '正在配对…' : '配对并生成链接'}</button><a href="https://discoverpaw.com/connect/" target="_blank" rel="noreferrer">打开中继管理页</a></div>
+      {busy === 'pair' && <p className="form-note">首次连接会准备中继客户端，可能需要几分钟。请保持页面打开。</p>}
+    </form>}
+    {(!remote?.pairing || remote.settings.mode !== 'invite') && <details className="security-caddy" open={remote?.settings.enabled && remote.settings.mode !== 'invite'}><summary>高级：手动 SSH 连接</summary>
     <p className="form-note">SessionDeck 从这台电脑通过 SSH 连到你的服务器，服务器上的 Caddy 用你的域名提供 HTTPS。电脑不需要公网 IP。</p>
     <div className="security-grid">
       {field('publicUrl', '公开地址', 'https://deck.example.com')}
@@ -126,17 +148,19 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
       {field('identityFile', 'SSH 密钥（可选）', '~/.ssh/id_ed25519')}
       {field('serverPort', '服务器转发端口', '17317', 'number')}
     </div>
-    <div className="security-status">
-      <span className={`status-badge ${tunnel?.state === 'connected' ? 'running' : tunnel?.state === 'error' ? 'error' : 'idle'}`}><i />{tunnel ? tunnelLabel[tunnel.state] : '读取中'}</span>
-      {tunnel?.error && <small title={tunnel.error}>{tunnel.error}</small>}
-      {local && <div>{remote?.settings.enabled ? <><button className="button secondary small-button" disabled={!!busy} onClick={() => void saveRemote(true)}><Plug size={13} />保存并重连</button><button className="button secondary small-button" disabled={!!busy} onClick={() => void saveRemote(false)}><Unplug size={13} />停用</button></> : <button className="button primary small-button" disabled={!!busy || !passwordSet} title={passwordSet ? undefined : '请先设置所有者密码'} onClick={() => void saveRemote(true)}>{busy === 'remote' ? <LoaderCircle size={13} className="spin" /> : <Globe size={13} />}启用远程访问</button>}</div>}
-    </div>
     {local && !passwordSet && <p className="form-note"><CircleAlert size={14} />启用远程访问前请先设置所有者密码。</p>}
     <details className="security-caddy"><summary>服务器配置（一次性）</summary>
       <ol><li>确认服务器已安装 Caddy，并把域名解析到服务器 IP。</li><li>把下面的配置写入 <code>/etc/caddy/Caddyfile</code>，然后执行 <code>sudo systemctl reload caddy</code>。</li><li>确认这台电脑能 SSH 登录服务器（<code>ssh {draft?.sshUser || 'user'}@{draft?.sshHost || (() => { try { return new URL(draft?.publicUrl ?? '').hostname; } catch { return 'server'; } })()}</code>）：配置密钥，或在上面填写 SSH 密码。</li></ol>
       <pre>{remote?.caddy}</pre>
       <button className="text-button" onClick={() => remote && void copyToClipboard(remote.caddy).then(() => notify('已复制 Caddy 配置'))}><Copy size={13} />复制配置</button>
     </details>
+
+    </details>}
+    <div className="security-status">
+      <span className={`status-badge ${tunnel?.state === 'connected' ? 'running' : tunnel?.state === 'error' ? 'error' : 'idle'}`}><i />{tunnel ? tunnelLabel[tunnel.state] : '读取中'}</span>
+      {tunnel?.error && <small title={tunnel.error}>{tunnel.error}</small>}
+      {local && <div>{remote?.settings.enabled ? <><button className="button secondary small-button" disabled={!!busy} onClick={() => void saveRemote(true)}><Plug size={13} />保存并重连</button><button className="button secondary small-button" disabled={!!busy} onClick={() => void saveRemote(false)}><Unplug size={13} />停用</button></> : <button className="button primary small-button" disabled={!!busy || !passwordSet} title={passwordSet ? undefined : '请先设置所有者密码'} onClick={() => void saveRemote(true)}>{busy === 'remote' ? <LoaderCircle size={13} className="spin" /> : <Globe size={13} />}启用远程访问</button>}</div>}
+    </div>
 
     <h3>已登录的远程设备</h3>
     {!devices.length ? <p className="form-note">还没有远程登录的设备。</p> : <ul className="share-list">{devices.map(item => <li key={item.id}><div><strong><MonitorSmartphone size={13} />{device(item.userAgent)}</strong><small>最近使用 {when(item.lastSeenAt)} · 到期 {when(item.expiresAt)}</small></div>
