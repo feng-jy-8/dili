@@ -34,7 +34,10 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
     next();
   });
   app.get('/connect/api/admin/state', (_req, res) => res.json({ devices: store.devices(), invites: store.invites() }));
-  app.post('/connect/api/admin/invites', (req, res) => res.status(201).json(store.createInvite(serverUrl, req.body.label ?? '', req.body.hours ?? 24)));
+  app.post('/connect/api/admin/invites', (req, res) => {
+    const hours = req.body.permanent === true ? null : req.body.hours ?? 24;
+    res.status(201).json(store.createInvite(serverUrl, req.body.label ?? '', hours));
+  });
   app.delete('/connect/api/admin/invites/:id', (req, res) => { store.revokeInvite(String(req.params.id)); res.json({ ok: true }); });
   app.delete('/connect/api/admin/devices/:id', (req, res) => { store.revokeDevice(String(req.params.id)); res.json({ ok: true }); });
 
