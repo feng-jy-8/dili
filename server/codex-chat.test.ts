@@ -46,6 +46,8 @@ test('Codex graphical read never resumes; prompt keeps its observer and streams 
   assert.equal((await bridge.readChat(threadId)).connected, false);
   assert.equal(f.calls.some(call => call.message.method === 'thread/resume'), false);
   await bridge.openSession(threadId, '/tmp');
+  const resume = f.calls.find(call => call.message.method === 'thread/resume');
+  assert.equal(resume?.message.params?.excludeTurns, true);
   const changes: number[] = [];
   const unsubscribe = bridge.onChat((id, snapshot) => { assert.equal(id, threadId); changes.push(snapshot.revision); });
   t.after(unsubscribe);

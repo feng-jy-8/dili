@@ -73,7 +73,12 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
       } catch (error) {
         if (options.closing() || (error as { status?: number }).status === 409) throw error;
         const cached = bridge.chatSnapshot(identity);
-        if (cached) return nativeView(session(id), cached);
+        // A complete native history can exceed the WebSocket frame limit.
+        // Prefer the bounded local reader in that case; returning the empty
+        // observer snapshot would hide the imported transcript altogether.
+        const message = error instanceof Error ? error.message : String(error);
+        const payloadTooLarge = /payload size exceeded|max payload|message too large/i.test(message);
+        if (cached && !payloadTooLarge) return nativeView(session(id), cached);
       }
     }
     const transcript = options.demo ? { messages: [], truncated: false, notice: '演示终端不调用真实 Codex，请连接原生 Codex 使用图形化聊天。' } : await conversations.read(item);

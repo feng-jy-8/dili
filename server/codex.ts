@@ -170,8 +170,11 @@ export class CodexBridge {
     const generation = this.bootGeneration;
     await this.observing.get(id)?.promise;
     if (!this.ready || generation !== this.bootGeneration) throw new Error('Codex 图形会话已停止，请重新打开');
-    const observer = this.observers.get(id);
-    const connection = observer ?? await this.connect(false);
+    // Keep history reads on a short-lived connection. A native thread can
+    // contain many megabytes of turns; if the response exceeds the payload
+    // limit, only this read must be sacrificed and the live observer must stay
+    // available for status, prompts and approvals.
+    const connection = await this.connect(false);
     const basis = this.chat.get(id)?.revision ?? 0;
     try {
       const response = await this.call(connection, 'thread/read', { threadId: id, includeTurns: true });
@@ -179,7 +182,7 @@ export class CodexBridge {
       if (connection.closed || connection.generation !== this.bootGeneration) throw new Error('Codex 对话读取连接已失效');
       const retained = this.observers.get(id);
       return this.chat.reconcile(id, (response.result as { thread?: Thread } | undefined)?.thread, basis, !!retained && !retained.closed);
-    } finally { if (!observer) { this.closeConnection(connection); this.connections.delete(connection); } }
+    } finally { this.closeConnection(connection); this.connections.delete(connection); }
   }
 
   /** The retained connection must own this request so approvals and questions
@@ -634,9 +637,11 @@ export class CodexBridge {
         // Register before resume: a pending approval can be replayed before the
         // resume response, and must stay bound to this retained connection.
         this.retainObserver(threadId, connection);
-        // Include the native turns once on (re)connection. A completion can
-        // occur while our observer is offline, without the TUI disconnecting.
-        const response = await this.call(connection, 'thread/resume', { threadId, excludeTurns: false, ...(cwd ? { cwd: resolve(cwd) } : {}) });
+        // Do not replay the complete native history while reconnecting. An
+        // imported thread can be much larger than the WebSocket payload limit;
+        // history is loaded separately when needed and live notifications keep
+        // the retained observer current.
+        const response = await this.call(connection, 'thread/resume', { threadId, excludeTurns: true, ...(cwd ? { cwd: resolve(cwd) } : {}) });
         assertActive();
         if (response.error) throw this.rpcError(response, 'Codex 会话恢复失败');
         const thread = (response.result as { thread?: Thread } | undefined)?.thread;
@@ -749,7 +754,10 @@ export class CodexBridge {
       }
       let turnId = this.turnIds.get(id);
       if (!turnId) {
-        const current = await this.call(connection, 'thread/read', { threadId: id, includeTurns: true });
+        // The fallback only needs the current status. If no turn ID was
+        // observed on this connection, report that clearly instead of
+        // requesting all historical turns and exceeding the payload limit.
+        const current = await this.call(connection, 'thread/read', { threadId: id, includeTurns: false });
         if (current.error) throw this.rpcError(current, '无法读取 Codex 当前任务');
         const thread = (current.result as { thread?: Thread } | undefined)?.thread;
         if (thread?.id !== id) throw new Error('Codex 返回了不匹配的停止目标');
