@@ -106,12 +106,12 @@ test('keyboard navigation keeps modal focus, leaves the workbench interactive, a
   await card.click();
   const drawer = page.getByRole('dialog', { name: 'SessionDeck · 开发笔记 的私聊' });
   await expect(drawer).toBeVisible();
-  // The session replaces the card grid in the workbench (other sessions are
-  // tabs); it is not a modal, so navigation and the terminal dock stay usable.
+  // Contacts remain alongside the nonmodal conversation on desktop.
   await expect(page.locator('main')).not.toHaveAttribute('inert');
-  await expect(page.locator('main')).toBeHidden();
+  await expect(page.getByRole('main', { name: '联系人列表' })).toBeVisible();
   await expect(drawer).toHaveAttribute('aria-modal', 'false');
-  await expect(drawer.getByRole('tab', { name: /SessionDeck · 开发笔记/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(card).toHaveAttribute('aria-current', 'true');
+  await expect(page.getByRole('tablist', { name: '打开的会话' })).toHaveCount(0);
   await page.getByLabel('原生会话终端输入').focus();
   await page.keyboard.press('Escape');
   await expect(drawer).toBeVisible();
@@ -296,6 +296,76 @@ async function mockWorkspace(page: import('@playwright/test').Page, change: (sta
   return state;
 }
 
+test('desktop contacts switch the conversation beside the list and preserve resized widths without stopping agents', async ({ page }) => {
+  const state = await mockWorkspace(page, state => {
+    state.sessions = state.sessions.filter(session => !session.groupId && !session.archived).slice(0, 2).map(session => ({ ...session, running: true, status: 'running', unread: 0, lastUserInput: '继续完成当前任务' }));
+  });
+  const [first, second] = state.sessions;
+  const processMutations: string[] = [];
+  page.on('request', request => { if (/\/sessions\/[^/]+\/(start|stop)$/.test(request.url())) processMutations.push(request.url()); });
+  await page.goto('/');
+  const list = page.getByRole('main', { name: '联系人列表' });
+  await list.getByRole('button', { name: `进入 ${first.title} 的会话`, exact: true }).click();
+  const conversation = page.getByRole('dialog', { name: `${first.title} 的私聊` });
+  await expect(list).toBeVisible();
+  await expect(conversation).toBeVisible();
+  await expect(page.getByRole('tablist', { name: '打开的会话' })).toHaveCount(0);
+  const listBounds = (await list.boundingBox())!;
+  const conversationBounds = (await conversation.boundingBox())!;
+  expect(conversationBounds.x).toBeGreaterThanOrEqual(listBounds.x + listBounds.width - 1);
+  expect(Math.abs(conversationBounds.y - listBounds.y)).toBeLessThan(2);
+  await list.getByRole('button', { name: `进入 ${second.title} 的会话`, exact: true }).click();
+  await expect(page.getByRole('dialog', { name: `${second.title} 的私聊` })).toBeVisible();
+  await expect(list.getByRole('button', { name: `进入 ${second.title} 的会话`, exact: true })).toHaveAttribute('aria-current', 'true');
+  const splitter = page.getByRole('separator', { name: '调整联系人列表宽度' });
+  const initial = Number(await splitter.getAttribute('aria-valuenow'));
+  const box = (await splitter.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2);
+  await page.mouse.up();
+  await expect(splitter).toHaveAttribute('aria-valuenow', String(initial + 40));
+  await splitter.press('ArrowLeft');
+  await expect(splitter).toHaveAttribute('aria-valuenow', String(initial + 16));
+  await page.reload();
+  await expect(splitter).toHaveAttribute('aria-valuenow', String(initial + 16));
+  await expect(page.getByRole('dialog', { name: `${second.title} 的私聊` })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/contacts-desktop-conversation.png', animations: 'disabled' });
+  await page.getByRole('button', { name: '关闭会话', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(list).toBeVisible();
+  expect(processMutations).toEqual([]);
+});
+
+test('phones show only the selected conversation and back or close always returns to contacts', async ({ page }) => {
+  const state = await mockWorkspace(page, state => {
+    state.sessions = state.sessions.filter(session => !session.groupId && !session.archived).slice(0, 2).map(session => ({ ...session, running: true, status: 'running', unread: 0 }));
+  });
+  const [first, second] = state.sessions;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const list = page.getByRole('main', { name: '联系人列表' });
+  await list.getByRole('button', { name: `进入 ${first.title} 的会话`, exact: true }).click();
+  await expect(list).toBeHidden();
+  await expect(page.getByRole('dialog', { name: `${first.title} 的私聊` })).toBeVisible();
+  await expect(page.getByRole('button', { name: '返回联系人列表' })).toBeInViewport();
+  await page.screenshot({ path: 'artifacts/contacts-mobile-conversation.png', animations: 'disabled' });
+  await page.getByRole('button', { name: '返回联系人列表' }).click();
+  await expect(list).toBeVisible();
+  await list.getByRole('button', { name: `进入 ${second.title} 的会话`, exact: true }).click();
+  await page.getByRole('button', { name: '关闭会话', exact: true }).click();
+  await expect(list).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await list.getByRole('button', { name: `进入 ${first.title} 的会话`, exact: true }).click();
+  await page.goBack();
+  await expect(list).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.setViewportSize({ width: 320, height: 720 });
+  await list.getByRole('button', { name: `进入 ${second.title} 的会话`, exact: true }).click();
+  await expect(page.getByRole('button', { name: '关闭会话', exact: true })).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test('contact sorting and filters persist across reload with separate filters for each view', async ({ page }) => {
   await mockWorkspace(page, state => {
     const source = state.sessions[0];
@@ -345,7 +415,7 @@ test('keyboard help is discoverable and workspace shortcuts do not steal typing 
   const help = page.getByRole('dialog', { name: '使用说明与快捷键' });
   await expect(help.getByText('如何理解状态', { exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
-  await page.locator('main').click({ position: { x: 5, y: 400 } });
+  await page.getByRole('region', { name: '会话面板', exact: true }).click();
   await page.keyboard.press('?');
   await expect(help).toBeVisible();
   await help.getByRole('button', { name: '知道了', exact: true }).click();

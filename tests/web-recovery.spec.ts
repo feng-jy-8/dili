@@ -291,9 +291,9 @@ test('a background tab refreshes on return and keeps new in-app attention visibl
     document.dispatchEvent(new Event('visibilitychange'));
     (window as unknown as { recoverySource: EventSource }).recoverySource.dispatchEvent(new MessageEvent('state', { data: JSON.stringify(snapshot) }));
   }, state);
-  // A hidden tab never reads on the user's behalf: the tab badge stays red.
-  await expect(page.getByRole('tab', { name: new RegExp(session.title) }).locator('b')).toHaveCount(0);
-  await expect(page.locator('.session-tab.active')).toHaveCount(1);
+  // A hidden browser tab never reads on the user's behalf; the contact keeps its reminder.
+  await expect(page.locator('.session-card.active .unread-badge')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: `进入 ${session.title} 的会话`, exact: true })).toHaveAttribute('aria-current', 'true');
   let reads = 0;
   await page.route(`**/api/sessions/${session.id}/read`, route => {
     reads++;

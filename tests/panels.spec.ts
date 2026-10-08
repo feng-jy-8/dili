@@ -130,6 +130,12 @@ test('workspace sidebar renders markdown and real git diff without blocking the 
     await diff.getByRole('button', { name: '内联显示', exact: true }).click();
     await expect(diff.getByRole('table', { name: '内联差异' })).toBeVisible();
     await expect(diff.locator('tr.diff-added .diff-sign')).toHaveText('+');
+    // The persistent contacts leave a narrow conversation beside the preview.
+    // Hide secondary metadata there and keep the title and close action usable.
+    expect((await drawer.boundingBox())!.width).toBeLessThan(620);
+    await expect(drawer.getByRole('navigation', { name: '会话关系' })).toBeHidden();
+    await expect(drawer.locator('.drawer-title h2')).toHaveText(session.title);
+    await expect(drawer.getByRole('button', { name: '关闭会话', exact: true })).toBeInViewport();
     await page.screenshot({ path: 'artifacts/workspace-sidebar.png' });
     await drawer.getByRole('button', { name: '关闭会话', exact: true }).click();
     await expect(drawer).not.toBeVisible();

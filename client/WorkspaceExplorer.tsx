@@ -61,7 +61,7 @@ function useViewportWidth() {
   return width;
 }
 
-function Splitter({ label, value, min, max, onChange, onCommit }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void; onCommit: (value: number) => void }) {
+export function Splitter({ label, value, min, max, onChange, onCommit }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void; onCommit: (value: number) => void }) {
   const drag = useRef<{ x: number; width: number; last: number } | null>(null);
   const clamp = (next: number) => Math.round(Math.max(min, Math.min(max, next)));
   const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
