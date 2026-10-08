@@ -1,7 +1,21 @@
 import { mutationHeaders, test } from './fixtures';
-import { expect } from '@playwright/test';
+import { expect, type Locator } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import type { AppState } from '../shared/types';
+
+async function expectSingleRowHeader(drawer: Locator) {
+  const header = drawer.locator('.drawer-header');
+  const bounds = (await header.boundingBox())!;
+  expect(bounds.height).toBeLessThanOrEqual(49);
+  const controls = [drawer.locator('.drawer-title h2'), drawer.getByRole('group', { name: '会话显示方式' }), drawer.locator('.session-lifecycle'), drawer.getByRole('button', { name: '关闭会话', exact: true })];
+  for (const control of controls) {
+    await expect(control).toBeInViewport();
+    const box = (await control.boundingBox())!;
+    expect(Math.abs(box.y + box.height / 2 - (bounds.y + bounds.height / 2))).toBeLessThan(2);
+    expect(box.x).toBeGreaterThanOrEqual(bounds.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+  }
+}
 
 test('contacts, native terminal, fork and directed group collaboration work in the browser', async ({ page }) => {
   const errors: string[] = [];
@@ -309,6 +323,7 @@ test('desktop contacts switch the conversation beside the list and preserve resi
   const conversation = page.getByRole('dialog', { name: `${first.title} 的私聊` });
   await expect(list).toBeVisible();
   await expect(conversation).toBeVisible();
+  await expectSingleRowHeader(conversation);
   await expect(page.getByRole('tablist', { name: '打开的会话' })).toHaveCount(0);
   const listBounds = (await list.boundingBox())!;
   const conversationBounds = (await conversation.boundingBox())!;
@@ -349,6 +364,7 @@ test('phones show only the selected conversation and back or close always return
   await expect(list).toBeHidden();
   await expect(page.getByRole('dialog', { name: `${first.title} 的私聊` })).toBeVisible();
   await expect(page.getByRole('button', { name: '返回联系人列表' })).toBeInViewport();
+  await expectSingleRowHeader(page.getByRole('dialog', { name: `${first.title} 的私聊` }));
   await page.screenshot({ path: 'artifacts/contacts-mobile-conversation.png', animations: 'disabled' });
   await page.getByRole('button', { name: '返回联系人列表' }).click();
   await expect(list).toBeVisible();
@@ -363,6 +379,17 @@ test('phones show only the selected conversation and back or close always return
   await page.setViewportSize({ width: 320, height: 720 });
   await list.getByRole('button', { name: `进入 ${second.title} 的会话`, exact: true }).click();
   await expect(page.getByRole('button', { name: '关闭会话', exact: true })).toBeInViewport();
+  const drawer = page.getByRole('dialog', { name: `${second.title} 的私聊` });
+  await expectSingleRowHeader(drawer);
+  await drawer.locator('summary').filter({ hasText: '会话信息' }).click();
+  const info = drawer.locator('.session-info-content');
+  await expect(info).toBeInViewport();
+  const bounds = (await info.boundingBox())!;
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+  await expect(info.getByRole('button', { name: '复制会话目录' })).toBeVisible();
+  await expect(info.getByRole('button', { name: '改名', exact: true })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/contacts-mobile-session-info.png', animations: 'disabled' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 

@@ -310,7 +310,7 @@ test('a background tab refreshes on return and keeps new in-app attention visibl
   await expect(page.getByRole('dialog').locator('.session-status-detail')).toContainText('恢复前台后已同步到最新结果');
   await expect.poll(() => reads).toBeGreaterThan(0);
   await page.screenshot({ path: 'artifacts/session-unread.png', fullPage: true });
-  await expect(page.getByRole('dialog').locator('.status-badge')).toHaveText('等待输入');
+  await expect(page.getByRole('dialog').locator('.drawer-title .status-badge')).toHaveText('等待输入');
 });
 
 test('an unavailable initial service disables creation and gives a recoverable connection error', async ({ page }) => {

@@ -136,6 +136,14 @@ test('workspace sidebar renders markdown and real git diff without blocking the 
     await expect(drawer.getByRole('navigation', { name: '会话关系' })).toBeHidden();
     await expect(drawer.locator('.drawer-title h2')).toHaveText(session.title);
     await expect(drawer.getByRole('button', { name: '关闭会话', exact: true })).toBeInViewport();
+    expect((await drawer.locator('.drawer-header').boundingBox())!.height).toBeLessThanOrEqual(49);
+    await expect(drawer.getByRole('group', { name: '会话显示方式' }).getByRole('button', { name: '原生终端', exact: true })).toBeInViewport();
+    await drawer.locator('summary').filter({ hasText: '会话信息' }).click();
+    const infoBounds = (await drawer.locator('.session-info-content').boundingBox())!;
+    const drawerBounds = (await drawer.boundingBox())!;
+    expect(infoBounds.x).toBeGreaterThanOrEqual(drawerBounds.x);
+    expect(infoBounds.x + infoBounds.width).toBeLessThanOrEqual(drawerBounds.x + drawerBounds.width);
+    await drawer.locator('summary').filter({ hasText: '会话信息' }).click();
     await page.screenshot({ path: 'artifacts/workspace-sidebar.png' });
     await drawer.getByRole('button', { name: '关闭会话', exact: true }).click();
     await expect(drawer).not.toBeVisible();
