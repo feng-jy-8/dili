@@ -300,8 +300,8 @@ test('contact sorting and filters persist across reload with separate filters fo
     const source = state.sessions[0];
     state.sessions = [
       { ...source, id: 'sort-pinned', title: 'Z 排序置顶', backend: 'codex', groupId: null, pinned: true, archived: false, status: 'idle', createdAt: '2026-01-01T00:00:00Z', lastActivity: '2026-01-01T00:00:00Z' },
-      { ...source, id: 'sort-a', title: 'A 排序联系人', backend: 'codex', groupId: null, pinned: false, archived: false, status: 'idle', createdAt: '2026-01-02T00:00:00Z', lastActivity: '2026-01-04T00:00:00Z' },
-      { ...source, id: 'sort-b', title: 'B 排序联系人', backend: 'codex', groupId: null, pinned: false, archived: false, status: 'idle', createdAt: '2026-01-03T00:00:00Z', lastActivity: '2026-01-02T00:00:00Z' },
+      { ...source, id: 'sort-a', title: 'A 排序联系人', backend: 'codex', groupId: null, pinned: false, archived: false, status: 'idle', createdAt: '2026-01-02T00:00:00Z', lastActivity: '2026-01-02T00:00:00Z', lastUserInputAt: '2026-01-04T00:00:00Z' },
+      { ...source, id: 'sort-b', title: 'B 排序联系人', backend: 'codex', groupId: null, pinned: false, archived: false, status: 'idle', createdAt: '2026-01-03T00:00:00Z', lastActivity: '2026-01-05T00:00:00Z', lastUserInputAt: '2026-01-02T00:00:00Z' },
       { ...source, id: 'sort-other', title: '其他后端', backend: 'claude', groupId: null, pinned: false, archived: false, status: 'idle' },
     ];
   });
@@ -310,6 +310,7 @@ test('contact sorting and filters persist across reload with separate filters fo
   await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
   await page.locator('.backend-tabs').getByRole('button', { name: 'Codex', exact: true }).click();
   await page.getByLabel('按状态筛选').selectOption('idle');
+  await expect(page.getByLabel('联系人排序')).toHaveValue('input');
   await expect(page.locator('.session-card h3')).toHaveText(['Z 排序置顶', 'A 排序联系人', 'B 排序联系人']);
   await page.getByLabel('联系人排序').selectOption('name');
   await expect(page.locator('.session-card h3')).toHaveText(['Z 排序置顶', 'A 排序联系人', 'B 排序联系人']);
@@ -503,18 +504,28 @@ test('execution filters distinguish an attached idle process from an active task
       { ...seed, id: 'idle-connected', title: '已连接但空闲', groupId: null, archived: false, pinned: false, running: true, status: 'idle', unread: 0 },
       { ...seed, id: 'active-task', title: '真正执行任务', groupId: null, archived: false, pinned: false, running: true, status: 'running', unread: 0 },
       { ...seed, id: 'unread-contact', title: '保留未读提醒', groupId: null, archived: false, pinned: false, running: false, status: 'idle', unread: 2 },
+      { ...seed, id: 'read-waiting', title: '已读等待输入', groupId: null, archived: false, pinned: false, running: false, status: 'waiting_input', unread: 0 },
+      { ...seed, id: 'red-error', title: '红点异常', groupId: null, archived: false, pinned: false, running: false, status: 'error', unread: 1 },
+      { ...seed, id: 'red-waiting', title: '红点等待输入', groupId: null, archived: false, pinned: false, running: true, status: 'waiting_input', unread: 1 },
+      { ...seed, id: 'read-error', title: '已读异常', groupId: null, archived: false, pinned: false, running: false, status: 'error', unread: 0 },
+      { ...seed, id: 'pinned-idle', title: '置顶空闲', groupId: null, archived: false, pinned: true, running: false, status: 'idle', unread: 0 },
     ];
   });
+  await page.goto('/');
+  await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
+  await page.getByLabel('联系人排序').selectOption('name');
+  await expect(page.locator('.session-card h3')).toHaveText(['置顶空闲', '红点等待输入', '红点异常', '真正执行任务', '已读等待输入', '保留未读提醒', '已读异常', '已连接但空闲']);
+  await page.keyboard.press('Escape');
   await page.goto('/#/running');
   await expect(page.locator('.session-card h3')).toHaveText(['真正执行任务']);
   await page.getByRole('navigation', { name: '工作空间导航' }).getByRole('button', { name: /^联系人/ }).click();
   await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
   await page.getByLabel('按状态筛选').selectOption('unread');
-  await expect(page.locator('.session-card h3')).toHaveText(['保留未读提醒']);
+  await expect(page.locator('.session-card h3')).toHaveText(['红点等待输入', '红点异常', '保留未读提醒']);
   await page.reload();
   await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
   await expect(page.getByLabel('按状态筛选')).toHaveValue('unread');
-  await expect(page.locator('.session-card h3')).toHaveText(['保留未读提醒']);
+  await expect(page.locator('.session-card h3')).toHaveText(['红点等待输入', '红点异常', '保留未读提醒']);
 });
 
 test('card actions are reachable with keyboard and menu direction keys open a rename dialog', async ({ page }) => {
@@ -604,8 +615,8 @@ test('the "需要你处理" badge counts unread reminders, matching the red badg
   const attentionTab = nav.getByRole('button', { name: /^待处理/ });
   await expect(attentionTab.locator('b')).toHaveText('1');
   await expect(page).toHaveTitle(/^\(1\) /);
-  // Pinned first, then blocked sessions (most recent activity first), then the merely running.
-  await expect(page.locator('.session-card h3')).toHaveText(['曾提醒但已在运行', '已看过但仍在等待', '等待且未读']);
+  // Pinned first, then red-dot reminders, then waiting sessions already read.
+  await expect(page.locator('.session-card h3')).toHaveText(['曾提醒但已在运行', '等待且未读', '已看过但仍在等待']);
   await attentionTab.click();
   await expect(page.locator('.session-card h3')).toHaveText(['等待且未读']);
 });

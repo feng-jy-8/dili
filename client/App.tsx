@@ -87,7 +87,7 @@ function HelpDialog({ close }: { close: () => void }) {
       <h3>如何理解状态</h3>
       <ul className="status-guide"><li><span className="status-badge running">运行中</span><span>后端正在执行任务。</span></li><li><span className="status-badge waiting">等待输入 / 审批</span><span>需要你进入会话回复或决定。</span></li><li><span className="status-badge idle">空闲 / 已停止</span><span>当前没有执行任务；不代表工作已验收。</span></li><li><span className="status-badge unknown">状态未知</span><span>目前没有足够信息确认状态，进入原生会话查看。</span></li></ul>
       <p>标有“估测”的状态来自终端输出。卡片上的提醒、来源说明和原生会话可帮助你判断；断线时保留最后收到的状态。</p>
-      <h3>保留你的工作方式</h3><p>置顶联系人始终在最前；然后是等待输入、审批或出现异常的会话，再是正在运行的会话；其余默认按最近活动，也可改为创建时间或名称。有新提醒的卡片会轻轻跳动并发光，打开会话后消失。每个页面独立保存搜索和筛选，刷新后继续使用；Fork 继承上下文，原联系人保留。</p>
+      <h3>保留你的工作方式</h3><p>置顶联系人始终在最前；然后依次是有红点提醒、正在执行任务、无红点等待输入的会话，其余在后。同层默认按上次输入时间，也可改为创建时间或名称；没有输入时间时排在该层有输入记录的联系人之后。有新提醒的卡片会轻轻跳动并发光，打开会话后消失。每个页面独立保存搜索和筛选，刷新后继续使用；Fork 继承上下文，原联系人保留。</p>
     </div><div className="modal-footer"><button className="button primary" onClick={close}>知道了</button></div>
   </ModalShell>;
 }
@@ -458,14 +458,18 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
       && (statusFilter === 'all' || (statusFilter === 'attention' ? attention(session) : statusFilter === 'unread' ? session.unread > 0 : session.status === statusFilter))
       && `${session.title} ${session.cwd} ${session.lastUserInput || ''} ${BACKEND[session.backend].name}`.toLowerCase().includes(query.trim().toLowerCase());
   }).sort((a, b) => {
-    // Like a chat list: pinned stays on top; then whoever is waiting on you;
-    // then ones still working; the rest by the chosen order, where the
-    // default is most recent activity first.
-    if (a.pinned !== b.pinned) return Number(b.pinned) - Number(a.pinned);
-    if (attention(a) !== attention(b)) return Number(attention(b)) - Number(attention(a));
-    if (a.running !== b.running) return Number(b.running) - Number(a.running);
+    // Each contact belongs to exactly one tier; an attached idle process
+    // is not an active task, and read errors/approvals no longer jump ahead.
+    const tier = (s: Session) => s.pinned ? 0 : pending(s) && !s.archived ? 1 : s.status === 'running' ? 2 : s.status === 'waiting_input' ? 3 : 4;
+    const priority = tier(a) - tier(b);
+    if (priority) return priority;
     if (contactSort === 'name') return a.title.localeCompare(b.title, 'zh-CN', { numeric: true, sensitivity: 'base' });
-    return contactSort === 'activity' ? new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime() : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    const timestamp = (value?: string | null) => value ? Date.parse(value) || 0 : 0;
+    if (contactSort === 'input') {
+      const inputOrder = timestamp(b.lastUserInputAt) - timestamp(a.lastUserInputAt);
+      if (inputOrder) return inputOrder;
+    }
+    return timestamp(b.createdAt) - timestamp(a.createdAt) || a.title.localeCompare(b.title, 'zh-CN', { numeric: true, sensitivity: 'base' });
   });
   const title = currentGroup?.title ?? ({ contacts: '会话联系人', attention: '需要你处理', running: '正在运行', activity: '最近活动', archive: '已归档', backends: '连接与能力' } as Record<string, string>)[view] ?? '会话联系人';
   const filtered = !!query || backendFilter !== 'all' || statusFilter !== 'all';
@@ -542,7 +546,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
             <FilterMenu active={backendFilter !== 'all' || statusFilter !== 'all'} reset={() => { setBackendFilter('all'); setStatusFilter('all'); }}>
               <div className="filter-group"><span>后端</span><div className="backend-tabs" aria-label="按后端筛选"><button aria-pressed={backendFilter === 'all'} className={backendFilter === 'all' ? 'selected' : ''} onClick={() => setBackendFilter('all')}>全部</button>{(['claude', 'codex', 'dsh'] as Backend[]).map((backend) => <button key={backend} aria-pressed={backendFilter === backend} className={backendFilter === backend ? 'selected' : ''} onClick={() => setBackendFilter(backend)}>{BACKEND[backend].short}</button>)}</div></div>
               <label className="filter-group"><span>状态</span><select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as SessionStatus | 'all' | 'attention' | 'unread')}><option value="all">全部状态</option><option value="attention">需要处理</option><option value="unread">未读提醒</option><option value="running">运行中</option><option value="waiting_input">等待输入</option><option value="waiting_approval">等待审批</option><option value="idle">空闲</option><option value="error">异常</option><option value="stopped">已停止</option><option value="unknown">状态未知</option></select></label>
-              <label className="filter-group"><span>排序</span><select aria-label="联系人排序" value={contactSort} onChange={(event) => setContactSort(event.target.value as ContactSort)}><option value="activity">最近活动</option><option value="created">创建时间</option><option value="name">名称</option></select></label>
+              <label className="filter-group"><span>排序</span><select aria-label="联系人排序" value={contactSort} onChange={(event) => setContactSort(event.target.value as ContactSort)}><option value="input">上次输入时间</option><option value="created">创建时间</option><option value="name">名称</option></select></label>
             </FilterMenu></>}
           <button className={`icon-button ${workspaceOpen ? 'active' : ''}`} aria-label="打开资源管理器" title="打开资源管理器" disabled={!workspaceSession} onClick={() => setWorkspaceOpen((value) => !value)}><Folder size={17} /></button>
           <button className={`icon-button ${terminalPanelOpen ? 'active' : ''}`} aria-label="打开终端" title={terminalPanelOpen ? '终端面板已打开' : '打开底部终端'} disabled={!state} onClick={() => openTerminalPanel(selected?.id)}><PanelBottomOpen size={17} /></button>

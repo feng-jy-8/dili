@@ -3,7 +3,7 @@ import type { Backend, SessionStatus } from '../shared/types';
 import type { View } from './navigation';
 import { readLocalPreference, writeLocalPreference } from './ui';
 
-export type ContactSort = 'activity' | 'name' | 'created';
+export type ContactSort = 'input' | 'name' | 'created';
 type ContactFilters = { query: string; backend: Backend | 'all'; status: SessionStatus | 'attention' | 'unread' | 'all' };
 const defaults: ContactFilters = { query: '', backend: 'all', status: 'all' };
 const statuses = new Set(['all', 'attention', 'unread', 'idle', 'running', 'waiting_input', 'waiting_approval', 'error', 'stopped', 'unknown']);
@@ -40,7 +40,7 @@ export function useContactFilters(view: View) {
 export function useContactSort() {
   const [sort, setSort] = useState<ContactSort>(() => {
     const saved = readLocalPreference('sessiondeck.contact-sort');
-    return saved === 'name' || saved === 'created' ? saved : 'activity';
+    return saved === 'name' || saved === 'created' ? saved : 'input';
   });
   return [sort, (next: ContactSort) => { writeLocalPreference('sessiondeck.contact-sort', next); setSort(next); }] as const;
 }
