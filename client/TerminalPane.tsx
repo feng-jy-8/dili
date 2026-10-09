@@ -6,6 +6,7 @@ import { ArrowDownToLine, Copy, Check, ImagePlus, Keyboard, LoaderCircle, Maximi
 import '@xterm/xterm/css/xterm.css';
 import { getToken, uploadTerminalImage } from './api';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES } from '../shared/terminal-images';
+import { followTerminalTheme, terminalTheme } from './terminal-theme';
 
 const touchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
 
@@ -131,19 +132,17 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     terminalIdRef.current = null; setTerminalId(null); setImageStatus('');
     uploadAbortRef.current?.abort(); uploadAbortRef.current = null; uploadingRef.current = false; setUploadingImage(false);
     selectionRef.current('');
+    const surface = containerRef.current.closest<HTMLElement>('.terminal-pane') ?? containerRef.current;
     const terminal = new Terminal({
       cursorBlink: true, fontSize: 13, lineHeight: 1.25, scrollback: 8000,
       disableStdin: true, screenReaderMode: true,
       fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
-      theme: {
-        background: '#16181d', foreground: '#e6e7ea', cursor: '#e6e7ea',
-        selectionBackground: '#3b4250', black: '#16181d', red: '#f28b82', green: '#9fd89f',
-        yellow: '#f2d479', blue: '#8ab4f8', magenta: '#c58af9', cyan: '#78d9ec', white: '#e6e7ea',
-      },
+      theme: terminalTheme(surface),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(containerRef.current);
+    const detachTheme = followTerminalTheme(terminal, surface);
     // Esc belongs to the native CLI, so fullscreen uses a chord xterm never forwards.
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey && (event.metaKey || event.ctrlKey)) { setFullscreen((value) => !value); return false; }
@@ -248,7 +247,7 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     void connect();
     return () => {
       disposed = true; clearTimeout(reconnect); clearTimeout(copiedTimer.current); uploadAbortRef.current?.abort(); uploadAbortRef.current = null; uploadingRef.current = false; socket?.close(); input.dispose(); selection.dispose();
-      detachTouchScroll?.(); resizeObserver.disconnect(); terminal.dispose(); terminalRef.current = null; fitRef.current = null;
+      detachTheme(); detachTouchScroll?.(); resizeObserver.disconnect(); terminal.dispose(); terminalRef.current = null; fitRef.current = null;
     };
   }, [sessionId, running, channel, readOnlyRequested]);
   useEffect(() => {
