@@ -7,7 +7,7 @@
 .conversation-actions { display: flex; flex-shrink: 0; align-items: center; gap: 2px; }
 .conversation-actions .icon-button { width: 28px; height: 28px; }
 .conversation-actions .text-button { margin-right: 6px; }
-.conversation-error { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: #fff0ee; color: #a02c26; font-size: 12px; }
+.conversation-error { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--error-bg); color: var(--error-text); font-size: 12px; }
 .conversation-error>span { flex: 1; overflow-wrap: anywhere; }
 .conversation-scroller { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 20px clamp(14px, 4vw, 42px); }
 .conversation-scroller:focus-visible { outline-offset: -3px; }

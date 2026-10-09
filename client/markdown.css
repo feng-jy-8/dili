@@ -9,9 +9,9 @@
 .chat-markdown a { color: var(--accent-dark); text-decoration: underline; text-underline-offset: 2px; }
 .chat-markdown blockquote { margin: 12px 0; padding: 3px 12px; border-left: 3px solid var(--line-strong); color: var(--muted); }
 .chat-markdown hr { margin: 18px 0; border: 0; border-top: 1px solid var(--line-strong); }
-.chat-markdown :not(pre)>code { padding: 2px 5px; border-radius: 4px; background: #e8ebf0; color: #344154; }
-.markdown-code { position: relative; max-width: 100%; margin: 12px 0; border: 1px solid var(--line-strong); border-radius: 9px; background: #f6f8fa; overflow: hidden; }
-.markdown-code>button { display: flex; align-items: center; gap: 5px; position: absolute; top: 6px; right: 7px; z-index: 1; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #51545b; font-size: 11px; }
+.chat-markdown :not(pre)>code { padding: 2px 5px; border-radius: 4px; background: var(--inline-code-bg); color: var(--inline-code-text); }
+.markdown-code { position: relative; max-width: 100%; margin: 12px 0; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--code-bg); overflow: hidden; }
+.markdown-code>button { display: flex; align-items: center; gap: 5px; position: absolute; top: 6px; right: 7px; z-index: 1; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--muted); font-size: 11px; }
 .markdown-code pre { margin: 0; padding: 35px 13px 13px; overflow-x: auto; font-size: 12px; line-height: 1.65; white-space: pre; }
 .markdown-code pre code.hljs { padding: 0; background: transparent; }
 .markdown-table { overflow-x: auto; margin: 12px 0; }.markdown-table table { border-collapse: collapse; min-width: 180px; }

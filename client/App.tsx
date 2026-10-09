@@ -6,7 +6,7 @@ import {
   GitFork, LoaderCircle, MessageSquare, Pencil, Pin, PinOff, Play, Plus,
   Radio, Search, Send, Settings2, Share2, SlidersHorizontal, Square, UsersRound, X,
   PanelBottomOpen, Volume2, VolumeX, TerminalSquare, Link2, PanelLeftOpen, PanelLeftClose,
-  FilePenLine,
+  FilePenLine, Palette,
 } from 'lucide-react';
 import type { AppState, StatePatch, Backend, DiscoveredSession, Delivery, Group, GroupDetail, GroupMessage, Session, SessionStatus } from '../shared/types';
 import { applyStatePatch } from './state';
@@ -21,6 +21,7 @@ import ActivityView from './ActivityView';
 import WorkspaceExplorer, { Splitter } from './WorkspaceExplorer';
 import ShellTerminalDock from './ShellTerminalDock';
 import ScratchpadPanel from './ScratchpadPanel';
+import AppearanceDialog from './AppearanceDialog';
 import { useContactFilters, useContactSort, type ContactSort } from './preferences';
 import { readLocalPreference, writeLocalPreference, useDialog } from './ui';
 import ModalShell from './Modal';
@@ -41,7 +42,7 @@ export const STATUS: Record<SessionStatus, { label: string; className: string }>
 };
 type Modal = { type: 'create'; groupId?: string; backend?: Backend } | { type: 'import' } | { type: 'rename'; session: Session }
   | { type: 'fork'; session: Session; groupId?: string } | { type: 'handoff'; session: Session } | { type: 'group'; group?: Group }
-  | { type: 'replaceDraft'; draft: string; sourceName: string; proceed: () => void } | { type: 'help' } | { type: 'shareLink'; session: Session } | { type: 'addMember'; groupId: string } | { type: 'share'; session: Session; text: string } | null;
+  | { type: 'replaceDraft'; draft: string; sourceName: string; proceed: () => void } | { type: 'help' } | { type: 'appearance' } | { type: 'shareLink'; session: Session } | { type: 'addMember'; groupId: string } | { type: 'share'; session: Session; text: string } | null;
 type GroupDraft = { text: string; kind: GroupMessage['kind']; recipients: string[]; sourceMessageId: string | null };
 function readGroupDraft(groupId: string): GroupDraft {
   try {
@@ -529,6 +530,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         <MoreMenu items={[
           { label: '连接与能力', icon: <Settings2 size={14} />, active: view === 'backends', onSelect: () => navigate('backends') },
           { label: '随手记', icon: <FilePenLine size={14} />, active: scratchpadOpen, onSelect: toggleScratchpad },
+          { label: '外观主题', icon: <Palette size={14} />, onSelect: () => setModal({ type: 'appearance' }) },
           { label: '使用说明与快捷键', icon: <CircleHelp size={14} />, onSelect: () => setModal({ type: 'help' }) },
         ]} />
       </div>
@@ -547,6 +549,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
           <button className={`icon-button ${workspaceOpen ? 'active' : ''}`} aria-label="打开资源管理器" title="打开资源管理器" disabled={!workspaceSession} onClick={() => setWorkspaceOpen((value) => !value)}><Folder size={17} /></button>
           <button className={`icon-button ${terminalPanelOpen ? 'active' : ''}`} aria-label="打开终端" title={terminalPanelOpen ? '终端面板已打开' : '打开底部终端'} disabled={!state} onClick={() => openTerminalPanel(selected?.id)}><PanelBottomOpen size={17} /></button>
           <button className={`icon-button ${scratchpadOpen ? 'active' : ''}`} aria-label="打开随手记" title="随手记" aria-expanded={scratchpadOpen} onClick={toggleScratchpad}><FilePenLine size={17} /></button>
+          <button className="icon-button appearance-toggle" aria-label="切换主题" title="外观主题" onClick={() => setModal({ type: 'appearance' })}><Palette size={17} /></button>
           <div className="contact-actions">
             <button className="button primary new-contact" aria-label="新建联系人" title="新建联系人" disabled={!state} onClick={() => setModal({ type: 'create' })}><Plus size={17} /></button>
             <button className="button secondary import-contact" aria-label="导入会话" title="导入已有会话" disabled={!state} onClick={() => setModal({ type: 'import' })}><ArrowDownToLine size={17} /><span>导入</span></button>
@@ -594,6 +597,8 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
           {selected.groupId && <button className="icon-button session-extra-action" aria-label="分享结果到群组" title="分享结果到群组" onClick={() => setModal({ type: 'share', session: selected, text: selection })}><Share2 size={15} /></button>}
           {selected.nativeUrl && <a className="icon-button session-extra-action" aria-label="原生窗口" title="在新窗口打开原生界面" target="_blank" rel="noreferrer" href={selected.nativeUrl}><ExternalLink size={15} /></a>}
           <details key={selected.id} className="session-info"><summary title="更多"><Ellipsis size={16} /><span className="sr-only">会话信息</span></summary><div className="session-info-content">
+            <button className="text-button compact-session-action" onClick={() => setScratchpadOpen(true)}><FilePenLine size={13} />随手记</button>
+            <button className="text-button compact-session-action" onClick={() => setModal({ type: 'appearance' })}><Palette size={13} />外观主题</button>
             <button className="text-button compact-session-action" onClick={() => setModal({ type: 'rename', session: selected })}><Pencil size={13} />改名</button>
             <div><span>后端</span><strong>{BACKEND[selected.backend].name}</strong></div>
             <div><span>状态</span><StatusBadge session={selected} /></div>
@@ -629,9 +634,10 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
 
     </div>
     {modal?.type === 'help' && <HelpDialog close={closeModal} />}
+    {modal?.type === 'appearance' && <AppearanceDialog close={closeModal} />}
     {modal?.type === 'replaceDraft' && <ModalShell title="替换当前群组草稿？" subtitle={`将 ${modal.sourceName} 的消息转交为任务，当前草稿需要先处理。`} close={closeModal}><div className="modal-fields"><p className="draft-replace-preview">{modal.draft || '当前草稿已选择接收成员。'}</p><p className="form-note">保留草稿会取消这次转交。替换后，可编辑任务内容并选择接收成员；创建任务仍需你提交。</p></div><div className="modal-footer"><button className="button secondary" onClick={closeModal}>保留当前草稿</button><button className="button primary" onClick={() => { modal.proceed(); closeModal(); }}>替换为转交任务</button></div></ModalShell>}
     {modal?.type === 'shareLink' && <ShareDialog session={modal.session} close={closeModal} notify={notify} />}
-    {modal && modal.type !== 'help' && modal.type !== 'replaceDraft' && modal.type !== 'shareLink' && state && <AppModal modal={modal} state={state} close={closeModal} done={async (session?: Session, group?: Group) => { await refresh().catch(() => {}); closeModal(); if (group) navigate(`group:${group.id}`); if (session) { if (session.groupId) navigate(`group:${session.groupId}`); openSession(session); } }} notify={notify} />}
+    {modal && modal.type !== 'help' && modal.type !== 'appearance' && modal.type !== 'replaceDraft' && modal.type !== 'shareLink' && state && <AppModal modal={modal} state={state} close={closeModal} done={async (session?: Session, group?: Group) => { await refresh().catch(() => {}); closeModal(); if (group) navigate(`group:${group.id}`); if (session) { if (session.groupId) navigate(`group:${session.groupId}`); openSession(session); } }} notify={notify} />}
     {toast && <div className="toast" role="status"><CheckCheck size={16} />{toast}<button aria-label="关闭提示" onClick={() => setToast('')}><X size={14} /></button></div>}
   </div>;
 }
@@ -843,7 +849,7 @@ function GroupBoard({ detail, members, demo, busy, post, deliver, cancel, open, 
   </div></section>;
 }
 
-function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNullable<Modal>, { type: 'help' | 'replaceDraft' | 'shareLink' }>; state: AppState; close: () => void; done: (session?: Session, group?: Group) => Promise<void>; notify: (message: string) => void }) {
+function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNullable<Modal>, { type: 'help' | 'appearance' | 'replaceDraft' | 'shareLink' }>; state: AppState; close: () => void; done: (session?: Session, group?: Group) => Promise<void>; notify: (message: string) => void }) {
   const [title, setTitle] = useState(modal.type === 'rename' ? modal.session.title : modal.type === 'fork' ? `${modal.session.title} · Fork` : modal.type === 'handoff' ? `${modal.session.title} · 交接` : modal.type === 'group' ? modal.group?.title ?? '' : '');
   const [backend, setBackend] = useState<Backend>((modal.type === 'create' ? modal.backend : undefined) ?? state.backends.find((item) => item.installed && (modal.type !== 'handoff' || item.id !== modal.session.backend))?.id ?? 'claude');
   const recentSessions = useMemo(() => [...state.sessions].sort((first, second) => second.lastActivity.localeCompare(first.lastActivity)), [state.sessions]);
