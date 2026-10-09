@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { newSecret, relayUrl } from './invite.ts';
@@ -28,7 +28,8 @@ const frpsPort = Number(process.env.SESSIONDECK_FRPS_PORT || 18502);
 if (!Number.isInteger(frpsPort) || frpsPort < 1024 || frpsPort > 65535 || frpsPort === port) throw new Error('frps 端口无效');
 // frps remains loopback-only. Public access goes through Caddy's verified WSS.
 writeFileSync(join(directory, 'frps.json'), JSON.stringify({ bindAddr: '127.0.0.1', bindPort: frpsPort, proxyBindAddr: '127.0.0.1', maxPortsPerClient: 1, allowPorts: [{ start: firstPort, end: lastPort }], transport: { heartbeatTimeout: 20 }, httpPlugins: [{ name: 'sessiondeck-devices', addr: `127.0.0.1:${port}`, path: `/internal/frp/${pluginToken}`, ops: ['Login', 'NewProxy', 'Ping', 'NewWorkConn'] }] }), { mode: 0o600 });
-const app = createRelayApp(store, { serverUrl, adminToken, pluginToken, adminHtml: process.env.SESSIONDECK_RELAY_HTML || resolve('relay/index.html') });
+const adminHtml = process.env.SESSIONDECK_RELAY_HTML || resolve('relay/index.html');
+const app = createRelayApp(store, { serverUrl, adminToken, pluginToken, adminHtml, clientsDir: resolve(process.env.SESSIONDECK_RELAY_CLIENTS_DIR || join(dirname(adminHtml), 'clients')) });
 const server = app.listen(port, '127.0.0.1', () => console.log(`SessionDeck 配对服务 → ${serverUrl}/\n管理密钥文件：${join(directory, 'admin.token')}`));
 let closing = false;
 function close() { if (closing) return; closing = true; server.close(() => { db.close(); void lock.release().then(() => process.exit(0)); }); server.closeAllConnections(); }

@@ -40,8 +40,8 @@ export class FrpTunnel extends EventEmitter {
     await writeFile(ca, rootCertificates.join('\n'), { mode: 0o600 });
     await writeFile(config, JSON.stringify(frpcConfig(pair, localPort, ca)), { mode: 0o600 });
     let executable: string;
-    try { executable = await ensureFrp(this.directory); }
-    catch { this.set('error', '中继客户端安装失败，请检查网络后重试'); throw new Error('中继客户端安装失败，请检查网络后重试'); }
+    try { executable = await ensureFrp(this.directory, 'frpc', pair.serverUrl); }
+    catch (cause) { const error = cause instanceof Error ? cause.message : '中继客户端安装失败，请检查网络后重试'; this.set('error', error); throw new Error(error); }
     if (generation !== this.generation || this.closed) return;
     const connect = () => {
       if (generation !== this.generation || this.closed) return;

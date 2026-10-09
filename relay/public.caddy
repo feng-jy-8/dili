@@ -1,17 +1,23 @@
 # Import inside your existing HTTPS site. No additional public ports or DNS.
+# If the host site uses encode, restrict its response Content-Type matcher to
+# HTML/CSS/JS/JSON/SVG. Never compress text/event-stream (live status updates).
 handle /~!frp {
   reverse_proxy 127.0.0.1:18502
 }
 handle /connect/d/* {
-  forward_auth 127.0.0.1:18501 {
-    uri /internal/route
-    copy_headers X-SessionDeck-Upstream X-SessionDeck-Prefix
-  }
-  uri strip_prefix {http.request.header.X-SessionDeck-Prefix}
-  reverse_proxy {http.request.header.X-SessionDeck-Upstream} {
-    header_up -X-SessionDeck-Upstream
-    header_up -X-SessionDeck-Prefix
-    flush_interval -1
+  # Caddy normally sorts uri before forward_auth. route preserves this order:
+  # authenticate the full device URL, then remove its verified device prefix.
+  route {
+    forward_auth 127.0.0.1:18501 {
+      uri /internal/route
+      copy_headers X-SessionDeck-Upstream
+    }
+    uri path_regexp ^/connect/d/[a-z0-9]{16}(/|$) /
+    reverse_proxy {http.request.header.X-SessionDeck-Upstream} {
+      header_up -X-SessionDeck-Upstream
+      header_up -X-SessionDeck-Prefix
+      flush_interval -1
+    }
   }
 }
 handle /connect/* {

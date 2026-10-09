@@ -54,4 +54,5 @@ export interface RemoteStatus {
   listening: boolean;
   caddy: string;
   pairing?: { deviceId: string; name: string; serverUrl: string; pairedAt: string } | null;
+  pairingStage?: 'installing' | 'redeeming' | 'connecting' | null;
 }

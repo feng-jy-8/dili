@@ -1,8 +1,44 @@
 import { mutationHeaders, test } from './fixtures';
 import { expect } from '@playwright/test';
 import type { AppState } from '../shared/types';
+import type { RemoteStatus } from '../shared/auth';
 
 const remoteOrigin = (baseURL: string) => { const url = new URL(baseURL); url.port = String(Number(url.port) + 1); return url.origin; };
+
+test('invite pairing shows its stage, restores the button after failure and allows retry', async ({ page, request }) => {
+  const headers = await mutationHeaders(request);
+  expect((await request.post('/api/auth/password', { headers, data: { password: 'browser owner password' } })).ok()).toBeTruthy();
+  let status = await (await request.get('/api/remote')).json() as RemoteStatus;
+  let attempts = 0;
+  let fail!: () => void;
+  const failed = new Promise<void>(resolve => { fail = resolve; });
+  await page.route('**/api/remote', route => route.fulfill({ json: status }));
+  await page.route('**/api/remote/pair', async route => {
+    attempts++;
+    if (attempts === 1) {
+      status = { ...status, pairingStage: 'redeeming' };
+      await failed;
+      status = { ...status, pairingStage: null };
+      await route.fulfill({ status: 502, json: { error: '中继服务器连接失败或超时，请检查网络后重试' } });
+    } else {
+      status = { ...status, pairingStage: null, pairing: { deviceId: 'fixturedevice123', name: '测试电脑', serverUrl: 'https://relay.example/connect', pairedAt: new Date().toISOString() }, settings: { ...status.settings, mode: 'invite', enabled: true, publicUrl: 'https://relay.example/connect/d/fixturedevice123' }, tunnel: { state: 'connected', since: null, error: '', attempts: 0 } };
+      await route.fulfill({ json: status });
+    }
+  });
+  await page.goto('/#/backends');
+  const security = page.getByRole('region', { name: '远程访问与安全' });
+  await security.getByLabel('邀请码', { exact: true }).fill('SD1.browser-fixture');
+  await security.getByRole('button', { name: '配对并生成链接', exact: true }).click();
+  await expect(security.getByRole('button', { name: '正在配对…' })).toBeDisabled();
+  await expect(security.getByRole('status')).toContainText('正在兑换邀请码', { timeout: 8000 });
+  fail();
+  await expect(security.getByRole('alert')).toContainText('连接失败或超时');
+  await expect(security.getByRole('button', { name: '配对并生成链接', exact: true })).toBeEnabled();
+  await security.getByRole('button', { name: '配对并生成链接', exact: true }).click();
+  await expect(security).toContainText('测试电脑');
+  await expect(security).toContainText('https://relay.example/connect/d/fixturedevice123');
+  expect(attempts).toBe(2);
+});
 
 test('remote owner logs in, shares a session read-only, and revocation closes the colleague view', async ({ page, browser, baseURL, request }) => {
   const remote = remoteOrigin(baseURL!);

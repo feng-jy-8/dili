@@ -15,6 +15,7 @@
     "test": "tsx --test server/*.test.ts scripts/fixtures/*.test.ts",
     "check": "tsc --noEmit",
     "build:relay": "tsx scripts/build-relay.ts",
+    "prepare:relay-clients": "tsx scripts/prepare-relay-clients.ts",
     "relay": "tsx server/relay-main.ts",
     "test:web": "playwright test",
     "verify": "npm run check && npm test && npm run test:web",

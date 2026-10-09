@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import { RelayStore } from './relay-store.ts';
 import { validToken } from './security.ts';
 import { relayUrl } from './invite.ts';
+import { FRP_ARCHIVE_HASHES, frpArchive } from '../shared/frp.ts';
 
-export interface RelayOptions { serverUrl: string; adminToken: string; pluginToken: string; adminHtml: string }
+export interface RelayOptions { serverUrl: string; adminToken: string; pluginToken: string; adminHtml: string; clientsDir?: string }
 export function createRelayApp(store: RelayStore, options: RelayOptions) {
   const app = express(), serverUrl = relayUrl(options.serverUrl);
   app.disable('x-powered-by');
@@ -20,6 +21,15 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
   };
   app.get('/connect/', (_req, res) => res.type('html').send(readFileSync(options.adminHtml, 'utf8')));
   app.get('/connect/health', (_req, res) => res.json({ ok: true }));
+  // Only pinned official archives are served; clients independently verify SHA-256.
+  const archives = new Set(Object.keys(FRP_ARCHIVE_HASHES).map(frpArchive));
+  app.get('/connect/clients/:archive', (req, res) => {
+    const archive = String(req.params.archive);
+    if (!options.clientsDir || !archives.has(archive)) return res.status(404).json({ error: '客户端安装包不可用' });
+    res.sendFile(archive, { root: options.clientsDir, dotfiles: 'deny' }, error => {
+      if (error && !res.headersSent) res.status(404).json({ error: '客户端安装包不可用，请使用备用下载源' });
+    });
+  });
   app.post('/connect/api/redeem', limit, (req, res) => {
     const device = store.redeem(req.body.secret, req.body.claim, req.body.credential, req.body.name);
     res.json({ deviceId: device.id, name: device.name, serverUrl, publicUrl: `${serverUrl}/d/${device.id}`, serverPort: device.port, pairedAt: device.createdAt });

@@ -15,6 +15,7 @@ import { allowedRemoteRequest, allowedRequest, readCookie, validToken } from './
 import { AuthStore, type Principal } from './auth.ts';
 import { authorize } from './access.ts';
 import { FrpTunnel } from './frp.ts';
+import { decodeInvite } from './invite.ts';
 import { ensureFrp } from './frp-install.ts';
 import { pendingPairing, redeemPairing, revokePairing, type PendingPairing } from './pairing.ts';
 import type { RelayPairing } from '../shared/pairing.ts';
@@ -83,6 +84,7 @@ const pairing = () => sealedSetting<RelayPairing>('remote-pairing');
 const tunnel = new Tunnel(dataDir);
 const frpTunnel = new FrpTunnel(dataDir);
 let remoteBusy = false;
+let pairingStage: RemoteStatus['pairingStage'] = null;
 async function changeRemote<T>(operation: () => Promise<T>): Promise<T> {
   if (remoteBusy) throw Object.assign(new Error('远程设置正在处理中，请稍候再试'), { status: 409 });
   remoteBusy = true;
@@ -406,7 +408,7 @@ app.delete('/api/auth/devices/:id', (req, res) => { auth.revokeDevice(String(req
 function remoteStatus(): RemoteStatus {
   const settings = remoteSettings();
   const pair = pairing();
-  return { settings, tunnel: settings.mode === 'invite' ? frpTunnel.status() : tunnel.status(), listening: remoteServer.listening, caddy: settings.mode === 'invite' ? '' : caddyConfig(settings), pairing: pair ? { deviceId: pair.deviceId, name: pair.name, serverUrl: pair.serverUrl, pairedAt: pair.pairedAt } : null };
+  return { settings, tunnel: settings.mode === 'invite' ? frpTunnel.status() : tunnel.status(), listening: remoteServer.listening, caddy: settings.mode === 'invite' ? '' : caddyConfig(settings), pairing: pair ? { deviceId: pair.deviceId, name: pair.name, serverUrl: pair.serverUrl, pairedAt: pair.pairedAt } : null, pairingStage };
 }
 async function applyRemote() {
   const settings = remoteSettings();
@@ -457,13 +459,18 @@ app.post('/api/remote/pair', async (req, res) => res.json(await changeRemote(asy
   const pending = saved?.invite === input.invite ? saved : input;
   // Persist the claim before redeeming: a lost HTTP response can be retried safely.
   auth.setSetting('remote-pairing-pending', secrets.seal(JSON.stringify(pending)));
-  await ensureFrp(dataDir);
-  const pair = await redeemPairing(pending);
-  auth.setSetting('remote-pairing', secrets.seal(JSON.stringify(pair)));
-  auth.setSetting('remote-pairing-pending', null);
-  auth.setSetting('remote', { ...remoteSettings(), mode: 'invite', enabled: true, publicUrl: pair.publicUrl, serverPort: pair.serverPort });
-  await applyRemote();
-  return remoteStatus();
+  try {
+    pairingStage = 'installing';
+    await ensureFrp(dataDir, 'frpc', decodeInvite(pending.invite).serverUrl);
+    pairingStage = 'redeeming';
+    const pair = await redeemPairing(pending);
+    auth.setSetting('remote-pairing', secrets.seal(JSON.stringify(pair)));
+    auth.setSetting('remote-pairing-pending', null);
+    auth.setSetting('remote', { ...remoteSettings(), mode: 'invite', enabled: true, publicUrl: pair.publicUrl, serverPort: pair.serverPort });
+    pairingStage = 'connecting';
+    await applyRemote();
+    return { ...remoteStatus(), pairingStage: null };
+  } finally { pairingStage = null; }
 })));
 app.delete('/api/remote/pair', async (_req, res) => res.json(await changeRemote(async () => {
   const pair = pairing();

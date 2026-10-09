@@ -500,3 +500,11 @@ scripts/restart-service.sh    # 每次重启：在独立会话里后台执行，
 管理员打开 `https://discoverpaw.com/connect/`，使用服务器上的管理密钥生成一次性邀请码。本机 SessionDeck 在“连接与能力 → 远程访问”粘贴邀请码并填写设备名称，服务会自动安装并启动官方 frp 客户端，生成可复制的设备链接。手机打开设备链接后使用 SessionDeck 所有者密码登录。
 
 中继服务运行在 `paw` 的 `sessiondeck-relay.service`，frp 服务运行在 `sessiondeck-frps.service`；两个服务只监听回环地址，Caddy 通过 `/connect/` 和 `/~!frp` 转发。管理密钥保存在 `/var/lib/sessiondeck-relay/admin.token`，不会写入仓库或 URL。现有 SSH 远程方式仍可在高级设置中使用。
+
+邀请码可选 1 小时、24 小时、7 天或永不过期，每个邀请码只能开通一台设备。有效期只限制首次兑换，已配对设备不会在邀请码到期后断开；需要停用时撤销设备。同一次配对遇到网络错误可用原邀请码重试，保存的兑换标识防止重复创建设备。
+
+首次配对依次显示准备客户端、兑换邀请码和启动连接。客户端下载优先使用管理员指定的镜像、邀请码所在中继提供的安装包，再回退到官方 GitHub 与备用镜像；每个源最多等待 30 秒，所有源合计最多 90 秒，安装包必须通过固定 SHA-256 校验。安装失败不消耗邀请码，失败后显示错误并允许重试。已有配对显示远程连接状态，连接失败时可保存并重连。也可通过 `SESSIONDECK_FRPC_PATH` 指定本机已有客户端。
+
+更新中继时运行 `npm run build:relay` 和 `npm run prepare:relay-clients`，将 `dist/relay/relay.mjs`、`dist/relay/index.html` 及 `dist/relay/clients/` 同步到服务器安装目录。客户端安装包目录默认位于管理页面文件旁的 `clients/`，可通过 `SESSIONDECK_RELAY_CLIENTS_DIR` 覆盖。然后重启 `sessiondeck-relay.service`；保留数据目录中的 SQLite、管理密钥及插件密钥，FRP 配置未变时无需重启 `sessiondeck-frps.service`。
+
+转发配置见 `relay/public.caddy`：设备路径必须使用 `route` 保持先鉴权、后路径改写的顺序，否则 Caddy 默认排序可能让有效链接返回 410。已有站点若启用全站 `encode`，需将响应类型限制为 HTML/CSS/JavaScript/JSON/SVG，排除 `text/event-stream`，避免实时状态被压缩缓冲。修改后用 `caddy validate` 检查，再 reload Caddy。
