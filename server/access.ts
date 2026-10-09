@@ -31,6 +31,8 @@ export const ROUTES: Route[] = [
   { method: 'DELETE', path: '/api/shares/:id', access: 'owner' },
 
   { method: 'GET', path: '/api/config', access: 'read' },
+  { method: 'GET', path: '/api/scratchpad', access: 'owner' },
+  { method: 'PATCH', path: '/api/scratchpad', access: 'owner' },
   { method: 'GET', path: '/api/state', access: 'read' },
   { method: 'GET', path: '/api/events', access: 'read' },
   { method: 'GET', path: '/api/sessions/:id/conversation', access: 'read' },

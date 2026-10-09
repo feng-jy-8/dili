@@ -22,12 +22,17 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 }
 
 /** Native text is untrusted: no raw HTML, executable URLs or remote image loads. */
-const Markdown = memo(function Markdown({ text }: { text: string }) {
+const Markdown = memo(function Markdown({ text, onToggleTask }: { text: string; onToggleTask?: (offset: number, checked: boolean) => void }) {
   return <div className="chat-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false }]]} skipHtml urlTransform={safeLink} components={{
     a: ({ href, children }) => href ? <a href={href} target={href.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">{children}</a> : <span>{children}</span>,
     img: ({ alt }) => <span className="markdown-image-label">[图片{alt ? `：${alt}` : ''}]</span>,
     pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
     table: ({ children }) => <div className="markdown-table"><table>{children}</table></div>,
+    li: ({ node, children, ...props }) => <li {...props} onChange={onToggleTask ? event => {
+      if (!(event.target instanceof HTMLInputElement) || event.target.closest('li') !== event.currentTarget || node?.position?.start.offset === undefined) return;
+      onToggleTask(node.position.start.offset, event.target.checked);
+    } : undefined}>{children}</li>,
+    input: ({ node: _node, ...props }) => <input {...props} disabled={onToggleTask ? false : props.disabled} onChange={onToggleTask ? () => {} : undefined} aria-label={onToggleTask ? '标记待办完成' : undefined} />,
   }}>{text}</ReactMarkdown></div>;
 });
 export default Markdown;

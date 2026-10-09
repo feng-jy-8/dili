@@ -8,6 +8,7 @@ import { chmod, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Store } from './store.ts';
+import { ScratchpadStore } from './scratchpad.ts';
 import { Terminals, type LaunchCommand } from './terminal.ts';
 import { ShellTerminals } from './shell-terminals.ts';
 import { allowedRemoteRequest, allowedRequest, readCookie, validToken } from './security.ts';
@@ -46,6 +47,7 @@ const demo = process.env.SESSIONDECK_DEMO === '1';
 const dataDir = resolve(process.env.SESSIONDECK_DATA_DIR || join(homedir(), '.local/share', demo ? 'sessiondeck-demo' : 'sessiondeck'));
 const instanceLock = await acquireInstanceLock(dataDir);
 const store = new Store(join(dataDir, 'sessiondeck.sqlite'));
+const scratchpad = new ScratchpadStore(store.db);
 // Uploaded images live outside every workspace. They intentionally survive a
 // service restart so the native Codex composer can still read a pasted path.
 const terminalImageDir = join(dataDir, 'terminal-images');
@@ -353,6 +355,8 @@ app.use('/api', (req, res, next) => {
 
 app.get('/api/config', (_req, res) => res.json({ csrfToken: auth.csrf(principalOf(res)) }));
 app.get('/api/state', (_req, res) => res.json(viewState(principalOf(res))));
+app.get('/api/scratchpad', (_req, res) => res.json(scratchpad.read()));
+app.patch('/api/scratchpad', (req, res) => res.json(scratchpad.save(req.body)));
 
 function authStatus(res: express.Response): AuthStatus {
   const principal = res.locals.principal as Principal | null;

@@ -6,6 +6,7 @@ import {
   GitFork, LoaderCircle, MessageSquare, Pencil, Pin, PinOff, Play, Plus,
   Radio, Search, Send, Settings2, Share2, SlidersHorizontal, Square, UsersRound, X,
   PanelBottomOpen, Volume2, VolumeX, TerminalSquare, Link2, PanelLeftOpen, PanelLeftClose,
+  FilePenLine,
 } from 'lucide-react';
 import type { AppState, StatePatch, Backend, DiscoveredSession, Delivery, Group, GroupDetail, GroupMessage, Session, SessionStatus } from '../shared/types';
 import { applyStatePatch } from './state';
@@ -19,6 +20,7 @@ import { useWorkspaceRoute, workspaceHash, type View } from './navigation';
 import ActivityView from './ActivityView';
 import WorkspaceExplorer, { Splitter } from './WorkspaceExplorer';
 import ShellTerminalDock from './ShellTerminalDock';
+import ScratchpadPanel from './ScratchpadPanel';
 import { useContactFilters, useContactSort, type ContactSort } from './preferences';
 import { readLocalPreference, writeLocalPreference, useDialog } from './ui';
 import ModalShell from './Modal';
@@ -94,6 +96,9 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const [modal, setModal] = useState<Modal>(null);
   const [selection, setSelection] = useState('');
   const [workspaceOpen, setWorkspaceOpen] = useState(() => readLocalPreference('sessiondeck.explorer-open') === 'on');
+  const [scratchpadOpen, setScratchpadOpen] = useState(() => readLocalPreference('sessiondeck.scratchpad-open') === 'on');
+  const toggleScratchpad = () => setScratchpadOpen(value => !value);
+  useEffect(() => { writeLocalPreference('sessiondeck.scratchpad-open', scratchpadOpen ? 'on' : 'off'); }, [scratchpadOpen]);
   // The rail is collapsed by default and only expands on request, never on hover.
   const [railOpen, setRailOpen] = useState(() => readLocalPreference('sessiondeck.rail') === 'open');
   const toggleRail = () => { setRailOpen(value => { writeLocalPreference('sessiondeck.rail', value ? 'closed' : 'open'); return !value; }); };
@@ -523,6 +528,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         <span className="connection-indicator" title={connectionLabel}><span className={`connection-dot ${connected ? 'online' : ''}`} /><span className="sr-only">{connectionLabel}</span></span>
         <MoreMenu items={[
           { label: '连接与能力', icon: <Settings2 size={14} />, active: view === 'backends', onSelect: () => navigate('backends') },
+          { label: '随手记', icon: <FilePenLine size={14} />, active: scratchpadOpen, onSelect: toggleScratchpad },
           { label: '使用说明与快捷键', icon: <CircleHelp size={14} />, onSelect: () => setModal({ type: 'help' }) },
         ]} />
       </div>
@@ -540,6 +546,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
             </FilterMenu></>}
           <button className={`icon-button ${workspaceOpen ? 'active' : ''}`} aria-label="打开资源管理器" title="打开资源管理器" disabled={!workspaceSession} onClick={() => setWorkspaceOpen((value) => !value)}><Folder size={17} /></button>
           <button className={`icon-button ${terminalPanelOpen ? 'active' : ''}`} aria-label="打开终端" title={terminalPanelOpen ? '终端面板已打开' : '打开底部终端'} disabled={!state} onClick={() => openTerminalPanel(selected?.id)}><PanelBottomOpen size={17} /></button>
+          <button className={`icon-button ${scratchpadOpen ? 'active' : ''}`} aria-label="打开随手记" title="随手记" aria-expanded={scratchpadOpen} onClick={toggleScratchpad}><FilePenLine size={17} /></button>
           <div className="contact-actions">
             <button className="button primary new-contact" aria-label="新建联系人" title="新建联系人" disabled={!state} onClick={() => setModal({ type: 'create' })}><Plus size={17} /></button>
             <button className="button secondary import-contact" aria-label="导入会话" title="导入已有会话" disabled={!state} onClick={() => setModal({ type: 'import' })}><ArrowDownToLine size={17} /><span>导入</span></button>
@@ -617,6 +624,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
     </div>
     {state && <ShellTerminalDock open={terminalPanelOpen} sessionId={terminalSessionId} onClose={() => setTerminalPanelOpen(false)} inert={!!modal} />}
     </div>
+    <ScratchpadPanel open={scratchpadOpen} close={() => setScratchpadOpen(false)} inert={!!modal} />
     </div>
 
     </div>

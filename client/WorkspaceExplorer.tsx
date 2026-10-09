@@ -61,7 +61,7 @@ function useViewportWidth() {
   return width;
 }
 
-export function Splitter({ label, value, min, max, onChange, onCommit }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void; onCommit: (value: number) => void }) {
+export function Splitter({ label, value, min, max, onChange, onCommit, direction = 1 }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void; onCommit: (value: number) => void; direction?: 1 | -1 }) {
   const drag = useRef<{ x: number; width: number; last: number } | null>(null);
   const clamp = (next: number) => Math.round(Math.max(min, Math.min(max, next)));
   const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -75,7 +75,7 @@ export function Splitter({ label, value, min, max, onChange, onCommit }: { label
   };
   const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag.current) return;
-    const next = clamp(drag.current.width + event.clientX - drag.current.x);
+    const next = clamp(drag.current.width + direction * (event.clientX - drag.current.x));
     drag.current.last = next;
     onChange(next);
   };
@@ -89,7 +89,7 @@ export function Splitter({ label, value, min, max, onChange, onCommit }: { label
   const keyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const next = clamp(value + (event.key === 'ArrowRight' ? 24 : -24));
+    const next = clamp(value + direction * (event.key === 'ArrowRight' ? 24 : -24));
     onChange(next); onCommit(next);
   };
   return <div className="workspace-splitter" role="separator" tabIndex={0} aria-orientation="vertical" aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(value)} title="拖动调整宽度"
