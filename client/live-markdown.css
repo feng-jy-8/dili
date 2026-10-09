@@ -1,0 +1,19 @@
+.live-markdown-editor { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.live-markdown-host { flex: 1; min-height: 0; width: 100%; border: 0; border-radius: 0; background: var(--bg); }
+.live-markdown-loading { padding: 12px 18px; color: var(--muted); font-size: 12px; }
+.scratchpad-panel .vditor,.scratchpad-panel .vditor--dark { --panel-background-color: var(--bg); --toolbar-background-color: var(--subtle); --toolbar-icon-color: var(--muted); --toolbar-icon-hover-color: var(--accent); --border-color: var(--line); --second-color: var(--muted); --textarea-background-color: var(--bg); --textarea-text-color: var(--text); --ir-heading-color: var(--text); --ir-title-color: var(--muted); --ir-marker-color: var(--faint); --ir-bracket-color: var(--muted); border: 0; background: var(--bg); }
+.scratchpad-panel .vditor-content,.scratchpad-panel .vditor-ir { min-height: 0; background: var(--bg); }
+.scratchpad-panel .vditor-reset { padding: 8px 18px 32px !important; color: var(--text); font-family: inherit; font-size: 14px; line-height: 1.9; caret-color: var(--text); overflow-wrap: anywhere; }
+.scratchpad-panel .vditor-reset:focus-visible { outline: none; }
+.scratchpad-panel .vditor-reset:empty:before { color: var(--faint); }
+.scratchpad-panel .vditor-reset h1 { font-size: 22px; }.scratchpad-panel .vditor-reset h2 { font-size: 19px; }.scratchpad-panel .vditor-reset h3 { font-size: 16px; }
+.scratchpad-panel .vditor-reset blockquote { color: var(--muted); border-left-color: var(--line-strong); }
+.scratchpad-panel .vditor-reset a { color: var(--accent-dark); }
+.scratchpad-panel .vditor-reset code { background: var(--inline-code-bg); color: var(--inline-code-text); }
+.scratchpad-panel .vditor-reset pre.vditor-ir__marker--pre,.scratchpad-panel .vditor-reset .vditor-ir__preview { padding: 10px 12px; background: var(--code-bg); color: var(--text); border-radius: 6px; }
+.scratchpad-panel .vditor-reset pre code { background: transparent; color: inherit; }
+.scratchpad-panel .vditor-reset table th,.scratchpad-panel .vditor-reset table td { border-color: var(--line-strong); }.scratchpad-panel .vditor-reset table tr { background: var(--bg); border-color: var(--line); }.scratchpad-panel .vditor-reset table tr:nth-child(2n) { background: var(--subtle); }
+.scratchpad-panel .vditor-reset input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+.scratchpad-panel .vditor-ir__marker,.scratchpad-panel .vditor-ir__marker--heading { color: var(--faint); }
+.scratchpad-panel .vditor-toolbar,.scratchpad-panel .vditor-counter { display: none; }
+@media (max-width: 720px) { .scratchpad-panel .vditor-reset { font-size: 16px; } }

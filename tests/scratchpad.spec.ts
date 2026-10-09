@@ -7,6 +7,7 @@ test('scratchpad autosaves Markdown, toggles nested tasks and survives close/rel
   await page.getByRole('button', { name: '打开随手记', exact: true }).click();
   const panel = page.getByRole('complementary', { name: '随手记', exact: true });
   const content = '# 今天\n\n- [ ] 第一件事\n  - [ ] 子任务\n\n**重要**\n\n```sh\npwd\n```\n';
+  await panel.getByRole('button', { name: '源码', exact: true }).click();
   const editor = panel.getByRole('textbox', { name: '随手记内容' });
   await expect(editor).toBeEnabled();
   await editor.fill(content);
@@ -22,7 +23,7 @@ test('scratchpad autosaves Markdown, toggles nested tasks and survives close/rel
   await expect(panel.getByRole('checkbox').first()).not.toBeChecked();
   const toggled = content.replace('- [ ] 子任务', '- [x] 子任务');
   await expect.poll(async () => ((await (await request.get('/api/scratchpad')).json()) as Scratchpad).content).toBe(toggled);
-  await panel.getByRole('button', { name: '编辑', exact: true }).click();
+  await panel.getByRole('button', { name: '源码', exact: true }).click();
   const splitter = panel.getByRole('separator', { name: '调整随手记宽度' });
   await splitter.focus(); await splitter.press('ArrowLeft');
   await expect(splitter).toHaveAttribute('aria-valuenow', '364');
@@ -48,6 +49,7 @@ test('offline drafts recover after refresh and conflicting edits never silently 
   await page.goto('/');
   await page.getByRole('button', { name: '打开随手记', exact: true }).click();
   const panel = page.getByRole('complementary', { name: '随手记', exact: true });
+  await panel.getByRole('button', { name: '源码', exact: true }).click();
   const editor = panel.getByRole('textbox', { name: '随手记内容' });
   await expect(editor).toBeEnabled();
   await page.route('**/api/scratchpad', route => route.request().method() === 'PATCH' ? route.abort() : route.continue());
@@ -79,6 +81,7 @@ test('mobile scratchpad opens as a page and returns to the contact list without 
   await page.goto('/');
   await page.getByRole('button', { name: '打开随手记', exact: true }).click();
   const panel = page.getByRole('complementary', { name: '随手记', exact: true });
+  await panel.getByRole('button', { name: '源码', exact: true }).click();
   const editor = panel.getByRole('textbox', { name: '随手记内容' });
   await expect(editor).toBeEnabled(); await editor.fill('# 手机待办\n\n- [ ] 明天继续');
   expect((await panel.boundingBox())!.width).toBe(390);
@@ -93,6 +96,7 @@ test('mobile scratchpad opens as a page and returns to the contact list without 
 test('a new tab recovers an unsaved note without submitting it or erasing another tab draft', async ({ page, context, request }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '打开随手记', exact: true }).click();
+  await page.getByRole('button', { name: '源码', exact: true }).click();
   const editor = page.getByRole('textbox', { name: '随手记内容' });
   await expect(editor).toBeEnabled();
   await page.route('**/api/scratchpad', route => route.request().method() === 'PATCH' ? route.abort() : route.continue());

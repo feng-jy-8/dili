@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Download, Eye, FilePenLine, LoaderCircle, Pencil, RotateCcw, Trash2, X } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Check, Code2, Download, Eye, FilePenLine, LoaderCircle, Pencil, RotateCcw, Trash2, X } from 'lucide-react';
 import { api, ApiError } from './api';
 import { appUrl } from './urls';
 import Markdown from './Markdown';
@@ -7,6 +7,8 @@ import { Splitter } from './WorkspaceExplorer';
 import { readLocalPreference, writeLocalPreference } from './ui';
 import { MAX_SCRATCHPAD_LENGTH, type Scratchpad } from '../shared/scratchpad';
 import './scratchpad.css';
+
+const LiveMarkdownEditor = lazy(() => import('./LiveMarkdownEditor'));
 
 type Recovery = { key: string; content: string; revision: number };
 type Model = { note: Scratchpad | null; content: string; conflict: Scratchpad | null; status: 'loading' | 'saved' | 'dirty' | 'saving' | 'failed'; error: string; recovery?: Recovery };
@@ -53,7 +55,16 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
     if (!mounted.current) return;
     const next = fn(current.current); current.current = next; cache(next); setModel(next);
   }, []);
-  const [preview, setPreview] = useState(false);
+  const [mode, setMode] = useState<'live' | 'source' | 'preview'>(() => {
+    const saved = readLocalPreference('sessiondeck.scratchpad-mode');
+    return saved === 'source' || saved === 'preview' ? saved : 'live';
+  });
+  const [focusRequest, setFocusRequest] = useState(0);
+  const selectMode = (next: typeof mode) => {
+    setMode(next); writeLocalPreference('sessiondeck.scratchpad-mode', next);
+    if (next === 'source') requestAnimationFrame(() => editor.current?.focus());
+    if (next === 'live') setFocusRequest(value => value + 1);
+  };
   const [clearing, setClearing] = useState(false);
   const [undo, setUndo] = useState<string | null>(null);
   const [width, setWidth] = useState(() => {
@@ -163,7 +174,7 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
       <button className="icon-button" aria-label="清空随手记" title="清空笔记" disabled={!model.content || !model.note || !!model.conflict || saving.current} onClick={() => setClearing(true)}><Trash2 size={15} /></button>
       <button className="icon-button" aria-label="关闭随手记" title="收起，内容会保留" onClick={close}><X size={16} /></button>
     </div></header>
-    <div className="scratchpad-toolbar"><div role="group" aria-label="随手记显示方式"><button aria-pressed={!preview} onClick={() => { setPreview(false); requestAnimationFrame(() => editor.current?.focus()); }}><Pencil size={13} />编辑</button><button aria-pressed={preview} onClick={() => setPreview(true)}><Eye size={14} />预览</button></div><span role="status" aria-live="polite" className={`scratchpad-status ${model.status === 'failed' || model.conflict ? 'failed' : ''}`}>{model.status === 'saving' ? <LoaderCircle size={12} className="spin" /> : model.status === 'saved' ? <Check size={12} /> : null}{status}</span></div>
+    <div className="scratchpad-toolbar"><div role="group" aria-label="随手记显示方式"><button aria-pressed={mode === 'live'} onClick={() => selectMode('live')}><Pencil size={13} />实时</button><button aria-pressed={mode === 'source'} onClick={() => selectMode('source')}><Code2 size={14} />源码</button><button aria-pressed={mode === 'preview'} onClick={() => selectMode('preview')}><Eye size={14} />预览</button></div><span role="status" aria-live="polite" className={`scratchpad-status ${model.status === 'failed' || model.conflict ? 'failed' : ''}`}>{model.status === 'saving' ? <LoaderCircle size={12} className="spin" /> : model.status === 'saved' ? <Check size={12} /> : null}{status}</span></div>
     {model.error && <div className="scratchpad-banner" role="alert"><p>{model.error}。未保存内容保留在此浏览器。</p><button className="text-button" onClick={() => void (model.note ? save() : sync())}>重试</button></div>}
     {model.conflict && <div className="scratchpad-banner" role="alert"><p>发现未保存草稿，或笔记已在其他页面更新。你的内容已保留，请核对后选择。</p><details><summary>查看最新内容</summary><pre>{model.conflict.content || '（空白笔记）'}</pre></details><div>
       <button className="text-button" onClick={() => resolveConflict(false)}>保存我的内容</button>
@@ -171,13 +182,13 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
     </div></div>}
     {clearing && <div className="scratchpad-banner" role="alert"><p>清空这张笔记？清空后可以撤销。</p><div><button className="text-button" onClick={() => setClearing(false)}>取消</button><button className="text-button danger" onClick={() => { setUndo(model.content); edit(''); setClearing(false); }}>确认清空</button></div></div>}
     {undo !== null && <div className="scratchpad-undo"><span>先前内容可恢复</span><button className="text-button" onClick={restore}><RotateCcw size={12} />撤销</button></div>}
-    {preview ? <div className="scratchpad-preview">{model.content ? <Markdown text={model.content} onToggleTask={model.note ? (offset, checked) => {
+    {mode === 'live' ? model.note ? <Suspense fallback={<div className="loading-state"><LoaderCircle className="spin" size={18} /><p>正在加载实时编辑器…</p></div>}><LiveMarkdownEditor value={model.content} onChange={edit} onBlur={() => void save()} focusRequest={focusRequest} /></Suspense> : <div className="scratchpad-empty">正在读取笔记…</div> : mode === 'preview' ? <div className="scratchpad-preview">{model.content ? <Markdown text={model.content} onToggleTask={model.note ? (offset, checked) => {
       const tail = model.content.slice(offset);
       const match = /^(?:[-+*]|\d+[.)])\s+\[([ xX])\]/.exec(tail);
       if (!match) return;
       const position = offset + match[0].lastIndexOf('[') + 1;
       edit(`${model.content.slice(0, position)}${checked ? 'x' : ' '}${model.content.slice(position + 1)}`);
-    } : undefined} /> : <div className="scratchpad-empty"><FilePenLine size={26} /><p>把想法和待办留在这里</p><button className="text-button" onClick={() => setPreview(false)}>开始记录</button></div>}</div> : <textarea ref={editor} className="scratchpad-editor" aria-label="随手记内容" placeholder={'随手记下想法、待办或命令…\n\n# 今天\n- [ ] 要做的事\n\n支持 Markdown，输入后自动保存。'} value={model.content} maxLength={MAX_SCRATCHPAD_LENGTH} disabled={!model.note} spellCheck={false} onChange={event => edit(event.target.value)} onBlur={() => void save()} />}
+    } : undefined} /> : <div className="scratchpad-empty"><FilePenLine size={26} /><p>把想法和待办留在这里</p><button className="text-button" onClick={() => selectMode('live')}>开始记录</button></div>}</div> : <textarea ref={editor} className="scratchpad-editor" aria-label="随手记内容" placeholder={'随手记下想法、待办或命令…\n\n# 今天\n- [ ] 要做的事\n\n支持 Markdown，输入后自动保存。'} value={model.content} maxLength={MAX_SCRATCHPAD_LENGTH} disabled={!model.note} spellCheck={false} onChange={event => edit(event.target.value)} onBlur={() => void save()} />}
     <footer className="scratchpad-footer"><span>Markdown · 自动保存</span><span>{model.content.length.toLocaleString()} / 30,000</span></footer>
   </aside>;
 }

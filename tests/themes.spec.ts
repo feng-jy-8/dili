@@ -48,6 +48,7 @@ test('theme picker colors the entire workbench and native terminal live, with pe
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(note).toHaveCSS('background-color', 'rgb(25, 29, 36)');
+  await note.getByRole('button', { name: '源码', exact: true }).click();
   await expect(note.getByRole('textbox')).toHaveValue(/工作清单/);
 });
 
