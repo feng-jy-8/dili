@@ -8,6 +8,7 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 import { backupMetadata, metadataDataDirectory } from './backup.ts';
 import { Store } from './store.ts';
+import { ScratchpadStore } from './scratchpad.ts';
 
 const execute = promisify(execFile);
 const nativeId = 'aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa';
@@ -27,6 +28,8 @@ async function fixture(t: test.TestContext) {
 
 test('online backup includes committed live WAL data and preserves the running source', async t => {
   const item = await fixture(t);
+  const scratchpad = new ScratchpadStore(item.store.db);
+  const note = scratchpad.save({ ...scratchpad.read(), content: '# 私人随手记\n- [ ] 下周计划' });
   assert.ok((await stat(`${item.path}-wal`)).size > 0, 'The source must have real live WAL data');
   // Another connection has a write transaction in progress. Its uncommitted
   // changes must not leak into the committed backup or block WAL readers.
@@ -52,6 +55,8 @@ test('online backup includes committed live WAL data and preserves the running s
     assert.equal(restored.running, true);
     assert.equal(restored.title, 'Private source title');
     assert.equal(group.goal, 'Private shared objective');
+    const savedNote = snapshot.prepare('SELECT id, content, revision FROM scratchpad WHERE slot = 1').get()!;
+    assert.equal(savedNote.id, note.id); assert.equal(savedNote.content, note.content); assert.equal(savedNote.revision, note.revision);
     assert.equal(snapshot.prepare('PRAGMA journal_mode').get()!.journal_mode, 'delete');
     assert.equal(snapshot.prepare('PRAGMA quick_check').get()!.quick_check, 'ok');
   } finally { snapshot.close(); }

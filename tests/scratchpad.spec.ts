@@ -89,3 +89,28 @@ test('mobile scratchpad opens as a page and returns to the contact list without 
   await page.getByRole('button', { name: '打开随手记', exact: true }).click();
   await expect(editor).toHaveValue('# 手机待办\n\n- [ ] 明天继续');
 });
+
+test('a new tab recovers an unsaved note without submitting it or erasing another tab draft', async ({ page, context, request }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '打开随手记', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: '随手记内容' });
+  await expect(editor).toBeEnabled();
+  await page.route('**/api/scratchpad', route => route.request().method() === 'PATCH' ? route.abort() : route.continue());
+  await editor.fill('尚未同步的临时任务');
+  await expect(page.getByRole('complementary', { name: '随手记' }).getByRole('status')).toHaveText('保存未完成');
+  const before = await (await request.get('/api/scratchpad')).json() as Scratchpad;
+  const second = await context.newPage();
+  await second.goto('/');
+  const panel = second.getByRole('complementary', { name: '随手记', exact: true });
+  await expect(panel.getByRole('status')).toHaveText('需要核对');
+  await expect(panel.getByRole('textbox')).toHaveValue('尚未同步的临时任务');
+  expect(((await (await request.get('/api/scratchpad')).json()) as Scratchpad).revision).toBe(before.revision);
+  await page.reload();
+  await expect(editor).toHaveValue('尚未同步的临时任务');
+  await panel.getByRole('button', { name: '保存我的内容', exact: true }).click();
+  await expect(panel.getByRole('status')).toHaveText('已保存');
+  await second.reload();
+  await expect(panel.getByRole('status')).toHaveText('已保存');
+  await expect(panel.getByRole('textbox')).toHaveValue('尚未同步的临时任务');
+  await second.close();
+});

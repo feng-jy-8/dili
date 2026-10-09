@@ -8,11 +8,38 @@ import { readLocalPreference, writeLocalPreference } from './ui';
 import { MAX_SCRATCHPAD_LENGTH, type Scratchpad } from '../shared/scratchpad';
 import './scratchpad.css';
 
-type Model = { note: Scratchpad | null; content: string; conflict: Scratchpad | null; status: 'loading' | 'saved' | 'dirty' | 'saving' | 'failed'; error: string };
-const draftKey = `sessiondeck.scratchpad-draft:${appUrl('/')}`;
+type Recovery = { key: string; content: string; revision: number };
+type Model = { note: Scratchpad | null; content: string; conflict: Scratchpad | null; status: 'loading' | 'saved' | 'dirty' | 'saving' | 'failed'; error: string; recovery?: Recovery };
+const draftPrefix = `sessiondeck.scratchpad-draft:${appUrl('/')}:`;
+const tabId = (() => {
+  try {
+    const key = 'sessiondeck.scratchpad-tab';
+    const id = sessionStorage.getItem(key) ?? crypto.randomUUID();
+    sessionStorage.setItem(key, id); return id;
+  } catch { return `${Date.now()}-${Math.random()}`; }
+})();
+const draftKey = `${draftPrefix}${tabId}`;
+type Draft = { id: string; revision: number; content: string; conflicted?: boolean; timestamp?: number; recovery?: Recovery };
+function readDraft(): { draft: Draft; otherTab: boolean; key: string } | null {
+  try {
+    const keys = [draftKey, ...Object.keys(localStorage).filter(key => key.startsWith(draftPrefix) && key !== draftKey)];
+    const drafts = keys.flatMap(key => {
+      try {
+        const value = JSON.parse(readLocalPreference(key) ?? 'null');
+        if (value && typeof value.content === 'string' && value.content.length <= MAX_SCRATCHPAD_LENGTH && typeof value.id === 'string' && Number.isSafeInteger(value.revision)) return [{ draft: value as Draft, otherTab: key !== draftKey, key }];
+      } catch { /* Ignore a damaged draft independently of the other tabs. */ }
+      return [];
+    });
+    return drafts.find(item => !item.otherTab) ?? drafts.sort((a, b) => (b.draft.timestamp ?? 0) - (a.draft.timestamp ?? 0))[0] ?? null;
+  } catch { return null; }
+}
 function cache(model: Model) {
   if (!model.note) return;
-  writeLocalPreference(draftKey, model.content === model.note.content && !model.conflict ? 'null' : JSON.stringify({ id: model.note.id, revision: model.note.revision, content: model.content, conflicted: !!model.conflict }));
+  if (model.content === model.note.content && !model.conflict) {
+    try { localStorage.removeItem(draftKey); } catch { /* Server persistence remains available. */ }
+  } else {
+    writeLocalPreference(draftKey, JSON.stringify({ id: model.note.id, revision: model.note.revision, content: model.content, conflicted: !!model.conflict, timestamp: Date.now(), recovery: model.recovery }));
+  }
 }
 
 export default function ScratchpadPanel({ open, close, inert }: { open: boolean; close: () => void; inert: boolean }) {
@@ -36,7 +63,7 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
   const editor = useRef<HTMLTextAreaElement>(null);
 
   const sync = useCallback(async () => {
-    if (loading.current || saving.current) return;
+    if (!mounted.current || loading.current || saving.current) return;
     loading.current = true;
     const serial = saveSerial.current;
     try {
@@ -44,14 +71,12 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
       if (serial !== saveSerial.current) return;
       update(previous => {
         if (!previous.note) {
-          let draft: { id: string; revision: number; content: string; conflicted?: boolean } | null = null;
-          try {
-            const value = JSON.parse(readLocalPreference(draftKey) ?? 'null');
-            if (value && typeof value.content === 'string' && value.content.length <= MAX_SCRATCHPAD_LENGTH && typeof value.id === 'string' && Number.isSafeInteger(value.revision)) draft = value;
-          } catch { /* An invalid cache must never replace the server note. */ }
+          const recovered = readDraft();
+          const draft = recovered?.draft;
           if (draft && draft.content !== latest.content) {
-            const conflict = draft.conflicted || draft.id !== latest.id || draft.revision !== latest.revision;
-            return { note: latest, content: draft.content, conflict: conflict ? latest : null, status: 'dirty', error: '' };
+            const conflict = recovered?.otherTab || draft.conflicted || draft.id !== latest.id || draft.revision !== latest.revision;
+            const recovery = recovered.otherTab ? { key: recovered.key, content: draft.content, revision: draft.revision } : draft.recovery;
+            return { note: latest, content: draft.content, conflict: conflict ? latest : null, status: 'dirty', error: '', recovery };
           }
         } else if (previous.content !== previous.note.content || previous.conflict) {
           if (previous.content === latest.content) return { note: latest, content: latest.content, conflict: null, status: 'saved', error: '' };
@@ -67,7 +92,7 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
 
   const save = useCallback(async () => {
     const snapshot = current.current;
-    if (saving.current || !snapshot.note || snapshot.conflict || snapshot.content === snapshot.note.content) return;
+    if (!mounted.current || saving.current || !snapshot.note || snapshot.conflict || snapshot.content === snapshot.note.content) return;
     saving.current = true;
     saveSerial.current++;
     update(previous => ({ ...previous, status: 'saving', error: '' }));
@@ -106,6 +131,21 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
     update(previous => ({ ...previous, content, status: content === previous.note?.content ? 'saved' : 'dirty', error: '' }));
   };
   const restore = () => { if (undo !== null) { edit(undo); setUndo(null); setClearing(false); } };
+  const resolveConflict = (useLatest: boolean) => {
+    const previous = current.current;
+    if (!previous.conflict) return;
+    // Consume a recovered draft only on an explicit decision, and only if the
+    // source tab has not edited it again in the meantime.
+    const recovery = previous.recovery;
+    if (recovery?.key?.startsWith(draftPrefix)) {
+      try {
+        const value = JSON.parse(readLocalPreference(recovery.key) ?? 'null');
+        if (value?.content === recovery.content && value?.revision === recovery.revision) localStorage.removeItem(recovery.key);
+      } catch { /* Keep an unrecognized source draft. */ }
+    }
+    if (useLatest) setUndo(previous.content);
+    update(model => ({ ...model, note: model.conflict!, content: useLatest ? model.conflict!.content : model.content, conflict: null, status: useLatest ? 'saved' : 'dirty', error: '', recovery: undefined }));
+  };
   const status = model.conflict ? '需要核对' : model.status === 'saved' ? '已保存' : model.status === 'saving' ? '保存中…' : model.status === 'loading' ? '读取中…' : model.status === 'failed' ? '保存未完成' : '待保存';
   const exportNote = () => {
     const url = URL.createObjectURL(new Blob([model.content], { type: 'text/markdown;charset=utf-8' }));
@@ -113,7 +153,7 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  return <aside className="scratchpad-panel" aria-label="随手记" hidden={!open} inert={inert} style={{ width }} onKeyDown={event => {
+  return !open ? null : <aside className="scratchpad-panel" aria-label="随手记" inert={inert} style={{ width }} onKeyDown={event => {
     if (event.key === 'Escape') { event.stopPropagation(); close(); }
     if ((event.ctrlKey || event.metaKey) && event.key === 's') { event.preventDefault(); void save(); }
   }}>
@@ -125,9 +165,9 @@ export default function ScratchpadPanel({ open, close, inert }: { open: boolean;
     </div></header>
     <div className="scratchpad-toolbar"><div role="group" aria-label="随手记显示方式"><button aria-pressed={!preview} onClick={() => { setPreview(false); requestAnimationFrame(() => editor.current?.focus()); }}><Pencil size={13} />编辑</button><button aria-pressed={preview} onClick={() => setPreview(true)}><Eye size={14} />预览</button></div><span role="status" aria-live="polite" className={`scratchpad-status ${model.status === 'failed' || model.conflict ? 'failed' : ''}`}>{model.status === 'saving' ? <LoaderCircle size={12} className="spin" /> : model.status === 'saved' ? <Check size={12} /> : null}{status}</span></div>
     {model.error && <div className="scratchpad-banner" role="alert"><p>{model.error}。未保存内容保留在此浏览器。</p><button className="text-button" onClick={() => void (model.note ? save() : sync())}>重试</button></div>}
-    {model.conflict && <div className="scratchpad-banner" role="alert"><p>其他页面已更新笔记。你的内容已保留，请核对后选择。</p><details><summary>查看最新内容</summary><pre>{model.conflict.content || '（空白笔记）'}</pre></details><div>
-      <button className="text-button" onClick={() => update(previous => ({ ...previous, note: previous.conflict!, conflict: null, status: 'dirty', error: '' }))}>保存我的内容</button>
-      <button className="text-button" onClick={() => { setUndo(model.content); update(previous => ({ note: previous.conflict!, content: previous.conflict!.content, conflict: null, status: 'saved', error: '' })); }}>使用最新内容</button>
+    {model.conflict && <div className="scratchpad-banner" role="alert"><p>发现未保存草稿，或笔记已在其他页面更新。你的内容已保留，请核对后选择。</p><details><summary>查看最新内容</summary><pre>{model.conflict.content || '（空白笔记）'}</pre></details><div>
+      <button className="text-button" onClick={() => resolveConflict(false)}>保存我的内容</button>
+      <button className="text-button" onClick={() => resolveConflict(true)}>使用最新内容</button>
     </div></div>}
     {clearing && <div className="scratchpad-banner" role="alert"><p>清空这张笔记？清空后可以撤销。</p><div><button className="text-button" onClick={() => setClearing(false)}>取消</button><button className="text-button danger" onClick={() => { setUndo(model.content); edit(''); setClearing(false); }}>确认清空</button></div></div>}
     {undo !== null && <div className="scratchpad-undo"><span>先前内容可恢复</span><button className="text-button" onClick={restore}><RotateCcw size={12} />撤销</button></div>}
