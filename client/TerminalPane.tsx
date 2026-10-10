@@ -135,7 +135,9 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     const surface = containerRef.current.closest<HTMLElement>('.terminal-pane') ?? containerRef.current;
     const terminal = new Terminal({
       cursorBlink: true, fontSize: 13, lineHeight: 1.25, scrollback: 8000,
-      disableStdin: true, screenReaderMode: true,
+      // Keep xterm's default screenReaderMode: forcing it on drops insertText
+      // commits from IMEs that submit a phrase without keyboard events.
+      disableStdin: true,
       fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
       theme: terminalTheme(surface),
     });

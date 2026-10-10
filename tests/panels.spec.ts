@@ -30,12 +30,12 @@ test('bottom terminal runs real shell commands, isolates split shells and surviv
     await expect(dock).toBeVisible();
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(1);
     await command(dock, `SD_TEST_VALUE=first; printf 'SHELL_RESULT:%s\\n' "$((6 * 7))"`);
-    await expect(dock.locator('.xterm-accessibility-tree')).toContainText('SHELL_RESULT:42');
+    await expect(dock.locator('.xterm-rows')).toContainText('SHELL_RESULT:42');
     await dock.getByRole('button', { name: '终端分屏', exact: true }).click();
     await expect(dock.locator('.terminal-dock-pane')).toHaveCount(2);
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(2);
     await command(dock.locator('.terminal-dock-pane').first(), `printf 'SECOND_VALUE:%s\\n' "\${SD_TEST_VALUE:-empty}"`);
-    await expect(dock.locator('.terminal-dock-pane').first().locator('.xterm-accessibility-tree')).toContainText('SECOND_VALUE:empty');
+    await expect(dock.locator('.terminal-dock-pane').first().locator('.xterm-rows')).toContainText('SECOND_VALUE:empty');
     await dock.getByRole('button', { name: '关闭终端分屏', exact: true }).click();
     await dock.getByRole('button', { name: '隐藏终端面板', exact: true }).click();
     await expect(dock).not.toBeVisible();
@@ -45,11 +45,11 @@ test('bottom terminal runs real shell commands, isolates split shells and surviv
     await dock.getByRole('tab').first().click();
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(1);
     await command(dock, `printf 'RESTORED:%s\\n' "$SD_TEST_VALUE"`);
-    await expect(dock.locator('.xterm-accessibility-tree')).toContainText('RESTORED:first');
+    await expect(dock.locator('.xterm-rows')).toContainText('RESTORED:first');
     await command(dock, 'sleep 30');
     await dock.locator('textarea.xterm-helper-textarea').press('Control+c');
     await command(dock, `printf 'INTERRUPTED:%s\\n' "$((2 + 3))"`);
-    await expect(dock.locator('.xterm-accessibility-tree')).toContainText('INTERRUPTED:5');
+    await expect(dock.locator('.xterm-rows')).toContainText('INTERRUPTED:5');
     await page.screenshot({ path: 'artifacts/shell-terminal.png' });
     await dock.locator('.terminal-dock-tab-close').first().click();
     await expect(dock.locator('.terminal-dock-tab')).toHaveCount(1);
@@ -181,7 +181,7 @@ test('opening a shell from a contact uses its directory and is immediately inter
     await expect(page.getByRole('dialog', { name: `${session.title} 的私聊` }).locator('.session-conversation')).toBeVisible();
     await page.screenshot({ path: 'artifacts/workbench-terminal.png' });
     await command(dock, 'pwd');
-    await expect(dock.locator('.xterm-accessibility-tree')).toContainText(root);
+    await expect(dock.locator('.xterm-rows')).toContainText(root);
     await command(dock, 'exit');
     await expect(dock).toContainText('已退出');
   } finally {
@@ -271,7 +271,7 @@ test('a slow shell creation follows the latest contact directory and reconnect p
     await expect(dock.locator('.terminal-dock-pane-heading')).toHaveText(secondCwd);
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(1);
     await command(dock, `printf 'CWD_RESULT:%s\\n' "$PWD"`);
-    await expect(dock.locator('.xterm-accessibility-tree')).toContainText(`CWD_RESULT:${secondCwd}`);
+    await expect(dock.locator('.xterm-rows')).toContainText(`CWD_RESULT:${secondCwd}`);
     const search = page.getByLabel('搜索联系人', { exact: true });
     await search.fill('正在编辑');
     const count = await page.evaluate(() => {

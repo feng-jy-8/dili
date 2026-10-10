@@ -32,9 +32,11 @@ for (const mobile of [false, true]) {
           panes.push(dock.locator('.terminal-pane').nth(0), dock.locator('.terminal-pane').nth(1));
           const input = panes[1].locator('.xterm-helper-textarea');
           await input.focus();
-          await input.pressSequentially('SD_THEME_VALUE=preserved');
+          // Shells share the native terminal: whole-phrase IME insertion must
+          // work here too, including after a live theme change.
+          await page.keyboard.insertText('SD_THEME_VALUE=中文多字🙂');
           await input.press('Enter');
-          await expect(panes[1].locator('.xterm-accessibility-tree')).toContainText('SD_THEME_VALUE=preserved');
+          await expect(panes[1].locator('.xterm-rows')).toContainText('SD_THEME_VALUE=中文多字🙂');
         }
         const elements = await Promise.all(panes.map(pane => pane.locator('.xterm').elementHandle()));
         const connectionCount = sockets.length;
@@ -60,7 +62,7 @@ for (const mobile of [false, true]) {
           await input.focus();
           await input.pressSequentially('printf "THEME_RESULT:%s\\n" "$SD_THEME_VALUE"');
           await input.press('Enter');
-          await expect(panes[1].locator('.xterm-accessibility-tree')).toContainText('THEME_RESULT:preserved');
+          await expect(panes[1].locator('.xterm-rows')).toContainText('THEME_RESULT:中文多字🙂');
         }
         expect(sockets.length).toBe(connectionCount);
       } finally {
