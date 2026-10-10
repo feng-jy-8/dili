@@ -1,6 +1,8 @@
 # Import inside your existing HTTPS site. No additional public ports or DNS.
 # If the host site uses encode, restrict its response Content-Type matcher to
 # HTML/CSS/JS/JSON/SVG. Never compress text/event-stream (live status updates).
+# Host-site Cache-Control matchers must exclude /connect, /connect/* and /~!frp.
+# The relay and device server supply their own cache policy for authenticated data.
 handle /~!frp {
   reverse_proxy 127.0.0.1:18502
 }

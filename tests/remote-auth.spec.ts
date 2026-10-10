@@ -2,8 +2,74 @@ import { mutationHeaders, test } from './fixtures';
 import { expect } from '@playwright/test';
 import type { AppState } from '../shared/types';
 import type { RemoteStatus } from '../shared/auth';
+import { remoteHtml } from '../server/remote-base';
 
 const remoteOrigin = (baseURL: string) => { const url = new URL(baseURL); url.port = String(Number(url.port) + 1); return url.origin; };
+
+test('device-prefixed remote links load the owner workspace and selected session after login', async ({ page, baseURL, request }) => {
+  const remote = remoteOrigin(baseURL!);
+  const prefix = '/connect/d/browserfixture01';
+  const headers = await mutationHeaders(request);
+  const password = 'browser owner password';
+  expect((await request.post('/api/auth/password', { headers, data: { password } })).ok()).toBe(true);
+  const state = await (await request.get('/api/state')).json() as AppState;
+  const target = state.sessions.find(item => item.title === 'SessionDeck · 开发笔记')!;
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const apiPaths: string[] = [];
+  // Model the relay's prefix stripping and HTML rewriting using the isolated,
+  // authenticated remote listener. This never contacts a production device.
+  await page.route(`${remote}${prefix}/**`, async route => {
+    const url = new URL(route.request().url());
+    const path = url.pathname.slice(prefix.length);
+    if (path.startsWith('/api/')) apiPaths.push(url.pathname);
+    // route.fetch waits for a finite body; SSE is intentionally never finite.
+    if (path === '/api/events') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': relay fixture\n\n' });
+    const response = await route.fetch({ url: `${remote}${path}${url.search}` });
+    if (path === '/') {
+      await route.fulfill({ response, body: remoteHtml(await response.text(), prefix) });
+    } else await route.fulfill({ response });
+  });
+  // Route restoration is watch-only. The prefix test checks HTTP state and
+  // rendering; the other remote test exercises the actual terminal transport.
+  await page.routeWebSocket(`${remote.replace('http:', 'ws:')}${prefix}/**`, socket => socket.close());
+  await page.goto(`${remote}${prefix}/#/contacts?session=${target.id}`);
+  await page.getByLabel('所有者密码').fill(password);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: `${target.title} 的私聊` })).toBeVisible();
+  await expect(page.getByRole('button', { name: `进入 ${target.title} 的会话`, exact: true })).toBeVisible();
+  expect(apiPaths).toContain(`${prefix}/api/auth/status`);
+  expect(apiPaths).toContain(`${prefix}/api/state`);
+  await page.reload();
+  await expect(page.getByRole('dialog', { name: `${target.title} 的私聊` })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('an exception after workspace loading shows a recoverable error instead of a blank page', async ({ page, request }) => {
+  const state = await (await request.get('/api/state')).json() as AppState;
+  const target = state.sessions.find(item => item.title === 'SessionDeck · 开发笔记')!;
+  await page.addInitScript(() => {
+    const NativeObserver = ResizeObserver;
+    if (sessionStorage.getItem('test-render-failure') === null) sessionStorage.setItem('test-render-failure', 'on');
+    window.ResizeObserver = class extends NativeObserver {
+      observe(element: Element, options?: ResizeObserverOptions) {
+        if (sessionStorage.getItem('test-render-failure') === 'on' && element.closest('.terminal-pane')) {
+          throw new Error('Terminal observer unavailable in this browser');
+        }
+        super.observe(element, options);
+      }
+    };
+  });
+  await page.goto(`/#/contacts?session=${target.id}`);
+  const error = page.getByRole('alert');
+  await expect(error).toContainText('工作空间显示失败');
+  await error.getByText('查看错误详情').click();
+  await expect(error).toContainText('Terminal observer unavailable in this browser');
+  await page.evaluate(() => sessionStorage.setItem('test-render-failure', 'off'));
+  await error.getByRole('button', { name: '重新加载' }).click();
+  await expect(page.getByRole('dialog', { name: `${target.title} 的私聊` })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`session=${target.id}$`));
+});
 
 test('invite pairing shows its stage, restores the button after failure and allows retry', async ({ page, request }) => {
   const headers = await mutationHeaders(request);
