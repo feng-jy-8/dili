@@ -1,9 +1,8 @@
 import type express from 'express';
-import type { Session } from '../shared/types.ts';
+import type { ConversationTranscript, Session } from '../shared/types.ts';
 import type { CodexChatPatch, CodexChatSnapshot } from '../shared/chat.ts';
 import type { CodexBridge } from './codex.ts';
 import type { ConversationReader } from './conversation.ts';
-import { conversationPreview } from './conversation.ts';
 import { ChatSubmissions } from './chat-submissions.ts';
 import type { Store } from './store.ts';
 
@@ -19,6 +18,7 @@ interface Dependencies {
   busy(id: string): boolean;
   sessions(): Session[];
   broadcast(): void;
+  updatePreview(item: Session, transcript: ConversationTranscript): void;
 }
 const fail = (message: string, status = 400): never => { throw Object.assign(new Error(message), { status }); };
 const requestId = (value: unknown): string => typeof value === 'string' && /^[a-zA-Z0-9_-]{16,100}$/.test(value) ? value : fail('发送标识无效');
@@ -85,6 +85,7 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     if (options.closing()) fail('服务正在关闭', 503);
     const current = session(id);
     if (current.nativeSessionId !== identity || current.forkPending !== item.forkPending) fail('会话身份已更新，请刷新', 409);
+    options.updatePreview(item, transcript);
     return remember(id, {
       nativeSessionId: item.forkPending ? null : identity, connected: false, revision: 0, activeTurnId: null,
       items: transcript.messages.map(message => ({ id: message.id, type: message.role, text: message.text, status: 'completed' })),
@@ -116,13 +117,14 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
       else void read(id).then(snapshot => emit(id, snapshot)).catch(() => {});
     }, 80));
   }
-  const offChat = bridge.onChat((nativeId, snapshot) => {
+  const offChat = bridge.onChat((nativeId) => {
     if (options.closing()) return;
     const item = options.sessions().find(item => item.backend === 'codex' && item.nativeSessionId === nativeId && !item.forkPending);
     if (!item) return;
     queue(item.id);
-    const preview = conversationPreview({ messages: snapshot.items.filter(item => item.type === 'user').map(item => ({ id: item.id, role: 'user', text: item.text })), truncated: snapshot.truncated });
-    if (preview && preview.text !== item.lastUserInput) { store.updateSession(item.id, { lastUserInput: preview.text }); options.broadcast(); }
+    // Bounded chat snapshots have no input timestamps and may contain only
+    // older users. Saved native history owns previews; successful local sends
+    // update immediately below, without letting late snapshot hydration regress them.
   });
   const offStore = store.onChange(change => { if (change.table === 'sessions' && change.data.backend === 'codex') queue(change.data.id); });
 
@@ -150,11 +152,13 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     const text = req.body.text.trim();
     const { created, submission } = submissions.begin(item.id, id, item.nativeSessionId!, text);
     if (!created) return res.status(submission.status === 'unknown' || submission.status === 'sending' ? 202 : 200).json(submission);
+    const inputAt = new Date().toISOString();
     try {
       const model = typeof req.body.model === 'string' && /^[a-zA-Z0-9._:-]{1,100}$/.test(req.body.model) ? req.body.model : undefined;
       const result = await bridge.sendPrompt(item.nativeSessionId!, text, model);
       if (options.closing()) return;
       const accepted = submissions.finish(item.id, id, { status: 'accepted', turnId: result.turnId });
+      options.updatePreview(item, { messages: [{ id, role: 'user', text, createdAt: inputAt }], truncated: false });
       res.json(accepted);
     } catch (cause) {
       if (options.closing()) return;

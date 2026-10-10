@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { open, opendir, realpath } from 'node:fs/promises';
+import { open, opendir, realpath, type FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -22,7 +22,7 @@ export interface ConversationOptions {
 }
 type RecordValue = Record<string, unknown>;
 interface Line { value: RecordValue; offset: number }
-interface Cached { checked: number; signature?: string; transcript: ConversationTranscript }
+interface Cached { checked: number; signature?: string; fileSize?: number; transcript: ConversationTranscript }
 interface Index { checked: number; paths: Map<string, string>; databases: string[] }
 
 const UUID = '[a-f\\d]{8}-[a-f\\d]{4}-[a-f\\d]{4}-[a-f\\d]{4}-[a-f\\d]{12}';
@@ -114,6 +114,11 @@ function dshMessages(events: unknown[], nativeId: string): ConversationMessage[]
   return output;
 }
 
+function nativeMessages(rows: Line[], session: ConversationSession): ConversationMessage[] {
+  const id = session.nativeSessionId!;
+  return session.backend === 'claude' ? claudeMessages(rows, id) : session.backend === 'codex' ? codexMessages(rows, id) : dshMessages(rows.map(row => row.value), id);
+}
+
 export function decodeDshFrames(buffer: Buffer, maxOutput: number): { text: string; truncated: boolean } {
   // DSH appends independent Zstandard frames. Node's convenience decoder stops
   // after the first frame (normally only the session header), so advance by
@@ -186,7 +191,7 @@ export class ConversationReader {
     const job = this.load(session, key).catch((): ConversationTranscript => ({ messages: [], truncated: false, notice: '暂时无法读取原生历史，请稍后刷新或进入原生界面查看。' })).then(transcript => {
       const latest = this.cache.get(key);
       this.cache.delete(key);
-      this.cache.set(key, { checked: Date.now(), ...(latest?.transcript === transcript ? { signature: latest.signature } : {}), transcript });
+      this.cache.set(key, { ...(latest?.transcript === transcript ? latest : {}), checked: Date.now(), transcript });
       while (this.cache.size > 256) this.cache.delete(this.cache.keys().next().value!);
       return transcript;
     }).finally(() => { this.pending.delete(key); });
@@ -234,8 +239,10 @@ export class ConversationReader {
       } catch { /* The service may be restarting; the saved exact log is still usable. */ }
     }
     const index = await this.index(session.backend);
-    let path = index.paths.get(nativeId);
-    if (!path && session.backend === 'codex') path = await this.codexPath(index, nativeId);
+    // A resumed Codex writer can rotate to a new segment without changing the
+    // thread ID. Its native database is authoritative and must be rechecked
+    // even when the directory index still contains the previous segment.
+    const path = (session.backend === 'codex' ? await this.codexPath(index, nativeId) : undefined) ?? index.paths.get(nativeId);
     if (!path) return { messages: [], truncated: false, notice: EMPTY_NOTICE };
     const safe = await this.safePath(session.backend, path);
     if (!safe) return { messages: [], truncated: false, notice: EMPTY_NOTICE };
@@ -282,11 +289,43 @@ export class ConversationReader {
         }
         if (session.backend === 'codex' ? header?.type !== 'session_meta' || record(header.payload)?.id !== nativeId : header?.type !== 'session' || header.id !== nativeId) return { messages: [], truncated: false, notice: '原生历史身份不匹配，未读取此记录。' };
       }
-      const messages = session.backend === 'claude' ? claudeMessages(rows, nativeId) : session.backend === 'codex' ? codexMessages(rows, nativeId) : dshMessages(rows.map(row => row.value), nativeId);
+      const messages = nativeMessages(rows, session);
+      if (offset && !messages.some(item => item.role === 'user')) {
+        // Progress/tool output can push the last prompt out of the tail byte
+        // window. Reuse it for append-only changes, otherwise search backward
+        // with bounded chunks instead of loading the entire rollout in RAM.
+        const appendOnly = cached?.signature?.startsWith(`${safe}:${info.dev}:${info.ino}:`) && cached.fileSize !== undefined && info.size > cached.fileSize && info.size - cached.fileSize < maxBytes;
+        const user = (appendOnly ? cached?.transcript.messages.findLast(item => item.role === 'user') : undefined)
+          ?? await this.userBefore(file, offset, session);
+        if (user) messages.unshift(user);
+      }
       const transcript = this.finish(messages, truncated, info.mtime.toISOString());
-      this.cache.set(key, { checked: Date.now(), signature, transcript });
+      this.cache.set(key, { checked: Date.now(), signature, fileSize: info.size, transcript });
       return transcript;
     } finally { await file.close(); }
+  }
+
+  private async userBefore(file: FileHandle, end: number, session: ConversationSession): Promise<ConversationMessage | undefined> {
+    let carry: Buffer = Buffer.alloc(0), budget = 64 * 1024 * 1024;
+    while (end > 0 && budget > 0) {
+      const size = Math.min(end, budget, 256 * 1024), start = end - size;
+      const buffer = Buffer.alloc(size);
+      const { bytesRead } = await file.read(buffer, 0, size, start);
+      if (bytesRead !== size) return; // The native log changed underneath us.
+      const block = Buffer.concat([buffer, carry]);
+      const boundary = start === 0 ? 0 : block.indexOf(10) + 1;
+      if (boundary || start === 0) {
+        const rows = lines(block.subarray(boundary).toString('utf8'), start + boundary);
+        const user = nativeMessages(rows, session).findLast(item => item.role === 'user');
+        if (user) return user;
+      }
+      const prefix = boundary ? block.subarray(0, boundary) : block;
+      // Skip oversized records (usually embedded tool/media data), retaining
+      // the same maximum record budget as the ordinary tail read.
+      carry = prefix.length <= 2 * 1024 * 1024 ? prefix : Buffer.alloc(0);
+      end = start; budget -= size;
+    }
+    return;
   }
 
   private async safePath(backend: Backend, path: string): Promise<string | undefined> {
@@ -314,9 +353,9 @@ export class ConversationReader {
         if (typeof row?.rollout_path !== 'string') continue;
         const candidate = resolve(row.rollout_path);
         const part = relative(this.homes.codex, candidate);
-        if (!/^(?:sessions|archived_sessions)[/\\]/.test(part) || !candidate.endsWith(`${nativeId}.jsonl`)) continue;
+        if (!/^(?:sessions|archived_sessions)[/\\]/.test(part) || !new RegExp(`(?:^|-)${nativeId}(?:_${UUID})?\\.jsonl$`, 'i').test(basename(candidate))) continue;
         const checked = await this.safePath('codex', candidate);
-        if (checked) { index.paths.set(nativeId, checked); return checked; }
+        if (checked) return checked;
       } catch { /* migration or older index: inspect the next native index */ }
       finally { db?.close(); }
     }
@@ -353,11 +392,16 @@ export class ConversationReader {
             if (backend === 'codex' && folder.depth === -1 && /^state_\d+\.sqlite$/.test(entry.name)) result.databases.push(path);
             let id: string | undefined;
             if (backend === 'claude') id = entry.name.match(new RegExp(`^(${UUID})\\.jsonl$`, 'i'))?.[1];
-            else if (backend === 'codex') id = entry.name.match(new RegExp(`(?:^|-)(${UUID})\\.jsonl$`, 'i'))?.[1];
+            else if (backend === 'codex') id = entry.name.match(new RegExp(`(?:^|-)(${UUID})(?:_${UUID})?\\.jsonl$`, 'i'))?.[1];
             // dsh 0.1: sessions/<slug>/session-<uuid>/session.jsonl(.zstd);
             // dsh 0.2 / dsh-tui: sessions/<slug>/<uuid>/session.v4.jsonl.zstd.
             else if (/^session(?:\.v\d+)?\.jsonl(?:\.zstd)?$/.test(entry.name) && new RegExp(`^(?:session-)?${UUID}$`, 'i').test(basename(dirname(path)))) id = basename(dirname(path));
-            if (id) result.paths.set(id, path);
+            if (id) {
+              const previous = result.paths.get(id);
+              // Codex segment names start with their creation timestamp; the
+              // optional writer UUID is not a separate native thread.
+              if (backend !== 'codex' || !previous || basename(path) > basename(previous)) result.paths.set(id, path);
+            }
           }
         }
         children.sort((a, b) => b.path.localeCompare(a.path));

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -89,6 +89,47 @@ test('Codex rejects mismatched rollout identity even when its filename names the
   const result = await reader.read(a);
   assert.equal(result.messages.length, 0);
   assert.match(result.notice!, /身份不匹配/);
+});
+
+test('Codex follows resumed rollout segments using the original thread ID, never the writer suffix', async t => {
+  const { paths, file } = await fixture(t), a = contact('codex'), writerId = randomUUID();
+  const original = await file(a, [codexHeader(a.nativeSessionId!), { type: 'event_msg', timestamp: date, payload: { type: 'user_message', message: 'old prompt' } }]);
+  const oldPath = join(original, '..', `rollout-2026-09-29T08-00-00-${a.nativeSessionId}.jsonl`);
+  await rename(original, oldPath);
+  const reader = new ConversationReader({ ...paths, cacheMs: 0, indexMs: 0 });
+  assert.equal(await reader.preview(a), 'old prompt');
+  const resumed = join(original, '..', `rollout-2026-09-30T08-00-00-${a.nativeSessionId}_${writerId}.jsonl`);
+  await writeFile(resumed, [codexHeader(a.nativeSessionId!), { type: 'response_item', timestamp: '2026-09-30T08:00:00.000Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'latest resumed prompt' }] } }].map(row => JSON.stringify(row)).join('\n') + '\n');
+  assert.equal(await reader.preview(a), 'latest resumed prompt');
+  assert.equal((await reader.read(contact('codex', writerId))).messages.length, 0);
+});
+
+test('Codex rechecks the native database rollout path after a resumed writer replaces it', async t => {
+  const { paths, file, reader } = await fixture(t), a = contact('codex');
+  const original = await file(a, [codexHeader(a.nativeSessionId!), { type: 'event_msg', payload: { type: 'user_message', message: 'old indexed prompt' } }]);
+  const db = new DatabaseSync(join(paths.codexHome, 'state_5.sqlite'));
+  t.after(() => db.close());
+  db.exec('CREATE TABLE threads (id TEXT, rollout_path TEXT)');
+  db.prepare('INSERT INTO threads VALUES (?, ?)').run(a.nativeSessionId, original);
+  assert.equal(await reader.preview(a), 'old indexed prompt');
+  const resumed = join(original, '..', `rollout-2026-09-30T08-00-00-${a.nativeSessionId}_${randomUUID()}.jsonl`);
+  await writeFile(resumed, [codexHeader(a.nativeSessionId!), { type: 'event_msg', payload: { type: 'user_message', message: 'new database path prompt' } }].map(row => JSON.stringify(row)).join('\n') + '\n');
+  db.prepare('UPDATE threads SET rollout_path = ? WHERE id = ?').run(resumed, a.nativeSessionId);
+  assert.equal(await reader.preview(a), 'new database path prompt');
+});
+
+test('latest human input survives a tool-heavy turn that pushes it out of the tail byte window', async t => {
+  const { paths, file } = await fixture(t);
+  for (const backend of ['claude', 'codex'] as const) {
+    const a = contact(backend);
+    const prompt = backend === 'claude' ? claude('user', 'actual last human input') : { type: 'event_msg', timestamp: date, payload: { type: 'user_message', message: 'actual last human input' } };
+    await file(a, [...(backend === 'codex' ? [codexHeader(a.nativeSessionId!)] : []), prompt,
+      ...Array.from({ length: 12 }, () => ({ type: 'tool_output', data: 'x'.repeat(2000) })),
+      ...(backend === 'claude' ? [claude('assistant', 'done')] : []),
+    ]);
+    const reader = new ConversationReader({ ...paths, cacheMs: 0, maxBytes: 1024 });
+    assert.equal(await reader.preview(a), 'actual last human input');
+  }
 });
 
 test('pending forks and malformed IDs cannot read their parent or arbitrary files', async t => {

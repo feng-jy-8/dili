@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { copyFile, chmod, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -92,6 +92,17 @@ test('graphical Codex starts without a TUI, streams once per request ID, and att
   assert.equal((await calls()).filter(call => call.method === 'turn/start').length, 1);
   assert.equal((await request<CodexChatSubmission>(`/api/sessions/${source.id}/chat/submissions/${requestId}`)).status, 'accepted');
   assert.equal((await fixture.current(source.id)).lastUserInput, text);
+  const inputAt = (await fixture.current(source.id)).lastUserInputAt;
+  assert.ok(inputAt && Number.isFinite(Date.parse(inputAt)), 'Accepted graphical input must record its time');
+  const logs = join(fixture.directory, 'codex-home', 'sessions', '2026', '09', '29');
+  await mkdir(logs, { recursive: true });
+  await writeFile(join(logs, `rollout-${started.nativeSessionId}.jsonl`), [
+    { type: 'session_meta', payload: { id: started.nativeSessionId } },
+    { type: 'event_msg', timestamp: '2026-09-29T08:00:00.000Z', payload: { type: 'user_message', message: 'Older saved prompt must not replace a just accepted input' } },
+  ].map(row => JSON.stringify(row)).join('\n') + '\n');
+  await request(`/api/sessions/${source.id}/conversation`);
+  assert.equal((await fixture.current(source.id)).lastUserInput, text);
+  assert.equal((await fixture.current(source.id)).lastUserInputAt, inputAt);
   const attached = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' });
   assert.equal(attached.nativeSessionId, started.nativeSessionId);
   await until(async () => (await calls()).some(call => call.event === 'tui' && call.nativeId === started.nativeSessionId), 'TUI did not attach the graphical native thread');

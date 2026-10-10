@@ -197,6 +197,9 @@ function updatePreview(item: Session, transcript: ConversationTranscript) {
   if (!current || current.forkPending || current.backend !== item.backend || current.nativeSessionId !== item.nativeSessionId) return;
   const preview = conversationPreview(transcript);
   if (!preview || (current.lastUserInput === preview.text && current.lastUserInputAt === (preview.createdAt ?? null))) return;
+  // A saved rollout can lag a just-accepted graphical message, or an older
+  // async read can finish after the next input. Never move a preview backward.
+  if (current.lastUserInputAt && (!preview.createdAt || Date.parse(preview.createdAt) < Date.parse(current.lastUserInputAt))) return;
   store.updateSession(item.id, { lastUserInput: preview.text, lastUserInputAt: preview.createdAt ?? null });
   scheduleBroadcast();
 }
@@ -511,7 +514,7 @@ app.delete('/api/shells/:id', async (req, res) => {
   res.json({ removed: true });
 });
 const chatApi = registerCodexChat(app, {
-  store, bridge: codexBridge, conversations, instanceId, demo,
+  store, bridge: codexBridge, conversations, instanceId, demo, updatePreview,
   closing: () => closing,
   supported: () => !!info('codex').capabilities.nativeControl,
   ready: item => codexRuns.get(item.id)?.nativeId === item.nativeSessionId && codexRuns.get(item.id)?.launchId === launchIds.get(item.id),
