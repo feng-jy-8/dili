@@ -6,7 +6,7 @@ import { remoteHtml } from '../server/remote-base';
 
 const remoteOrigin = (baseURL: string) => { const url = new URL(baseURL); url.port = String(Number(url.port) + 1); return url.origin; };
 
-test('device-prefixed remote links load the owner workspace and selected session after login', async ({ page, baseURL, request }) => {
+for (const trailingSlash of ['', '/']) test(`device-prefixed remote links load the workspace and lazy assets (${trailingSlash ? 'with' : 'without'} trailing slash)`, async ({ page, baseURL, request }) => {
   const remote = remoteOrigin(baseURL!);
   const prefix = '/connect/d/browserfixture01';
   const headers = await mutationHeaders(request);
@@ -17,12 +17,22 @@ test('device-prefixed remote links load the owner workspace and selected session
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   const apiPaths: string[] = [];
+  const assetPaths: string[] = [];
+  const escapedAssets: string[] = [];
+  // The public host serves its own website at /assets, not SessionDeck.
+  // Reject escaped requests instead of letting the fixture's root accidentally
+  // serve them successfully and hide a broken runtime preload URL.
+  await page.route(`${remote}/assets/**`, route => {
+    escapedAssets.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 404, body: 'Host website: asset not found' });
+  });
   // Model the relay's prefix stripping and HTML rewriting using the isolated,
   // authenticated remote listener. This never contacts a production device.
-  await page.route(`${remote}${prefix}/**`, async route => {
+  await page.route(url => url.origin === remote && (url.pathname === prefix || url.pathname.startsWith(`${prefix}/`)), async route => {
     const url = new URL(route.request().url());
-    const path = url.pathname.slice(prefix.length);
+    const path = url.pathname.slice(prefix.length) || '/';
     if (path.startsWith('/api/')) apiPaths.push(url.pathname);
+    if (path.startsWith('/assets/')) assetPaths.push(url.pathname);
     // route.fetch waits for a finite body; SSE is intentionally never finite.
     if (path === '/api/events') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': relay fixture\n\n' });
     const response = await route.fetch({ url: `${remote}${path}${url.search}` });
@@ -33,15 +43,25 @@ test('device-prefixed remote links load the owner workspace and selected session
   // Route restoration is watch-only. The prefix test checks HTTP state and
   // rendering; the other remote test exercises the actual terminal transport.
   await page.routeWebSocket(`${remote.replace('http:', 'ws:')}${prefix}/**`, socket => socket.close());
-  await page.goto(`${remote}${prefix}/#/contacts?session=${target.id}`);
+  // Generated device links may omit the final slash.
+  await page.goto(`${remote}${prefix}${trailingSlash}#/contacts?session=${target.id}`);
   await page.getByLabel('所有者密码').fill(password);
   await page.getByRole('button', { name: '登录', exact: true }).click();
   await expect(page.getByRole('dialog', { name: `${target.title} 的私聊` })).toBeVisible();
   await expect(page.getByRole('button', { name: `进入 ${target.title} 的会话`, exact: true })).toBeVisible();
   expect(apiPaths).toContain(`${prefix}/api/auth/status`);
   expect(apiPaths).toContain(`${prefix}/api/state`);
+  // Unlike the initial HTML links, lazy imports preload their CSS from JS.
+  // Opening the real editor exercises both CSS preloads and ?url scripts.
+  await page.getByRole('button', { name: '打开随手记', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '随手记实时编辑' })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('dialog', { name: `${target.title} 的私聊` })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '随手记实时编辑' })).toBeVisible();
+  expect(assetPaths.some(path => /\/terminal-[\w-]+\.css$/.test(path))).toBe(true);
+  expect(assetPaths.some(path => /\/LiveMarkdownEditor-[\w-]+\.css$/.test(path))).toBe(true);
+  expect(assetPaths.some(path => /\/lute\.min-[\w-]+\.js$/.test(path))).toBe(true);
+  expect(escapedAssets).toEqual([]);
   expect(errors).toEqual([]);
 });
 

@@ -83,6 +83,10 @@ test('live editor preserves drafts through offline conflict resolution and theme
   await expect(panel.getByRole('status')).toHaveText('保存未完成');
   await page.reload();
   await expect(editor).toContainText('我的草稿');
+  // Recovery schedules an autosave. Let that offline attempt settle before
+  // restoring PATCH requests, otherwise it can discover the conflict itself
+  // and remove the retry button before this test clicks it.
+  await expect(panel.getByRole('status')).toHaveText('保存未完成');
   await seed(request, '# 其他设备更新\n');
   await page.unroute('**/api/scratchpad');
   await panel.getByRole('button', { name: '重试', exact: true }).click();
