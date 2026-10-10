@@ -1,9 +1,9 @@
 import { appUrl } from './urls';
 import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from 'react';
-import { KeyRound, Layers3, LoaderCircle, UserRound } from 'lucide-react';
+import { KeyRound, LoaderCircle, UserRound } from 'lucide-react';
 import type { AuthStatus } from '../shared/auth';
 import { api, getToken } from './api';
-import App from './App';
+import App, { BrandMark } from './App';
 
 const ShareApp = lazy(() => import('./ShareApp'));
 const SHARE_HASH = /^#\/share\/([A-Za-z0-9_-]{20,128})$/;
@@ -16,9 +16,9 @@ export default function AuthGate() {
   const load = useCallback(async () => {
     try {
       const response = await fetch(appUrl('/api/auth/status'));
-      if (!response.ok) throw new Error(`无法连接 SessionDeck（${response.status}）`);
+      if (!response.ok) throw new Error(`无法连接 Dili（${response.status}）`);
       setStatus(await response.json() as AuthStatus); setError('');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '无法连接 SessionDeck'); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '无法连接 Dili'); }
   }, []);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -43,7 +43,7 @@ export default function AuthGate() {
 
 function AuthCard({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return <div className="auth-page"><main className="auth-card">
-    <span className="brand-mark auth-mark"><Layers3 size={18} /></span>
+    <div className="auth-brand"><span className="brand-mark auth-mark"><BrandMark size={22} /></span><span><strong>Dili</strong><small>嘀哩工作台</small></span></div>
     <h1>{title}</h1><p className="auth-subtitle">{subtitle}</p>
     {children}
   </main></div>;
@@ -59,8 +59,8 @@ function LoginPage({ passwordSet, done }: { passwordSet: boolean; done: (status:
     catch (cause) { setError(cause instanceof Error ? cause.message : '登录失败'); setPassword(''); }
     finally { setBusy(false); }
   };
-  return <AuthCard title="登录 SessionDeck" subtitle="这是远程访问地址，请输入所有者密码。">
-    {!passwordSet ? <p className="form-note">尚未设置密码。请在运行 SessionDeck 的电脑上打开「连接与能力 → 远程访问与安全」设置密码。</p> : <form className="auth-form" onSubmit={submit}>
+  return <AuthCard title="登录 Dili" subtitle="这是远程访问地址，请输入所有者密码。">
+    {!passwordSet ? <p className="form-note">尚未设置密码。请在运行 Dili 的电脑上打开「连接与能力 → 远程访问与安全」设置密码。</p> : <form className="auth-form" onSubmit={submit}>
       <label className="form-label">所有者密码<input type="password" autoComplete="current-password" autoFocus value={password} onChange={event => setPassword(event.target.value)} required /></label>
       {error && <p role="alert" className="form-error">{error}</p>}
       <button className="button primary" disabled={busy || !password}>{busy ? <LoaderCircle size={15} className="spin" /> : <KeyRound size={15} />}登录</button>

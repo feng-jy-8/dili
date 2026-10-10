@@ -14,7 +14,7 @@ async function request(url: string, options?: RequestInit, timeoutMs = 30_000) {
         ? '请求超时，操作可能仍在处理中。请先刷新状态、确认结果，再决定是否重试'
         : '请求超时，请检查本地服务后重试');
     }
-    throw new Error('无法连接本地服务，请确认 SessionDeck 正在运行');
+    throw new Error('无法连接本地服务，请确认 Dili 正在运行');
   }
 }
 
@@ -22,7 +22,7 @@ export function getToken(force = false) {
   if (force) tokenPromise = undefined;
   tokenPromise ??= request('/api/config').then(async (response) => {
     if (response.status === 401) { window.dispatchEvent(new Event('sessiondeck:auth-required')); throw new Error('请先登录'); }
-    if (!response.ok) throw new Error('无法连接 SessionDeck 服务');
+    if (!response.ok) throw new Error('无法连接 Dili 服务');
     return (await response.json() as { csrfToken: string }).csrfToken;
   }).catch((error) => { tokenPromise = undefined; throw error; });
   return tokenPromise;

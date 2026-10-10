@@ -42,7 +42,7 @@ async function checkDataDirectory() {
   } catch (error) {
     if (error instanceof Error && /database is (?:locked|busy)/i.test(error.message)) {
       const canonical = await realpath(dataDir);
-      throw new Error(`这个数据目录已有 SessionDeck 实例在使用：${canonical}。未安装依赖或构建。请使用现有实例，或设置不同的 SESSIONDECK_DATA_DIR 和 PORT / SESSIONDECK_PORT。`);
+      throw new Error(`这个数据目录已有 Dili 实例在使用：${canonical}。未安装依赖或构建。请使用现有实例，或设置不同的 SESSIONDECK_DATA_DIR 和 PORT / SESSIONDECK_PORT。`);
     }
     throw error;
   } finally { db?.close(); }
@@ -54,6 +54,6 @@ try {
   await checkPort();
   await checkDataDirectory();
 } catch (error) {
-  console.error(`SessionDeck 启动检查未通过：${error instanceof Error ? error.message : String(error)}`);
+  console.error(`Dili 启动检查未通过：${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }

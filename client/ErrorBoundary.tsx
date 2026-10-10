@@ -8,7 +8,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
   static getDerivedStateFromError(error: Error) { return { error }; }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('SessionDeck 页面显示失败', error, info.componentStack);
+    console.error('Dili 页面显示失败', error, info.componentStack);
   }
 
   render() {

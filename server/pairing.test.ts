@@ -9,6 +9,7 @@ import { RelayStore } from './relay-store.ts';
 import { createRelayApp } from './relay-service.ts';
 import { pendingPairing, redeemPairing } from './pairing.ts';
 import { FRP_ARCHIVE_HASHES, frpArchive } from '../shared/frp.ts';
+import { decodeInvite } from './invite.ts';
 
 test('relay HTTP supports seven-day and permanent invites, safe retries and pinned client assets', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'sessiondeck-relay-test-'));
@@ -20,12 +21,19 @@ test('relay HTTP supports seven-day and permanent invites, safe retries and pinn
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); await rm(directory, { recursive: true, force: true }); });
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}/connect`;
-  server.on('request', createRelayApp(store, { serverUrl: base, adminToken: 'fixture-admin', pluginToken: 'fixture-plugin', adminHtml: resolve('relay/index.html'), clientsDir: directory }));
+  server.on('request', createRelayApp(store, { serverUrl: base, domains: [base, 'relay.example.test'], adminToken: 'fixture-admin', pluginToken: 'fixture-plugin', adminHtml: resolve('relay/index.html'), clientsDir: directory }));
   const response = await fetch(`${base}/clients/${archive}`);
   assert.equal(response.status, 200); assert.equal(await response.text(), 'fixture');
   assert.equal((await fetch(`${base}/clients/admin.token`)).status, 404);
   assert.equal((await fetch(`${base}/clients/${frpArchive('unsupported')}`)).status, 404);
   assert.match(await (await fetch(`${base}/`)).text(), /永不过期/);
+  const relayState = await (await fetch(`${base}/api/admin/state`, { headers: { authorization: 'Bearer fixture-admin' } })).json() as { domains: string[] };
+  assert.deepEqual(relayState.domains, [`127.0.0.1:${address.port}`, 'relay.example.test']);
+  const selectedDomain = await fetch(`${base}/api/admin/invites`, { method: 'POST', headers: { authorization: 'Bearer fixture-admin', 'content-type': 'application/json' }, body: JSON.stringify({ domain: 'relay.example.test', hours: 1 }) });
+  assert.equal(selectedDomain.status, 201);
+  assert.equal(decodeInvite((await selectedDomain.json() as { invite: string }).invite).serverUrl, 'https://relay.example.test/connect');
+  const rejectedDomain = await fetch(`${base}/api/admin/invites`, { method: 'POST', headers: { authorization: 'Bearer fixture-admin', 'content-type': 'application/json' }, body: JSON.stringify({ domain: 'evil.example.test', hours: 1 }) });
+  assert.equal(rejectedDomain.status, 400);
   for (const ttl of [168, null]) {
     const admin = await fetch(`${base}/api/admin/invites`, { method: 'POST', headers: { authorization: 'Bearer fixture-admin', 'content-type': 'application/json' }, body: JSON.stringify(ttl === null ? { permanent: true } : { hours: ttl }) });
     assert.equal(admin.status, 201);

@@ -19,7 +19,7 @@ for (const mobile of [false, true]) {
       });
       try {
         await page.goto('/');
-        await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
+        await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
         const native = page.locator('.session-conversation .terminal-pane');
         await expect(native.locator('.terminal-connection.connected')).toHaveCount(1);
         const panes: Locator[] = [native];

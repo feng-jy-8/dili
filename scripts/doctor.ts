@@ -41,11 +41,11 @@ for (const backend of await getBackendInfo()) checks.push({
 try {
   const response = await fetch(`http://127.0.0.1:${port}/api/state`, { signal: AbortSignal.timeout(2000) });
   const state = await response.json() as { sessions?: unknown[]; groups?: unknown[]; demo?: boolean };
-  if (!response.ok || !Array.isArray(state.sessions) || !Array.isArray(state.groups)) throw new Error('端口上运行的服务不是可用的 SessionDeck');
+  if (!response.ok || !Array.isArray(state.sessions) || !Array.isArray(state.groups)) throw new Error('端口上运行的服务不是可用的 Dili');
   checks.push({ label: 'Web 服务', state: 'ok', detail: `http://127.0.0.1:${port}${state.demo ? '（演示模式）' : ''}` });
 } catch { checks.push({ label: 'Web 服务', state: 'warn', detail: `当前未连接；运行 npm run dev，或构建后 npm start（端口 ${port}）` }); }
 
-console.log('SessionDeck 本地环境检查\n');
+console.log('Dili 本地环境检查\n');
 for (const check of checks) console.log(`${check.state === 'ok' ? '✓' : check.state === 'warn' ? '·' : '✗'} ${check.label}：${check.detail}`);
 console.log('\n这里只检查本地运行条件，不检查账号凭据或调用模型。');
 process.exitCode = checks.some(check => check.state === 'error') ? 1 : 0;

@@ -1,4 +1,4 @@
-/* SessionDeck — a quiet IM workspace with clear panel hierarchy. */
+/* Dili · 嘀哩工作台 — a quiet IM workspace with clear panel hierarchy. */
 :root {
   --bg: #ffffff;
   --canvas: #f5f6f8;
@@ -107,6 +107,11 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .topbar-row { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 16px 0 20px; }
 .brand { display: inline-flex; flex-shrink: 0; }
 .brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--on-accent); }
+.brand-wordmark { color: var(--text); font-size: 15px; font-weight: 700; letter-spacing: -.02em; }
+.auth-brand { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
+.auth-brand > span:last-child { display: flex; flex-direction: column; line-height: 1.15; }
+.auth-brand strong { font-size: 16px; letter-spacing: -.02em; }
+.auth-brand small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .nav-scroller { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
 .nav-scroller::-webkit-scrollbar { display: none; }
 .primary-nav, .group-nav { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }

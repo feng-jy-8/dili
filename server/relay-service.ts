@@ -5,9 +5,18 @@ import { validToken } from './security.ts';
 import { relayUrl } from './invite.ts';
 import { FRP_ARCHIVE_HASHES, frpArchive } from '../shared/frp.ts';
 
-export interface RelayOptions { serverUrl: string; adminToken: string; pluginToken: string; adminHtml: string; clientsDir?: string }
+export interface RelayOptions { serverUrl: string; domains?: string[]; adminToken: string; pluginToken: string; adminHtml: string; clientsDir?: string }
 export function createRelayApp(store: RelayStore, options: RelayOptions) {
   const app = express(), serverUrl = relayUrl(options.serverUrl);
+  const defaultUrl = new URL(serverUrl), domainUrls = new Map<string, string>();
+  for (const value of options.domains?.length ? options.domains : [serverUrl]) {
+    const raw = String(value).trim();
+    const candidate = raw.includes('://') || raw === defaultUrl.hostname || raw === defaultUrl.host
+      ? (raw.includes('://') ? relayUrl(raw) : serverUrl)
+      : relayUrl(`https://${raw}/connect`);
+    domainUrls.set(new URL(candidate).host, candidate);
+  }
+  const domains = [...domainUrls.keys()];
   app.disable('x-powered-by');
   app.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY'); next(); });
   app.use(express.json({ limit: '16kb' }));
@@ -43,10 +52,13 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
     if (!validToken(req.headers.authorization?.replace(/^Bearer /, ''), options.adminToken)) return res.status(401).json({ error: '管理密钥不正确' });
     next();
   });
-  app.get('/connect/api/admin/state', (_req, res) => res.json({ devices: store.devices(), invites: store.invites() }));
+  app.get('/connect/api/admin/state', (_req, res) => res.json({ devices: store.devices(), invites: store.invites(), domains }));
   app.post('/connect/api/admin/invites', (req, res) => {
     const hours = req.body.permanent === true ? null : req.body.hours ?? 24;
-    res.status(201).json(store.createInvite(serverUrl, req.body.label ?? '', hours));
+    const domain = typeof req.body.domain === 'string' && req.body.domain.trim() ? req.body.domain.trim() : domains[0];
+    const selectedUrl = domainUrls.get(domain);
+    if (!selectedUrl) return res.status(400).json({ error: '指定域名未在中继服务白名单中' });
+    res.status(201).json(store.createInvite(selectedUrl, req.body.label ?? '', hours));
   });
   app.delete('/connect/api/admin/invites/:id', (req, res) => { store.revokeInvite(String(req.params.id)); res.json({ ok: true }); });
   app.delete('/connect/api/admin/devices/:id', (req, res) => { store.revokeDevice(String(req.params.id)); res.json({ ok: true }); });

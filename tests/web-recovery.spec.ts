@@ -266,7 +266,7 @@ test('a failed initial snapshot does not leave a connection error after live sta
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '会话联系人', exact: true })).toBeVisible();
   await expect(page.locator('.connection-indicator')).toContainText('本地服务已连接');
-  await expect(page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true })).toBeVisible();
   await expect(page.locator('.error-banner')).not.toBeVisible();
   await mkdir('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/recovered-workspace.png', fullPage: true });

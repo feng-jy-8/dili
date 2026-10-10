@@ -107,7 +107,7 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
   const field = (key: keyof RemoteSettings, label: string, placeholder = '', type = 'text') => <label className="form-label">{label}<input disabled={!local} type={type} placeholder={placeholder} value={String(draft?.[key] ?? '')} onChange={event => setDraft(current => current && { ...current, [key]: type === 'number' ? Number(event.target.value) : event.target.value })} /></label>;
   const tunnel = remote?.tunnel;
   return <section className="backend-setting-card security-settings" aria-label="远程访问与安全">
-    <div className="backend-setting-title"><ShieldCheck size={20} /><div><h2>远程访问与安全</h2><p>{local ? '本机访问无需密码；远程地址需要登录或分享链接。' : '你正在通过远程地址访问。密码和远程配置只能在运行 SessionDeck 的电脑上修改。'}</p></div></div>
+    <div className="backend-setting-title"><ShieldCheck size={20} /><div><h2>远程访问与安全</h2><p>{local ? '本机访问无需密码；远程地址需要登录或分享链接。' : '你正在通过远程地址访问。密码和远程配置只能在运行 Dili 的电脑上修改。'}</p></div></div>
     {error && <p role="alert" className="form-error">{error}</p>}
 
     <h3>所有者密码</h3>
@@ -138,7 +138,7 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
       {(busy === 'pair' || remote?.pairingStage) && <p className="form-note" role="status">{remote?.pairingStage === 'redeeming' ? '正在兑换邀请码…' : remote?.pairingStage === 'connecting' ? '正在启动远程连接…' : '正在准备中继客户端，下载最多等待 90 秒；失败后可重试，邀请码不会被消耗。'}</p>}
     </form>}
     {(!remote?.pairing || remote.settings.mode !== 'invite') && <details className="security-caddy" open={remote?.settings.enabled && remote.settings.mode !== 'invite'}><summary>高级：手动 SSH 连接</summary>
-    <p className="form-note">SessionDeck 从这台电脑通过 SSH 连到你的服务器，服务器上的 Caddy 用你的域名提供 HTTPS。电脑不需要公网 IP。</p>
+    <p className="form-note">Dili 从这台电脑通过 SSH 连到你的服务器，服务器上的 Caddy 用你的域名提供 HTTPS。电脑不需要公网 IP。</p>
     <div className="security-grid">
       {field('publicUrl', '公开地址', 'https://deck.example.com')}
       {field('sshHost', '服务器地址（可选）', draft?.publicUrl ? `默认使用 ${(() => { try { return new URL(draft.publicUrl).hostname; } catch { return '公开地址的域名'; } })()}` : '默认使用公开地址的域名')}

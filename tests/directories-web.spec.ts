@@ -23,7 +23,7 @@ test('create and Fork accept copied directory links containing spaces and Chines
     const afterCreate = await (await request.get('/api/state')).json() as AppState;
     expect(afterCreate.sessions.find(session => session.title === '目录链接创建验收')?.cwd).toBe(project);
     await page.getByRole('button', { name: '关闭会话', exact: true }).click();
-    await page.getByRole('button', { name: 'SessionDeck · 开发笔记 的更多操作', exact: true }).click();
+    await page.getByRole('button', { name: 'Dili · 开发笔记 的更多操作', exact: true }).click();
     await page.getByRole('button', { name: 'Fork 会话', exact: true }).click();
     const fork = page.getByRole('dialog', { name: 'Fork 会话', exact: true });
     await fork.getByLabel('联系人名称').fill('目录链接 Fork 验收');
@@ -32,7 +32,7 @@ test('create and Fork accept copied directory links containing spaces and Chines
     await expect(page.getByRole('dialog', { name: '目录链接 Fork 验收 的私聊', exact: true })).toBeVisible();
     const afterFork = await (await request.get('/api/state')).json() as AppState;
     expect(afterFork.sessions.find(session => session.title === '目录链接 Fork 验收')?.cwd).toBe(forkDirectory);
-    expect(afterFork.sessions.find(session => session.title === 'SessionDeck · 开发笔记')?.cwd).not.toBe(forkDirectory);
+    expect(afterFork.sessions.find(session => session.title === 'Dili · 开发笔记')?.cwd).not.toBe(forkDirectory);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -93,7 +93,7 @@ test('directory explorer navigates real folders, reveals hidden names, selects p
 
 test('card directory copy keeps the card closed with modern clipboard and the HTTP LAN fallback', async ({ page, request }) => {
   const state = await (await request.get('/api/state')).json() as AppState;
-  const source = state.sessions.find(session => session.title === 'SessionDeck · 开发笔记')!;
+  const source = state.sessions.find(session => session.title === 'Dili · 开发笔记')!;
   await page.goto('/');
   // The directory lives in the card menu now; the card itself stays closed.
   const copy = page.getByRole('button', { name: `复制 ${source.title} 的工作目录`, exact: true });
@@ -153,7 +153,7 @@ test('directory explorer fits a 390px viewport with long folder names and paths'
 test('contact cards expose and search the latest prompt without overflowing narrow layouts', async ({ page, request }) => {
   const seed = await (await request.get('/api/state')).json() as AppState;
   const latestPrompt = `请检查只有输入内容才包含的关键词「目录验收索引」并保留上下文。${'这是较长的一段用户输入，用来确认卡片节选保留完整提示并正常换行。'.repeat(12)}`;
-  const contact = { ...seed.sessions.find(session => session.title === 'SessionDeck · 开发笔记')!, lastUserInput: latestPrompt, lastUserInputAt: new Date().toISOString() };
+  const contact = { ...seed.sessions.find(session => session.title === 'Dili · 开发笔记')!, lastUserInput: latestPrompt, lastUserInputAt: new Date().toISOString() };
   const state = { ...seed, sessions: seed.sessions.map(session => session.id === contact.id ? contact : session) };
   await page.route('**/api/state', route => route.fulfill({ json: state }));
   await page.route('**/api/events', route => route.fulfill({ contentType: 'text/event-stream', body: `retry: 60000\nevent: state\ndata: ${JSON.stringify(state)}\n\n` }));

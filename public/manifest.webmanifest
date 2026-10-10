@@ -1,7 +1,7 @@
 {
-  "name": "SessionDeck",
-  "short_name": "SessionDeck",
-  "description": "本地优先的 Agent 会话工作台",
+  "name": "Dili · 嘀哩工作台",
+  "short_name": "Dili",
+  "description": "让每一次 AI 对话，都能继续成为工作",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

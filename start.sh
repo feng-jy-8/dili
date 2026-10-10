@@ -5,7 +5,7 @@ usage() {
   printf '%s\n' \
     'Usage: ./start.sh [--dev | --help]' \
     '' \
-    'Default: install missing/outdated dependencies, build, and start SessionDeck.' \
+    'Default: install missing/outdated dependencies, build, and start Dili.' \
     'Startup checks the port and data directory before installing or building.' \
     'An existing instance is left running; use a separate port and data directory.' \
     '--dev:   start with automatic reload instead of a production build.' \
@@ -49,7 +49,7 @@ if [[ ! -x node_modules/.bin/tsx || ! -x node_modules/.bin/vite || ! -x node_mod
    || ! -f node_modules/.package-lock.json \
    || package-lock.json -nt node_modules/.package-lock.json \
    || package.json -nt node_modules/.package-lock.json ]]; then
-  printf '%s\n' 'Installing SessionDeck dependencies...'
+  printf '%s\n' 'Installing Dili dependencies...'
   npm ci --include=dev
 fi
 

@@ -15,7 +15,7 @@ test('theme picker colors the entire workbench and native terminal live, with pe
   let connections = 0;
   page.on('websocket', socket => { if (socket.url().includes('/api/terminal/')) connections++; });
   await page.goto('/');
-  await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
+  await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
   await expect(page.locator('.terminal-connection.connected')).toHaveCount(1);
   const terminal = page.locator('.xterm');
   const handle = await terminal.elementHandle();
@@ -83,7 +83,7 @@ test('mobile theme controls stay reachable from contacts and from a session', as
   await dialog.getByRole('radio', { name: /沉静深色/ }).click();
   await page.screenshot({ path: 'artifacts/theme-picker-mobile.png' });
   await dialog.getByRole('button', { name: '完成', exact: true }).click();
-  await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
+  await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
   await page.locator('summary').filter({ hasText: '会话信息' }).click();
   await page.getByRole('button', { name: '随手记', exact: true }).click();
   const note = page.getByRole('complementary', { name: '随手记', exact: true });

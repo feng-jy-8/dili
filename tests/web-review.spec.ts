@@ -44,8 +44,8 @@ test('a message completed after navigation clears its submitted draft and preser
 
 test('a failed Fork retains editable fields for retry, and a dismissed menu dialog restores keyboard focus', async ({ page }) => {
   await page.goto('/');
-  const source = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'SessionDeck · 开发笔记', exact: true }) });
-  const menu = source.getByRole('button', { name: 'SessionDeck · 开发笔记 的更多操作', exact: true });
+  const source = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'Dili · 开发笔记', exact: true }) });
+  const menu = source.getByRole('button', { name: 'Dili · 开发笔记 的更多操作', exact: true });
   await menu.click();
   await page.getByRole('button', { name: '改名', exact: true }).click();
   await expect(page.getByRole('dialog').getByLabel('联系人名称')).toBeFocused();

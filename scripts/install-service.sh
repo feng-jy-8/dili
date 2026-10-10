@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Installs SessionDeck as a systemd --user service so it can be restarted from
-# anywhere (including a SessionDeck shell opened remotely) and comes back after
+# Installs Dili as a systemd --user service so it can be restarted from
+# anywhere (including a Dili shell opened remotely) and comes back after
 # a reboot. This never stops a running instance; see restart-service.sh.
 set -euo pipefail
 
@@ -11,7 +11,7 @@ mkdir -p "$unit_dir"
 
 cat > "$unit_dir/sessiondeck.service" <<EOF
 [Unit]
-Description=SessionDeck (local-first home for coding agent sessions)
+Description=Dili (local-first home for coding agent sessions)
 After=network.target
 
 [Service]

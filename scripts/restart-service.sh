@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Restarts SessionDeck on this machine, safe to run from a shell that
-# SessionDeck itself hosts (the bottom terminal, even over remote access).
+# Restarts Dili on this machine, safe to run from a shell that
+# Dili itself hosts (the bottom terminal, even over remote access).
 #
 # The work runs detached in its own session, so stopping the service does not
 # kill the restart halfway. Every running agent session is stopped with the
@@ -18,7 +18,7 @@ fi
 
 if [[ "${1:-}" != --detached ]]; then
   setsid nohup "$0" --detached >"$log" 2>&1 < /dev/null &
-  echo "正在后台重启 SessionDeck，日志：$log"
+  echo "正在后台重启 Dili，日志：$log"
   echo "这个终端会随旧服务一起关闭；十几秒后刷新页面即可。"
   exit 0
 fi
@@ -29,7 +29,7 @@ if [[ -n "$pid" ]]; then
   cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
   cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
   if [[ "$cmd" != *server/index.ts* || "$cwd" != "$project_dir" ]]; then
-    echo "端口 $port 上的进程 $pid 不是本项目的 SessionDeck（$cmd），已放弃。" >&2
+    echo "端口 $port 上的进程 $pid 不是本项目的 Dili（$cmd），已放弃。" >&2
     exit 1
   fi
   unit_pid="$(systemctl --user show sessiondeck -p MainPID --value 2>/dev/null || echo 0)"

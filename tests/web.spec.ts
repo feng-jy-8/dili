@@ -55,7 +55,7 @@ test('contacts, native terminal, fork and directed group collaboration work in t
   await page.getByRole('dialog').getByRole('button', { name: '创建群组', exact: true }).click();
   await page.getByRole('button', { name: '添加成员', exact: true }).first().click();
   await page.getByRole('button', { name: '从已有联系人 Fork', exact: true }).click();
-  await page.getByLabel('来源联系人').selectOption({ label: 'SessionDeck · 开发笔记 · Codex' });
+  await page.getByLabel('来源联系人').selectOption({ label: 'Dili · 开发笔记 · Codex' });
   await page.getByRole('dialog').getByLabel('联系人名称').fill('群组实现成员');
   await page.getByRole('button', { name: 'Fork 入群', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '群组实现成员 的私聊' })).toBeVisible();
@@ -116,9 +116,9 @@ test('keyboard navigation keeps modal focus, leaves the workbench interactive, a
   await expect(create).not.toBeVisible();
   await expect(createButton).toBeFocused();
 
-  const card = page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true });
+  const card = page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true });
   await card.click();
-  const drawer = page.getByRole('dialog', { name: 'SessionDeck · 开发笔记 的私聊' });
+  const drawer = page.getByRole('dialog', { name: 'Dili · 开发笔记 的私聊' });
   await expect(drawer).toBeVisible();
   // Contacts remain alongside the nonmodal conversation on desktop.
   await expect(page.locator('main')).not.toHaveAttribute('inert');
@@ -211,21 +211,21 @@ test('session bookmarks reload the same private context and browser history rest
   page.on('request', request => { if (/\/api\/sessions\/[^/]+\/start$/.test(request.url())) startRequests.push(request.url()); });
   await page.goto('/');
   await expect(page).toHaveURL(/#\/contacts$/);
-  await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
+  await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
   const bookmark = page.url();
   expect(bookmark).toMatch(/#\/contacts\?session=[\w-]+$/);
   await page.reload();
-  await expect(page.getByRole('dialog', { name: 'SessionDeck · 开发笔记 的私聊' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Dili · 开发笔记 的私聊' })).toBeVisible();
   await expect(page).toHaveURL(bookmark);
   await page.getByRole('button', { name: '关闭会话', exact: true }).click();
   await expect(page).toHaveURL(/#\/contacts$/);
   await page.goBack();
-  await expect(page.getByRole('dialog', { name: 'SessionDeck · 开发笔记 的私聊' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Dili · 开发笔记 的私聊' })).toBeVisible();
   await page.goBack();
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(page).toHaveURL(/#\/contacts$/);
   await page.goForward();
-  await expect(page.getByRole('dialog', { name: 'SessionDeck · 开发笔记 的私聊' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Dili · 开发笔记 的私聊' })).toBeVisible();
   // The demo contact is already running, so even the card click has nothing
   // to start; reloads and history never launch an agent.
   expect(startRequests).toEqual([]);
@@ -258,11 +258,11 @@ test('group bookmarks preserve members and unknown route IDs recover without tra
 test('session info copies native identity and workspace path, with links back to the fork source', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/');
-  await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
-  const drawer = page.getByRole('dialog', { name: 'SessionDeck · 开发笔记 的私聊' });
+  await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'Dili · 开发笔记 的私聊' });
   await drawer.getByRole('button', { name: '复制工作目录', exact: true }).click();
   const state = await (await page.request.get('/api/state')).json();
-  const source = state.sessions.find((session: { title: string }) => session.title === 'SessionDeck · 开发笔记');
+  const source = state.sessions.find((session: { title: string }) => session.title === 'Dili · 开发笔记');
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(source.cwd);
   await drawer.locator('summary').filter({ hasText: '会话信息' }).click();
   await drawer.getByRole('button', { name: '复制原生会话标识', exact: true }).click();
@@ -276,8 +276,8 @@ test('session info copies native identity and workspace path, with links back to
   const fork = await (await page.request.post(`/api/sessions/${source.id}/fork`, { data: { title: '来源链接回归' }, headers })).json();
   await page.goto(`/#/contacts?session=${fork.id}`);
   await expect(page.getByRole('dialog', { name: '来源链接回归 的私聊' })).toBeVisible();
-  await page.getByRole('navigation', { name: '会话关系' }).getByRole('button', { name: '来源：SessionDeck · 开发笔记', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'SessionDeck · 开发笔记 的私聊' })).toBeVisible();
+  await page.getByRole('navigation', { name: '会话关系' }).getByRole('button', { name: '来源：Dili · 开发笔记', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Dili · 开发笔记 的私聊' })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`session=${source.id}$`));
 });
 
@@ -628,17 +628,17 @@ test('execution filters distinguish an attached idle process from an active task
 
 test('card actions are reachable with keyboard and menu direction keys open a rename dialog', async ({ page }) => {
   await page.goto('/');
-  const card = page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true });
+  const card = page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true });
   await card.focus();
   expect(await card.evaluate(element => getComputedStyle(element).outlineStyle)).not.toBe('none');
   await page.keyboard.press('Enter');
-  const drawer = page.getByRole('dialog', { name: 'SessionDeck · 开发笔记 的私聊' });
+  const drawer = page.getByRole('dialog', { name: 'Dili · 开发笔记 的私聊' });
   await expect(drawer).toBeVisible();
   await expect(drawer.locator(':focus')).toHaveCount(1);
   await drawer.getByRole('button', { name: '关闭会话', exact: true }).focus();
   await page.keyboard.press('Enter');
   await expect(card).toBeFocused();
-  const menu = page.getByRole('button', { name: 'SessionDeck · 开发笔记 的更多操作', exact: true });
+  const menu = page.getByRole('button', { name: 'Dili · 开发笔记 的更多操作', exact: true });
   await menu.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: '改名', exact: true })).toBeFocused();

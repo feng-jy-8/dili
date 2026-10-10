@@ -1,10 +1,10 @@
 import { appUrl } from './urls';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { Folder, Layers3, LoaderCircle, LogOut, MessageSquare, Play, Square, TerminalSquare } from 'lucide-react';
+import { Folder, LoaderCircle, LogOut, MessageSquare, Play, Square, TerminalSquare } from 'lucide-react';
 import type { AppState, Session } from '../shared/types';
 import type { AuthStatus } from '../shared/auth';
 import { api } from './api';
-import { BACKEND, StatusBadge } from './App';
+import { BACKEND, BrandMark, StatusBadge } from './App';
 import TerminalPane from './TerminalPane';
 import ConversationPane from './ConversationPane';
 import WorkspaceExplorer from './WorkspaceExplorer';
@@ -53,7 +53,7 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
     if (!session) return;
     setView(current => current !== 'terminal' ? current : chatAvailable && writable && session.interactionMode === 'chat' ? 'chat' : 'terminal');
   }, [session?.id, chatAvailable, writable]);
-  useEffect(() => { document.title = `${session?.title ?? '共享会话'} · SessionDeck`; }, [session?.title]);
+  useEffect(() => { document.title = `${session?.title ?? '共享会话'} · Dili`; }, [session?.title]);
 
   const act = async (path: 'start' | 'stop') => {
     if (!session) return;
@@ -70,7 +70,7 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
   const conversationLabel = chatAvailable && writable ? '图形对话' : '对话记录';
   return <div className="app-shell share-shell">
     <header className="share-topbar">
-      <span className="brand-mark"><Layers3 size={15} /></span>
+      <span className="brand-mark"><BrandMark size={17} /></span>
       <div className="share-heading"><div className="drawer-title"><h1 title={session.title}>{session.title}</h1><StatusBadge session={session} /></div>
         <p className="session-meta"><span>{BACKEND[session.backend].short}</span><span className="session-cwd" title={session.cwd}><Folder size={12} /><span><bdi>{session.cwd}</bdi></span></span></p></div>
       <span className={`share-role ${writable ? 'write' : ''}`} title={writable ? '你可以在这个会话中输入、审批、启动和停止' : '你只能查看这个会话'}>{writable ? '可协作' : '只读'} · {status.name}</span>

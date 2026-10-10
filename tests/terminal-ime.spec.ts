@@ -20,7 +20,7 @@ function observeInput(page: Page) {
 test('input-only IME commits send whole phrases and emoji once, with ordinary keys still working', async ({ page }) => {
   const sent = observeInput(page);
   await page.goto('/');
-  await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
+  await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
   await expect(page.locator('.terminal-connection')).toHaveText('已连接');
   const textarea = page.locator('.xterm-helper-textarea');
   await textarea.focus();
@@ -40,7 +40,7 @@ test('input-only IME commits send whole phrases and emoji once, with ordinary ke
 test('IME text committed straight into the textarea and candidates picked with a digit both reach the terminal', async ({ page }) => {
   const sent = observeInput(page);
   await page.goto('/');
-  await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
+  await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
   await expect(page.locator('.terminal-connection')).toHaveText('已连接');
   const textarea = page.locator('.xterm-helper-textarea');
   await textarea.focus();
@@ -84,7 +84,7 @@ test('on touch devices Chinese goes through the composer and reaches the termina
   try {
     const sent = observeInput(page);
     await page.goto('/');
-    await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
+    await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
     await expect(page.locator('.terminal-connection')).toHaveText('已连接');
     // The hidden xterm textarea never raises the on-screen keyboard here.
     await expect(page.locator('.xterm-helper-textarea')).toHaveAttribute('inputmode', 'none');

@@ -3,7 +3,7 @@ import { expect, test as baseTest } from '@playwright/test';
 import type { AppState, Session } from '../shared/types';
 import { Buffer } from 'node:buffer';
 
-async function openDemoCodex(page: import('@playwright/test').Page, title = 'SessionDeck · 开发笔记') {
+async function openDemoCodex(page: import('@playwright/test').Page, title = 'Dili · 开发笔记') {
   await page.goto('/');
   await page.getByRole('button', { name: `进入 ${title} 的会话`, exact: true }).click();
   await expect(page.getByRole('dialog', { name: `${title} 的私聊` })).toBeVisible();

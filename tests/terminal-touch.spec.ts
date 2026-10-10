@@ -19,7 +19,7 @@ test('a finger drag scrolls the terminal history and reports wheel to a mouse-tr
   page.on('websocket', socket => { if (socket.url().includes('/api/terminal/')) socket.on('framesent', ({ payload }) => { try { const m = JSON.parse(String(payload)); if (m.type === 'input') sent.push(m.data); } catch { /* non-JSON */ } }); });
   try {
     await page.goto('/');
-    await page.getByRole('button', { name: '进入 SessionDeck · 开发笔记 的会话', exact: true }).click();
+    await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
     await expect(page.locator('.terminal-connection')).toHaveText('已连接');
     // Fill the scrollback: every Enter makes the demo PTY echo a line.
     const textarea = page.locator('.xterm-helper-textarea');

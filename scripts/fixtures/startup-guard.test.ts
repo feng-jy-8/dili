@@ -76,7 +76,7 @@ test('startup refuses a held data lease through an alias and leaves existing fil
   try {
     await assert.rejects(execute('bash', [join(directory, 'start.sh')], {
       env: { ...environment(directory, await freePort()), ...fixture, SESSIONDECK_DATA_DIR: alias }, timeout: 5000,
-    }), (error: { code?: number; stderr?: string }) => error.code === 1 && /数据目录已有 SessionDeck 实例/.test(error.stderr ?? ''));
+    }), (error: { code?: number; stderr?: string }) => error.code === 1 && /数据目录已有 Dili 实例/.test(error.stderr ?? ''));
     const after = await stat(lockPath);
     assert.equal(after.ino, before.ino);
     assert.equal(after.mtimeMs, before.mtimeMs);

@@ -13,7 +13,7 @@ for (const trailingSlash of ['', '/']) test(`device-prefixed remote links load t
   const password = 'browser owner password';
   expect((await request.post('/api/auth/password', { headers, data: { password } })).ok()).toBe(true);
   const state = await (await request.get('/api/state')).json() as AppState;
-  const target = state.sessions.find(item => item.title === 'SessionDeck · 开发笔记')!;
+  const target = state.sessions.find(item => item.title === 'Dili · 开发笔记')!;
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   const apiPaths: string[] = [];
@@ -67,7 +67,7 @@ for (const trailingSlash of ['', '/']) test(`device-prefixed remote links load t
 
 test('an exception after workspace loading shows a recoverable error instead of a blank page', async ({ page, request }) => {
   const state = await (await request.get('/api/state')).json() as AppState;
-  const target = state.sessions.find(item => item.title === 'SessionDeck · 开发笔记')!;
+  const target = state.sessions.find(item => item.title === 'Dili · 开发笔记')!;
   await page.addInitScript(() => {
     const NativeObserver = ResizeObserver;
     if (sessionStorage.getItem('test-render-failure') === null) sessionStorage.setItem('test-render-failure', 'on');
@@ -131,7 +131,7 @@ test('invite pairing shows its stage, restores the button after failure and allo
 test('remote owner logs in, shares a session read-only, and revocation closes the colleague view', async ({ page, browser, baseURL, request }) => {
   const remote = remoteOrigin(baseURL!);
   const state = await (await request.get('/api/state')).json() as AppState;
-  const target = state.sessions.find(item => item.title === 'SessionDeck · 开发笔记')!;
+  const target = state.sessions.find(item => item.title === 'Dili · 开发笔记')!;
 
   // Set the owner password on the owner's own machine.
   await page.goto('/#/backends');
@@ -160,7 +160,7 @@ test('remote owner logs in, shares a session read-only, and revocation closes th
   await expect(remotePage.getByRole('heading', { name: '会话联系人', exact: true })).toBeVisible();
   await expect(remotePage.getByRole('dialog', { name: `${target.title} 的私聊` })).toBeVisible();
   await remotePage.goto(`${remote}/#/backends`);
-  await expect(remotePage.getByRole('region', { name: '远程访问与安全' })).toContainText('只能在运行 SessionDeck 的电脑上修改');
+  await expect(remotePage.getByRole('region', { name: '远程访问与安全' })).toContainText('只能在运行 Dili 的电脑上修改');
 
   // Share from the card menu on the local workbench.
   await page.goto('/');

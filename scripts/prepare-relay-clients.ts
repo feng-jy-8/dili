@@ -6,8 +6,10 @@ import { downloadFrpArchive } from '../server/frp-install.ts';
 
 // Run before deploying dist/relay/clients. Never publish an unverified archive.
 const directory = resolve('dist/relay/clients');
+const requestedPlatforms = process.env.SESSIONDECK_FRP_PLATFORMS?.split(',').map(value => value.trim()).filter(Boolean);
+const platforms = Object.entries(FRP_ARCHIVE_HASHES).filter(([platform]) => !requestedPlatforms?.length || requestedPlatforms.includes(platform));
 await mkdir(directory, { recursive: true });
-for (const [platform, hash] of Object.entries(FRP_ARCHIVE_HASHES)) {
+for (const [platform, hash] of platforms) {
   const archive = frpArchive(platform), path = join(directory, archive);
   try { if (createHash('sha256').update(await readFile(path)).digest('hex') === hash) continue; } catch { /* download */ }
   const staged = `${path}.${randomUUID()}.tmp`;
