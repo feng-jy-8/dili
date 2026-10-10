@@ -17,7 +17,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
       <CircleAlert size={24} />
       <h1>工作空间显示失败</h1>
       <p className="auth-subtitle">页面遇到了错误。重新加载不会停止正在运行的会话，也不会删除笔记。</p>
-      <details className="workspace-error-details"><summary>查看错误详情</summary><pre>{this.state.error.message || String(this.state.error)}</pre></details>
+      <details className="workspace-error-details" open><summary>查看错误详情</summary><pre>{this.state.error.message || String(this.state.error)}</pre></details>
       <button className="button primary" onClick={() => location.reload()}><RefreshCw size={15} />重新加载</button>
     </main></div>;
   }

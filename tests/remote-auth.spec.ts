@@ -63,8 +63,10 @@ test('an exception after workspace loading shows a recoverable error instead of 
   await page.goto(`/#/contacts?session=${target.id}`);
   const error = page.getByRole('alert');
   await expect(error).toContainText('工作空间显示失败');
-  await error.getByText('查看错误详情').click();
-  await expect(error).toContainText('Terminal observer unavailable in this browser');
+  // Diagnostics must be visible immediately, including on phones where a
+  // collapsed detail can be mistaken for the full error message.
+  await expect(error.locator('pre')).toBeVisible();
+  await expect(error.locator('pre')).toHaveText('Terminal observer unavailable in this browser');
   await page.evaluate(() => sessionStorage.setItem('test-render-failure', 'off'));
   await error.getByRole('button', { name: '重新加载' }).click();
   await expect(page.getByRole('dialog', { name: `${target.title} 的私聊` })).toBeVisible();
