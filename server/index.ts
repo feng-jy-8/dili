@@ -11,6 +11,8 @@ import { Store } from './store.ts';
 import { ScratchpadStore } from './scratchpad.ts';
 import { Terminals, type LaunchCommand } from './terminal.ts';
 import { ShellTerminals } from './shell-terminals.ts';
+import { AgentSetup } from './agent-setup.ts';
+import { StartupService } from './startup.ts';
 import { allowedRemoteRequest, allowedRequest, readCookie, validToken } from './security.ts';
 import { AuthStore, type Principal } from './auth.ts';
 import { authorize } from './access.ts';
@@ -561,6 +563,34 @@ app.get('/api/events', (req, res) => {
   // for example behind a proxy that buffers or compresses event streams.
   const heartbeat = setInterval(() => res.write('event: ping\ndata: {}\n\n'), 20_000);
   req.on('close', () => { sse.delete(res); clearInterval(heartbeat); });
+});
+
+const agentSetup = new AgentSetup();
+const startupService = new StartupService({ root, dataDir, port, host });
+app.get('/api/setup/agents', async (_req, res) => {
+  // Demo instances must not read the owner's real authentication/config files.
+  if (demo) return res.json([]);
+  res.json(await agentSetup.list());
+});
+app.post('/api/setup/agents/:id/config', async (req, res) => {
+  if (demo) fail('演示模式不修改原生配置', 409);
+  res.json(await agentSetup.save(backend(req.params.id), req.body));
+});
+app.post('/api/setup/agents/:id/terminal', async (req, res) => {
+  if (demo) fail('演示模式不安装或登录真实 Agent', 409);
+  if (closing) fail('终端服务正在关闭', 503);
+  if (process.platform !== 'linux') fail('安装引导终端目前支持 Linux / WSL2，请使用页面中的命令手动配置', 409);
+  const command = await agentSetup.command(backend(req.params.id), req.body.action);
+  res.status(201).json(shells.create(directory(homedir()), null, command));
+});
+app.get('/api/setup/startup', async (_req, res) => {
+  if (demo) return res.json({ supported: false, enabled: false, active: false, wsl: false, linger: false, conflict: false, unitPath: '', note: '演示模式不修改本机启动设置' });
+  res.json(await startupService.status());
+});
+app.post('/api/setup/startup', async (req, res) => {
+  if (demo) fail('演示模式不修改本机启动设置', 409);
+  if (typeof req.body.enabled !== 'boolean') fail('无效的自动启动设置');
+  res.json(await startupService.change(req.body.enabled));
 });
 
 app.post('/api/backends/refresh', async (_req, res) => { backends = demo ? demoBackends : await getBackendInfo(); publisher.setBackends(backends); broadcast(); res.json(backends); });
@@ -1126,7 +1156,7 @@ server.once('error', error => {
   shutdown(1);
 });
 server.listen(port, host, () => {
-  console.log(`SessionDeck${demo ? ' [演示模式，不调用真实模型]' : ''} → http://${host.includes(':') ? `[${host}]` : host}:${port}\n本地数据：${dataDir}`);
+  console.log(`Dili${demo ? ' [演示模式，不调用真实模型]' : ''} → http://${host.includes(':') ? `[${host}]` : host}:${port}\n本地数据：${dataDir}`);
   void applyRemote().then(() => {
     if (remoteServer.listening) console.log(`远程访问监听 → http://127.0.0.1:${remoteSettings().localPort}（需要登录）`);
   }).catch(error => console.error(`远程访问未启动：${error instanceof Error ? error.message : String(error)}`));

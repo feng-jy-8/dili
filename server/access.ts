@@ -54,6 +54,11 @@ export const ROUTES: Route[] = [
 
   { method: 'POST', path: '/api/native-event/:id', access: 'local' },
 
+  { method: 'GET', path: '/api/setup/agents', access: 'owner' },
+  { method: 'POST', path: '/api/setup/agents/:id/config', access: 'local' },
+  { method: 'POST', path: '/api/setup/agents/:id/terminal', access: 'local' },
+  { method: 'GET', path: '/api/setup/startup', access: 'owner' },
+  { method: 'POST', path: '/api/setup/startup', access: 'local' },
   { method: 'GET', path: '/api/shells', access: 'owner' },
   { method: 'POST', path: '/api/shells', access: 'owner' },
   { method: 'DELETE', path: '/api/shells/:id', access: 'owner' },

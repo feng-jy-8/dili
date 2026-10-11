@@ -7,8 +7,8 @@ import TerminalPane from './TerminalPane';
 const ignoreSelection = () => {};
 const clampHeight = (height: number) => Math.max(180, Math.min(height, window.innerHeight * .7));
 
-export default function ShellTerminalDock({ open, sessionId, onClose, inert = false }: {
-  open: boolean; sessionId?: string; onClose: () => void; inert?: boolean;
+export default function ShellTerminalDock({ open, sessionId, requestedShellId, onClose, inert = false }: {
+  open: boolean; sessionId?: string; requestedShellId?: string; onClose: () => void; inert?: boolean;
 }) {
   const [shells, setShells] = useState<ShellTerminal[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -20,9 +20,9 @@ export default function ShellTerminalDock({ open, sessionId, onClose, inert = fa
   const busyRef = useRef(false);
   const revisionRef = useRef(0);
   const initializedRef = useRef(false);
-  const contextRef = useRef({ open, sessionId, generation: 0 });
-  if (contextRef.current.open !== open || contextRef.current.sessionId !== sessionId) {
-    contextRef.current = { open, sessionId, generation: contextRef.current.generation + 1 };
+  const contextRef = useRef({ open, sessionId, requestedShellId, generation: 0 });
+  if (contextRef.current.open !== open || contextRef.current.sessionId !== sessionId || contextRef.current.requestedShellId !== requestedShellId) {
+    contextRef.current = { open, sessionId, requestedShellId, generation: contextRef.current.generation + 1 };
   }
   const resolvedContextRef = useRef(-1);
   const [focusTarget, setFocusTarget] = useState<{ id: string; request: number } | null>(null);
@@ -67,7 +67,10 @@ export default function ShellTerminalDock({ open, sessionId, onClose, inert = fa
         const entries = await refresh();
         if (cancelled || contextRef.current !== context || revision !== revisionRef.current || busyRef.current) return;
         const needsContext = resolvedContextRef.current !== context.generation;
-        if (needsContext && sessionId) {
+        if (needsContext && requestedShellId) {
+          const requested = entries.find(shell => shell.id === requestedShellId);
+          if (requested) { resolvedContextRef.current = context.generation; setActiveId(requested.id); setSplitId(null); requestFocus(requested.id); initializedRef.current = true; }
+        } else if (needsContext && sessionId) {
           resolvedContextRef.current = context.generation;
           const contextual = entries.findLast(shell => shell.sessionId === sessionId && shell.running) ?? entries.findLast(shell => shell.sessionId === sessionId);
           if (contextual) { setActiveId(contextual.id); requestFocus(contextual.id); }
@@ -87,7 +90,7 @@ export default function ShellTerminalDock({ open, sessionId, onClose, inert = fa
     void load();
     const timer = window.setInterval(() => { void load(); }, 3000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [open, refresh, createShell, sessionId, busy, requestFocus]);
+  }, [open, refresh, createShell, sessionId, requestedShellId, busy, requestFocus]);
   useEffect(() => {
     const resize = () => setHeight(current => clampHeight(current));
     window.addEventListener('resize', resize);

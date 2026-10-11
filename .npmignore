@@ -1,0 +1,8 @@
+**/*.test.ts
+**/*.spec.ts
+server/relay-*.ts
+server/relay-store.ts
+server/relay-service.ts
+artifacts/
+.env*
+memory/

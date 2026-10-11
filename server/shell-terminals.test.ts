@@ -64,3 +64,16 @@ test('closing a shell ends its foreground command and prevents further input', {
   await shells.close();
   assert.throws(() => shells.create(process.cwd()), /关闭/);
 });
+
+test('native setup terminal executes its guide and leaves an interactive shell for corrections', { timeout: 10_000, skip: process.platform === 'win32' }, async t => {
+  const cwd = await mkdtemp(join(tmpdir(), 'dili-guide-shell-'));
+  const shells = new ShellTerminals('/bin/sh');
+  t.after(async () => { await shells.close(); await rm(cwd, { recursive: true, force: true }); });
+  let output = '';
+  shells.on('data', (_id: string, data: string) => { output += data; });
+  const terminal = shells.create(cwd, null, "printf 'SETUP_%s\\n' 'COMPLETE'");
+  await until(() => output.includes('SETUP_COMPLETE'), 'Guide command did not execute');
+  assert.equal(shells.get(terminal.id)?.running, true);
+  shells.input(terminal.id, "printf 'AFTER_%s\\n' 'GUIDE'\r");
+  await until(() => output.includes('AFTER_GUIDE'), 'Terminal was not interactive after the guide finished');
+});

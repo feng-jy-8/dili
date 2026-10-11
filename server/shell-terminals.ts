@@ -25,7 +25,7 @@ export class ShellTerminals extends EventEmitter {
   get(id: string): ShellTerminal | undefined { const entry = this.entries.get(id); return entry ? { ...entry } : undefined; }
   buffer(id: string) { return this.terminals.buffer(id); }
   generation(id: string) { return this.terminals.generation(id); }
-  create(cwd: string, sessionId: string | null = null): ShellTerminal {
+  create(cwd: string, sessionId: string | null = null, setupCommand?: string): ShellTerminal {
     if (this.closed) throw Object.assign(new Error('终端服务正在关闭'), { status: 503 });
     if (this.entries.size >= 16) throw Object.assign(new Error('最多同时保留 16 个终端，请先关闭不再使用的终端'), { status: 409 });
     if (!isAbsolute(cwd) || !statSync(cwd).isDirectory()) throw new Error('终端工作目录无效');
@@ -35,7 +35,9 @@ export class ShellTerminals extends EventEmitter {
     const args = process.platform === 'win32' ? name.startsWith('powershell') || name.startsWith('pwsh') ? ['-NoLogo'] : [] : ['-i'];
     this.entries.set(id, entry);
     try {
-      this.terminals.start({ id, cwd }, { file: this.shell, args });
+      const quote = (value: string) => "'" + value.replace(/'/g, "'\"'\"'") + "'";
+      const launchArgs = setupCommand ? ['-i', '-c', `${setupCommand}; exec ${quote(this.shell)} -i`] : args;
+      this.terminals.start({ id, cwd }, { file: this.shell, args: launchArgs });
       return { ...entry };
     } catch (error) {
       this.entries.delete(id);

@@ -849,3 +849,15 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .workspace-error-details { margin: 16px 0; text-align: left; }
 .workspace-error-details summary { cursor: pointer; }
 .workspace-error-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 200px; overflow: auto; }
+
+/* Native setup, kept in the existing settings cards. */
+.agent-setup-controls { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
+.setup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.setup-form { display: flex; flex-direction: column; gap: 10px; }
+.setup-form label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+.setup-form input { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
+.agent-setup-controls details, .backend-setting-card details { font-size: 12px; color: var(--muted); }
+.agent-setup-controls summary, .backend-setting-card summary { cursor: pointer; }
+.agent-setup-controls details code, .backend-setting-card details code { display: block; padding: 6px 0; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+.agent-setup-controls .muted { overflow-wrap: anywhere; }
+.setup-message { font-size: 12px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }

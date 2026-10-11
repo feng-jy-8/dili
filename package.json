@@ -1,9 +1,9 @@
 {
-  "name": "dili",
-  "version": "0.3.0",
-  "private": true,
+  "name": "dili-workbench",
+  "version": "0.4.0-dev.0",
+  "private": false,
   "type": "module",
-  "description": "Dili (嘀哩工作台): a local-first web home for Claude Code, Codex and DeepSeek Harness sessions",
+  "description": "Dili (\u5600\u54e9\u5de5\u4f5c\u53f0): a local-first web home for Claude Code, Codex and DeepSeek Harness sessions",
   "scripts": {
     "postinstall": "node scripts/prepare-pty.mjs",
     "preflight": "node scripts/prepare-pty.mjs && tsx scripts/check-pty.ts",
@@ -29,7 +29,9 @@
     "test:terminal-load": "tsx scripts/terminal-load.ts",
     "test:smoke:claude": "tsx scripts/claude-workflow-smoke.ts",
     "test:smoke:workspace": "tsx scripts/workspace-workflow-smoke.ts",
-    "backup": "tsx scripts/backup.ts"
+    "backup": "tsx scripts/backup.ts",
+    "prepack": "npm run build",
+    "test:package": "npm run build && node scripts/package-smoke.mjs"
   },
   "engines": {
     "node": ">=24"
@@ -48,6 +50,8 @@
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
+    "smol-toml": "^1.9.1",
+    "tsx": "^4.20.0",
     "vditor": "4.0.0",
     "ws": "^8.18.3"
   },
@@ -59,8 +63,28 @@
     "@types/react-dom": "^19.2.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.0",
-    "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vite": "^7.2.0"
-  }
+  },
+  "bin": {
+    "dili": "bin/dili.mjs"
+  },
+  "files": [
+    "bin/",
+    "server/",
+    "shared/",
+    "scripts/check-start.mjs",
+    "scripts/check-pty.ts",
+    "scripts/prepare-pty.mjs",
+    "scripts/doctor.ts",
+    "dist/client/",
+    "README.MD",
+    "docs/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaoqiang-cheng/dili.git"
+  },
+  "homepage": "https://github.com/xiaoqiang-cheng/dili#readme",
+  "license": "UNLICENSED"
 }
