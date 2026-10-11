@@ -19,15 +19,25 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run verify
+      - run: npm run test:package
       - run: npm run build:relay
       - run: SESSIONDECK_FRP_PLATFORMS=linux_amd64 npm run prepare:relay-clients
       - run: npm run package:release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dili-release-packages
+          path: dist/releases/*
+      - name: Check version tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node -e 'const p=require("./package.json");if(process.env.GITHUB_REF_NAME!=="v"+p.version)process.exit(1)'
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist/releases/*.tar.gz
+          files: |
+            dist/releases/*.tar.gz
+            dist/releases/*.tgz
+            dist/releases/SHA256SUMS

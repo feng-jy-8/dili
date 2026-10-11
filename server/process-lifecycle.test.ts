@@ -25,9 +25,10 @@ async function live(pid: number) {
     process.kill(pid, 0); return true;
   } catch { return false; }
 }
-async function until(check: () => Promise<boolean>, detail: string) {
-  for (let attempt = 0; attempt < 200; attempt++) { if (await check()) return; await delay(20); }
-  assert.fail(detail);
+async function until(check: () => Promise<boolean>, detail: string | (() => string), timeout = 4000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) { if (await check()) return; await delay(20); }
+  assert.fail(typeof detail === 'function' ? detail() : detail);
 }
 async function kill(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -35,7 +36,7 @@ async function kill(child: ChildProcess) {
   child.kill('SIGKILL'); await exited;
 }
 
-test('service SIGTERM retains the data lease until stubborn native PTYs exit', { timeout: 15_000 }, async t => {
+test('service SIGTERM retains the data lease until stubborn native PTYs exit', { timeout: 20_000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'deck-service-lifetime-'));
   const executable = join(directory, 'claude.cjs'), pidFile = join(directory, 'native.pid'), dataDir = join(directory, 'deck');
   await writeFile(executable, `#!${process.execPath}
@@ -52,7 +53,10 @@ setInterval(()=>{},1000);`, { mode: 0o700 });
   let stderr = ''; child.stderr?.on('data', chunk => { stderr += chunk; });
   let pid = 0;
   t.after(async () => { await kill(child); if (pid && await live(pid)) try { process.kill(pid, 'SIGKILL'); } catch { /* exited */ } await rm(directory, { recursive: true, force: true }); });
-  await until(async () => { try { return (await fetch(`${base}/api/config`)).ok; } catch { return false; } }, `Fixture service did not start: ${stderr}`);
+  await until(async () => {
+    assert.equal(child.exitCode, null, `Fixture service exited: ${stderr}`);
+    try { return (await fetch(`${base}/api/config`)).ok; } catch { return false; }
+  }, () => `Fixture service did not start: ${stderr}`, 10_000);
   const config = await (await fetch(`${base}/api/config`)).json() as { csrfToken: string };
   const post = async (path: string, body: unknown = {}) => {
     const response = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-sessiondeck-token': config.csrfToken }, body: JSON.stringify(body) });

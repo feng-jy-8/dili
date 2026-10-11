@@ -2,8 +2,8 @@
 
 > 把 Claude Code、Codex、DeepSeek Harness 的具体会话变成联系人卡片：在外面看状态，点进去继续原生交互，需要协作时再组成群组。
 
-- 版本：v0.3.0
-- 日期：2026-09-30
+- 版本：v0.4.0-dev.0（开发中）
+- 日期：2026-10-11
 - 产品形态：本地优先的 Web 应用
 - 当前目标：完成会话联系人、原生交互和 Fork，并实现基础群组闭环
 - 价值判断：以日常使用是否顺手为准，不以商业化为目标
@@ -18,6 +18,14 @@
 Dili 的视觉标识使用对话气泡和状态亮点，表达多平台会话连接、持续工作和需要关注的状态。`public/logo.svg` 可用于官网、登录页和宣传材料；`public/icon.svg` 与 `public/favicon.svg` 用于应用图标。
 
 仓库目录、`sessiondeck` systemd 服务名、`SESSIONDECK_*` 环境变量、`X-SessionDeck-*` 请求头和浏览器存储键保留为兼容标识。它们属于内部接口，不影响产品名称，也避免升级后丢失已有会话、笔记和远程配置。
+
+## 安装与产品化
+
+首个正式发行目标为 Linux x86_64 / WSL2、Node.js 24+。支持预构建 npm 包和 `dili` 命令，程序安装目录与用户数据分离；包名暂定 `dili-workbench`，**尚未发布到 npm**。本地 `npm pack` 后可以安装 tarball。
+
+设置页提供原生 Agent 安装/登录终端、Claude/Codex API 配置和 Linux systemd 用户服务自动启动。DeepSeek Harness API 配置复用其原生 Web 设置。配置供其他终端的原生命令共享，保存会备份已有文件。安装不会自动使用 sudo；自动启动开关不停止或重启现有会话。
+
+详见 [安装指南](docs/installation.md) 和 [正式版发布清单](docs/releasing.md)。自动化命令：`npm run verify` 与 `npm run test:package`。Windows 原生与 macOS 尚未完成发行验收；WSL 的服务在发行版启动后运行，不等同于 Windows 开机启动。
 
 ## 1. 产品定义与优先级
 
