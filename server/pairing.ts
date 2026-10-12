@@ -11,16 +11,19 @@ export async function redeemPairing(pending: PendingPairing): Promise<RelayPairi
   const { serverUrl, secret } = decodeInvite(pending.invite);
   let response: Response;
   try {
-    response = await fetch(`${serverUrl}/api/redeem`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ secret, claim: pending.claim, credential: pending.credential, name: pending.name }) });
+    response = await fetch(`${serverUrl}/api/redeem`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20_000), headers: { 'content-type': 'application/json' }, body: JSON.stringify({ secret, claim: pending.claim, credential: pending.credential, name: pending.name, serverUrl }) });
   } catch {
     throw new Error('中继服务器连接失败或超时，请检查网络后重试；使用同一邀请码重试不会重复创建设备');
   }
-  const data = await response.json() as Partial<RelayPairing> & { error?: string };
+  let data: Partial<RelayPairing> & { error?: string };
+  try { data = await response.json(); }
+  catch { throw new Error('中继响应不是有效 JSON，请检查域名、证书和代理路由后重试'); }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('中继服务器返回了无效的配对信息');
   if (!response.ok) throw Object.assign(new Error(data.error || '服务器配对失败'), { status: response.status });
-  if (typeof data.deviceId !== 'string' || !/^[a-z0-9]{16}$/.test(data.deviceId) || data.publicUrl !== `${serverUrl}/d/${data.deviceId}` || !Number.isInteger(data.serverPort) || data.serverPort! < 1024 || data.serverPort! > 65535 || typeof data.pairedAt !== 'string') throw new Error('中继服务器返回了无效的配对信息');
+  if (typeof data.deviceId !== 'string' || !/^[a-z0-9]{16}$/.test(data.deviceId) || data.publicUrl !== `${serverUrl}/d/${data.deviceId}` || !Number.isInteger(data.serverPort) || data.serverPort! < 1024 || data.serverPort! > 65535 || (data.serverUrl !== undefined && data.serverUrl !== serverUrl) || typeof data.pairedAt !== 'string' || !Number.isFinite(Date.parse(data.pairedAt))) throw new Error('中继服务器返回了无效的配对信息');
   return { deviceId: data.deviceId, name: pending.name, serverUrl, publicUrl: data.publicUrl, serverPort: data.serverPort!, pairedAt: data.pairedAt, credential: pending.credential };
 }
 export async function revokePairing(pair: RelayPairing) {
   const response = await fetch(`${pair.serverUrl}/api/devices/${pair.deviceId}/revoke`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${pair.credential}`, 'content-type': 'application/json' }, body: '{}' });
-  if (!response.ok && response.status !== 401 && response.status !== 404) throw new Error('服务器暂时无法撤销配对，请先停用远程访问后重试');
+  if (!response.ok && response.status !== 401 && response.status !== 404 && response.status !== 410) throw new Error('服务器暂时无法撤销配对，请先停用远程访问后重试');
 }

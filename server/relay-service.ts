@@ -9,7 +9,7 @@ export interface RelayOptions { serverUrl: string; domains?: string[]; adminToke
 export function createRelayApp(store: RelayStore, options: RelayOptions) {
   const app = express(), serverUrl = relayUrl(options.serverUrl);
   const defaultUrl = new URL(serverUrl), domainUrls = new Map<string, string>();
-  for (const value of options.domains?.length ? options.domains : [serverUrl]) {
+  for (const value of [serverUrl, ...(options.domains ?? [])]) {
     const raw = String(value).trim();
     const candidate = raw.includes('://') || raw === defaultUrl.hostname || raw === defaultUrl.host
       ? (raw.includes('://') ? relayUrl(raw) : serverUrl)
@@ -40,8 +40,13 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
     });
   });
   app.post('/connect/api/redeem', limit, (req, res) => {
-    const device = store.redeem(req.body.secret, req.body.claim, req.body.credential, req.body.name);
-    res.json({ deviceId: device.id, name: device.name, serverUrl, publicUrl: `${serverUrl}/d/${device.id}`, serverPort: device.port, pairedAt: device.createdAt });
+    // Only configured addresses are accepted. Never trust forwarded host headers.
+    const requestedUrl = req.body.serverUrl === undefined
+      ? (domainUrls.get(req.get('host') ?? '') ?? serverUrl) : relayUrl(req.body.serverUrl);
+    if (![...domainUrls.values()].includes(requestedUrl)) return res.status(400).json({ error: '中继地址未在服务器白名单中' });
+    const device = store.redeem(req.body.secret, req.body.claim, req.body.credential, req.body.name, requestedUrl);
+    const selectedUrl = device.serverUrl ?? requestedUrl;
+    res.json({ deviceId: device.id, name: device.name, serverUrl: selectedUrl, publicUrl: `${selectedUrl}/d/${device.id}`, serverPort: device.port, pairedAt: device.createdAt });
   });
   app.post('/connect/api/devices/:id/revoke', limit, (req, res) => {
     const device = store.authenticate(String(req.params.id), req.headers.authorization?.replace(/^Bearer /, ''));

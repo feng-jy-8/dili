@@ -49,3 +49,61 @@ test('relay HTTP supports seven-day and permanent invites, safe retries and pinn
   }
   assert.equal(store.devices().length, 2);
 });
+
+test('selected relay domain survives redemption, retries and store restart without trusting forwarded hosts', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dili-relay-domain-'));
+  const path = join(directory, 'relay.sqlite');
+  let db = new DatabaseSync(path), store = new RelayStore(db);
+  const defaultUrl = 'https://default.example.test/connect';
+  const selectedUrl = 'https://selected.example.test:8443/connect';
+  const server = createServer((req, res) => app(req, res)).listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}/connect`;
+  const options = { serverUrl: defaultUrl, domains: [selectedUrl], adminToken: 'admin', pluginToken: 'plugin', adminHtml: resolve('relay/index.html') };
+  let app = createRelayApp(store, options);
+  t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); await rm(directory, { recursive: true, force: true }); });
+  const created = await (await fetch(`${base}/api/admin/invites`, { method: 'POST', headers: { authorization: 'Bearer admin', 'content-type': 'application/json' }, body: JSON.stringify({ domain: 'selected.example.test:8443', permanent: true }) })).json() as { invite: string };
+  const { secret, serverUrl } = decodeInvite(created.invite);
+  assert.equal(serverUrl, selectedUrl);
+  const input = { secret, claim: 'a'.repeat(43), credential: 'b'.repeat(43), name: 'test', serverUrl };
+  const redeem = (body: object, headers: Record<string, string> = {}) => fetch(`${base}/api/redeem`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  assert.equal((await redeem({ ...input, serverUrl: 'https://evil.example/connect' })).status, 400);
+  assert.equal((await redeem({ ...input, serverUrl: defaultUrl })).status, 409);
+  assert.equal(store.devices().length, 0, 'invalid addresses never consume the invite');
+  const response = await redeem(input, { 'x-forwarded-host': 'evil.example' });
+  assert.equal(response.status, 200);
+  const pair = await response.json() as { deviceId: string; serverUrl: string; publicUrl: string };
+  assert.equal(pair.serverUrl, selectedUrl);
+  assert.equal(pair.publicUrl, `${selectedUrl}/d/${pair.deviceId}`);
+  db.close(); db = new DatabaseSync(path); store = new RelayStore(db); app = createRelayApp(store, options);
+  assert.deepEqual(await (await redeem(input)).json(), await (await redeem(input)).json());
+  assert.equal((await (await redeem(input)).json()).deviceId, pair.deviceId);
+  assert.equal(store.devices().length, 1);
+  // Pre-fix invites had no durable address. Bind their whitelisted requested URL once.
+  const legacy = store.createInvite(selectedUrl, 'legacy', 1);
+  const row = db.prepare('SELECT data FROM relay_invites WHERE id=?').get(legacy.id)!;
+  const record = JSON.parse(String(row.data)); delete record.serverUrl;
+  db.prepare('UPDATE relay_invites SET data=? WHERE id=?').run(JSON.stringify(record), legacy.id);
+  const oldInput = { ...input, secret: decodeInvite(legacy.invite).secret, claim: 'c'.repeat(43) };
+  const oldPair = await (await redeem(oldInput)).json();
+  assert.equal(oldPair.serverUrl, selectedUrl);
+  assert.equal((await redeem({ ...oldInput, serverUrl: defaultUrl })).status, 409);
+});
+
+test('the real pairing client redeems a nondefault relay address without rewriting its URL', async t => {
+  const db = new DatabaseSync(':memory:'), store = new RelayStore(db);
+  const server = createServer().listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const defaultUrl = `http://127.0.0.1:${address.port}/connect`;
+  const selectedUrl = `http://localhost:${address.port}/connect`;
+  server.on('request', createRelayApp(store, { serverUrl: defaultUrl, domains: [selectedUrl], adminToken: 'admin', pluginToken: 'plugin', adminHtml: resolve('relay/index.html') }));
+  t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); });
+  const input = pendingPairing(store.createInvite(selectedUrl, 'alternative host', 1).invite, 'test');
+  const pair = await redeemPairing(input);
+  assert.equal(pair.serverUrl, selectedUrl);
+  assert.equal(pair.publicUrl, `${selectedUrl}/d/${pair.deviceId}`);
+  assert.deepEqual(await redeemPairing(input), pair);
+  assert.equal(store.devices().length, 1);
+});

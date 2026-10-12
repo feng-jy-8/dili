@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { encodeInvite, newSecret, secretHash } from './invite.ts';
+import { encodeInvite, newSecret, secretHash, relayUrl } from './invite.ts';
 
-export interface RelayDevice { id: string; name: string; port: number; createdAt: string; revokedAt: string | null; lastSeenAt: string | null; connected: boolean }
+export interface RelayDevice { id: string; name: string; port: number; createdAt: string; revokedAt: string | null; lastSeenAt: string | null; connected: boolean; serverUrl?: string }
 type DeviceRow = RelayDevice & { credentialHash: string; claimHash: string; inviteHash: string };
-type InviteRow = { id: string; label: string; hash: string; expiresAt: string | null; createdAt: string; usedAt: string | null; revokedAt: string | null };
+type InviteRow = { id: string; label: string; hash: string; expiresAt: string | null; createdAt: string; usedAt: string | null; revokedAt: string | null; serverUrl?: string };
 function fail(message: string, status = 400): never { throw Object.assign(new Error(message), { status }); }
 
 /** Codes and client credentials are hashed; a redemption can be retried after a lost response. */
@@ -19,7 +19,7 @@ export class RelayStore {
   createInvite(serverUrl: string, label: string, hours: number | null) {
     if ((hours !== null && (!Number.isInteger(hours) || hours < 1 || hours > 168)) || typeof label !== 'string' || label.length > 80) fail('备注最多 80 字，有效期为 1–168 小时或永不过期');
     const secret = newSecret();
-    const row: InviteRow = { id: randomUUID(), label: label.trim(), hash: secretHash(secret), createdAt: new Date().toISOString(), expiresAt: hours === null ? null : new Date(Date.now() + hours * 3600_000).toISOString(), usedAt: null, revokedAt: null };
+    const row: InviteRow = { id: randomUUID(), label: label.trim(), hash: secretHash(secret), createdAt: new Date().toISOString(), expiresAt: hours === null ? null : new Date(Date.now() + hours * 3600_000).toISOString(), usedAt: null, revokedAt: null, serverUrl: relayUrl(serverUrl) };
     this.db.prepare('INSERT INTO relay_invites VALUES (?, ?, ?)').run(row.id, row.hash, JSON.stringify(row));
     return { invite: encodeInvite(serverUrl, secret), id: row.id, expiresAt: row.expiresAt };
   }
@@ -30,16 +30,22 @@ export class RelayStore {
     row.revokedAt ??= new Date().toISOString();
     this.db.prepare('UPDATE relay_invites SET data=? WHERE id=?').run(JSON.stringify(row), id);
   }
-  redeem(secret: string, claim: string, credential: string, name: string): RelayDevice {
+  redeem(secret: string, claim: string, credential: string, name: string, requestedUrl?: string): RelayDevice {
     if (![secret, claim, credential].every(value => typeof value === 'string' && /^[\w-]{43}$/.test(value)) || typeof name !== 'string' || !name.trim() || name.length > 80) fail('配对参数无效');
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const hash = secretHash(secret), result = this.db.prepare('SELECT data FROM relay_invites WHERE hash=?').get(hash);
       if (!result) fail('邀请码无效或已撤销', 401);
       const invite = JSON.parse(String(result.data)) as InviteRow;
+      const selectedUrl = invite.serverUrl ?? (requestedUrl ? relayUrl(requestedUrl) : undefined);
+      if (requestedUrl && selectedUrl !== relayUrl(requestedUrl)) fail('邀请码与所选中继地址不匹配', 409);
       if (invite.revokedAt) fail('邀请码已撤销', 410);
       const existing = this.rows().find(row => row.inviteHash === hash);
-      if (existing && existing.claimHash === secretHash(claim) && existing.credentialHash === secretHash(credential) && !existing.revokedAt) { this.db.exec('COMMIT'); return this.device(existing.id)!; }
+      if (existing && existing.claimHash === secretHash(claim) && existing.credentialHash === secretHash(credential) && !existing.revokedAt) {
+        if (existing.serverUrl && requestedUrl && existing.serverUrl !== relayUrl(requestedUrl)) fail('设备已绑定其他中继地址', 409);
+        if (!existing.serverUrl && selectedUrl) this.save({ ...existing, serverUrl: selectedUrl });
+        this.db.exec('COMMIT'); return this.device(existing.id)!;
+      }
       if (invite.usedAt) fail('邀请码已被使用，请生成新的邀请码', 409);
       if (invite.expiresAt && Date.parse(invite.expiresAt) <= Date.now()) fail('邀请码已过期，请生成新的邀请码', 410);
       // Never reuse a revoked port while an old client could still be draining.
@@ -48,7 +54,7 @@ export class RelayStore {
       while (used.has(port) && port <= this.lastPort) port++;
       if (port > this.lastPort) fail('服务器设备名额已满', 409);
       const now = new Date().toISOString();
-      const row: DeviceRow = { id: randomBytesId(), name: name.trim(), port, createdAt: now, revokedAt: null, lastSeenAt: null, connected: false, credentialHash: secretHash(credential), claimHash: secretHash(claim), inviteHash: hash };
+      const row: DeviceRow = { id: randomBytesId(), name: name.trim(), port, createdAt: now, revokedAt: null, lastSeenAt: null, connected: false, credentialHash: secretHash(credential), claimHash: secretHash(claim), inviteHash: hash, ...(selectedUrl ? { serverUrl: selectedUrl } : {}) };
       this.save(row); invite.usedAt = now;
       this.db.prepare('UPDATE relay_invites SET data=? WHERE id=?').run(JSON.stringify(invite), invite.id);
       this.db.exec('COMMIT'); return this.device(row.id)!;
