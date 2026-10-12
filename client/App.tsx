@@ -469,7 +469,10 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
     }
     return timestamp(b.createdAt) - timestamp(a.createdAt) || a.title.localeCompare(b.title, 'zh-CN', { numeric: true, sensitivity: 'base' });
   });
-  const title = currentGroup?.title ?? ({ contacts: '会话联系人', attention: '需要你处理', running: '正在运行', activity: '最近活动', archive: '已归档', backends: '连接与能力' } as Record<string, string>)[view] ?? '会话联系人';
+  const pageTitle = currentGroup?.title ?? ({ contacts: '会话联系人', attention: '需要你处理', running: '正在运行', activity: '最近活动', archive: '已归档', backends: '连接与能力' } as Record<string, string>)[view] ?? '会话联系人';
+  // Invite links can point to several Dili devices. The remote auth status
+  // carries the paired name; an unnamed/manual remote page leaves this blank.
+  const title = auth.remote && view === 'contacts' && !currentGroup ? (auth.deviceName ?? '') : pageTitle;
   const filtered = !!query || backendFilter !== 'all' || statusFilter !== 'all';
   const selectedBackend = selected ? state?.backends.find((backend) => backend.id === selected.backend) : undefined;
   const nativeSessionBusy = selected?.backend === 'codex' && !selected.running && selected.status === 'error'
@@ -543,7 +546,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
     <div className="app-column">
     <header className="topbar" inert={!!modal}>
       <div className="topbar-row">
-        <div className="topbar-title"><h1>{title}</h1>{currentGroup && <button className="icon-button" aria-label="编辑群组" title="编辑群组名称与目标" onClick={() => setModal({ type: 'group', group: currentGroup })}><Pencil size={14} /></button>}{state?.demo && <span className="demo-badge" title="演示模式 · 示例数据">演示</span>}</div>
+        <div className="topbar-title"><h1 aria-label={title || pageTitle} title={title || pageTitle}>{title}</h1>{currentGroup && <button className="icon-button" aria-label="编辑群组" title="编辑群组名称与目标" onClick={() => setModal({ type: 'group', group: currentGroup })}><Pencil size={14} /></button>}{state?.demo && <span className="demo-badge" title="演示模式 · 示例数据">演示</span>}</div>
         <div className="topbar-actions">
           {listView && <><label className="search-field"><Search size={15} /><input id="session-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索" aria-label="搜索联系人" /><kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'} K</kbd></label>
             <FilterMenu active={backendFilter !== 'all' || statusFilter !== 'all'} reset={() => { setBackendFilter('all'); setStatusFilter('all'); }}>

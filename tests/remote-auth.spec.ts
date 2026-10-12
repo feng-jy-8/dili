@@ -157,7 +157,10 @@ test('remote owner logs in, shares a session read-only, and revocation closes th
   await expect(remotePage.getByRole('alert')).toContainText('密码不正确');
   await remotePage.getByLabel('所有者密码').fill(password);
   await remotePage.getByRole('button', { name: '登录', exact: true }).click();
-  await expect(remotePage.getByRole('heading', { name: '会话联系人', exact: true })).toBeVisible();
+  // A manually opened remote listener has no paired device identity. The
+  // contact-list title is intentionally empty until an invite device name is
+  // available, so multiple device links remain distinguishable by name.
+  await expect(remotePage.getByRole('heading', { name: '会话联系人', exact: true })).toBeHidden();
   await expect(remotePage.getByRole('dialog', { name: `${target.title} 的私聊` })).toBeVisible();
   await remotePage.goto(`${remote}/#/backends`);
   await expect(remotePage.getByRole('region', { name: '远程访问与安全' })).toContainText('只能在运行 Dili 的电脑上修改');

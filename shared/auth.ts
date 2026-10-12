@@ -25,7 +25,7 @@ export interface Share {
 /** What the browser is allowed to be. `owner` on loopback never needs a password. */
 export type AuthStatus =
   | { kind: 'anonymous'; remote: true; passwordSet: boolean }
-  | { kind: 'owner'; remote: boolean; passwordSet: boolean }
+  | { kind: 'owner'; remote: boolean; passwordSet: boolean; deviceName?: string }
   | { kind: 'share'; remote: boolean; sessionId: string; mode: ShareMode; name: string };
 
 export interface RemoteSettings {

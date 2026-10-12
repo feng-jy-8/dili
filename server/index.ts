@@ -371,7 +371,8 @@ function authStatus(res: express.Response): AuthStatus {
   const remote = res.locals.remote as boolean;
   if (!principal) return { kind: 'anonymous', remote: true, passwordSet: auth.hasPassword() };
   if (principal.kind === 'share') return { kind: 'share', remote, sessionId: principal.sessionId, mode: principal.mode, name: principal.name };
-  return { kind: 'owner', remote, passwordSet: auth.hasPassword() };
+  const deviceName = remote ? pairing()?.name?.trim() : undefined;
+  return { kind: 'owner', remote, passwordSet: auth.hasPassword(), ...(deviceName ? { deviceName } : {}) };
 }
 function setDevice(req: express.Request, res: express.Response, token: string, expiresAt: string | null) {
   const secure = req.headers['x-forwarded-proto'] === 'https';
