@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { runInNewContext } from 'node:vm';
+import { dshAutoPlugin } from './dsh-auto.ts';
 import { buildLaunch, discoverSessions, resolveNativeSessionId, validateNativeId } from './adapters.js';
 import { zstdCompressSync } from 'node:zlib';
 import { DshBridge, dshDeepLinkClient } from './dsh.js';
@@ -33,6 +34,37 @@ test('native launch uses argument arrays, preserves fork source, rejects option 
   } finally {
     for (const [backend, value] of Object.entries(saved)) { const key = `SESSIONDECK_${backend.toUpperCase()}_BIN`; if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
+});
+
+test('Auto launch keeps native defaults intact and opts in per contact for Claude, Codex and Harness', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dili-auto-launch-'));
+  const names = ['SESSIONDECK_CLAUDE_BIN', 'SESSIONDECK_CODEX_BIN', 'SESSIONDECK_DSH_TUI_BIN'];
+  const saved = names.map(name => process.env[name]);
+  for (const name of names) process.env[name] = process.execPath;
+  t.after(async () => { names.forEach((name, i) => { if (saved[i] === undefined) delete process.env[name]; else process.env[name] = saved[i]; }); await rm(directory, { recursive: true, force: true }); });
+  for (const backend of ['claude', 'codex', 'dsh'] as const) {
+    const contact = makeSession({ backend, executionMode: 'auto' });
+    const launch = await buildLaunch(contact, directory);
+    if (backend === 'claude') assert.deepEqual(launch.args.slice(0, 2), ['--permission-mode', 'auto']);
+    if (backend === 'codex') { assert.ok(launch.args.includes('--approve-for-me')); assert.ok(!launch.args.includes('--dangerously-bypass-approvals-and-sandbox')); }
+    if (backend === 'dsh') { assert.equal(launch.args[0], '--patch'); assert.match(launch.env!.NODE_OPTIONS!, /--import/); }
+    const normal = await buildLaunch({ ...contact, executionMode: 'default' }, directory);
+    assert.ok(!normal.args.includes('--permission-mode')); assert.ok(!normal.args.includes('--approve-for-me')); assert.ok(!normal.args.includes('--patch'));
+    const resumed = await buildLaunch({ ...contact, nativeSessionId: randomUUID() }, directory);
+    assert.ok(resumed.args.includes('--resume') || resumed.args.includes('resume'));
+  }
+  // Native preset changes are scoped to the intended main session, never subagents.
+  const target = randomUUID(); let listener: (input: { agent: { id: string; session: object } }) => void = () => {};
+  const changed: object[] = [];
+  const ctx = { inject: (_: string[], apply: (ctx: unknown) => void) => apply(ctx), on: (_: string, apply: typeof listener) => { listener = apply; }, permissionPresets: { set: (session: object, mode: string) => { assert.equal(mode, 'auto'); changed.push(session); } } };
+  Object.assign(ctx, { get: () => ctx.permissionPresets });
+  runInNewContext(dshAutoPlugin(target).replace('export default ', '') + '\ndiliAuto(ctx);', { ctx });
+  listener({ agent: { id: randomUUID(), session: {} } });
+  const session = {}; listener({ agent: { id: target, session } }); listener({ agent: { id: target, session } });
+  assert.deepEqual(changed, [session]);
+  Object.assign(ctx, { get: () => undefined });
+  runInNewContext(dshAutoPlugin(target).replace('export default ', '') + '\ndiliAuto(ctx);', { ctx });
+  assert.throws(() => listener({ agent: { id: target, session: {} } }), /原生 Auto 权限服务未安装/);
 });
 
 test('discovery tolerates millisecond-only creation metadata and invalid native timestamps', async () => {
@@ -87,6 +119,7 @@ test('DSH native API uses precise identity and refuses fork cwd mismatch', async
     let body='';for await(const chunk of req)body+=chunk;
     const message=JSON.parse(body);calls.push(message);
     let value:unknown={accepted:true};
+    if(message.method==='commands.execute')value={commandId:'native-command',result:{kind:'success',text:'preset auto'}};
     if(message.method==='session.create')value={sessionId:id};
     if(message.method==='session.fork')value={sessionId:child};
     if(message.method==='session.list')value={items:[{sessionId:id,cwd:'/tmp',running:true}]};
@@ -102,6 +135,9 @@ test('DSH native API uses precise identity and refuses fork cwd mismatch', async
     await assert.rejects(bridge.forkSession(id,'/different'),/工作目录/);
     assert.ok(!calls.some(call=>call.method==='session.fork'));
     assert.equal((await bridge.forkSession(id,'/tmp')).nativeSessionId,child);
+    await bridge.setAutoMode(id);
+    assert.equal(calls.at(-1)?.method,'commands.execute');
+    assert.deepEqual(calls.at(-1)?.payload,{agentId:id,line:'/permission auto',submittedAttachments:[]});
     await bridge.prompt(id,'group handoff');
     assert.deepEqual(calls.at(-1)?.payload,{sessionId:id,mode:'queue',content:[{type:'text',text:'group handoff'}]});
     await bridge.stopSession(id);assert.equal(calls.at(-1)?.method,'session.cancel');

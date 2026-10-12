@@ -7,6 +7,7 @@ import { createServer } from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
+import type { ExecutionMode } from '../shared/execution.ts';
 import type { SessionStatus } from '../shared/types.js';
 import { validateNativeId } from './adapters.js';
 import { OwnedProcess } from './owned-process.ts';
@@ -114,9 +115,13 @@ async function availablePort(requested: number): Promise<number> {
  * Owns one authenticated loopback Codex app-server. The server is deliberately
  * a separate process: Codex's native TUI can attach to exactly the same loaded
  * thread through `--remote`, while SessionDeck uses the stable JSON-RPC API for
- * identity, Fork and status. We never pass model/sandbox/approval overrides.
+ * identity, Fork and status. Permission overrides apply only to opted-in contacts.
  */
 export class CodexBridge {
+  private readonly executionModes = new Map<string, ExecutionMode>();
+  private autoPermissions(mode?: ExecutionMode): Record<string, string> {
+    return mode === 'auto' ? { approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', sandbox: 'workspace-write' } : {};
+  }
   readonly remoteUrl: string;
   private readonly options: CodexBridgeOptions;
   private readonly env: NodeJS.ProcessEnv;
@@ -641,7 +646,7 @@ export class CodexBridge {
         // imported thread can be much larger than the WebSocket payload limit;
         // history is loaded separately when needed and live notifications keep
         // the retained observer current.
-        const response = await this.call(connection, 'thread/resume', { threadId, excludeTurns: true, ...(cwd ? { cwd: resolve(cwd) } : {}) });
+        const response = await this.call(connection, 'thread/resume', { threadId, excludeTurns: true, ...this.autoPermissions(this.executionModes.get(threadId)), ...(cwd ? { cwd: resolve(cwd) } : {}) });
         assertActive();
         if (response.error) throw this.rpcError(response, 'Codex 会话恢复失败');
         const thread = (response.result as { thread?: Thread } | undefined)?.thread;
@@ -666,17 +671,18 @@ export class CodexBridge {
     connection.ws.once('close', () => { if (this.observers.get(threadId) === connection) this.observers.delete(threadId); });
   }
 
-  async createSession(cwd: string, title?: string): Promise<CodexNativeSession> {
+  async createSession(cwd: string, title?: string, mode: ExecutionMode = 'default'): Promise<CodexNativeSession> {
     // Codex 0.154's default paginated history cannot resume an empty thread in
     // its native TUI ("missing source rollout"). Its supported legacy history
     // contract can. Request that contract instead of modifying native files.
     // Retain the creation connection as the live status observer.
     const connection = await this.connect();
     try {
-      const response = await this.call(connection, 'thread/start', { cwd: resolve(cwd), ephemeral: false, historyMode: 'legacy' });
+      const response = await this.call(connection, 'thread/start', { cwd: resolve(cwd), ephemeral: false, historyMode: 'legacy', ...this.autoPermissions(mode) });
       if (response.error) throw this.rpcError(response, 'Codex 会话创建失败');
       const thread = (response.result as { thread?: Thread } | undefined)?.thread;
       if (!thread?.id || !UUID.test(thread.id)) throw new Error('Codex 未返回有效的原生会话 ID');
+      this.executionModes.set(thread.id, mode);
       this.retainObserver(thread.id, connection);
       this.chat.reconcile(thread.id, thread, this.chat.get(thread.id)?.revision ?? 0, true);
       if (title?.trim()) {
@@ -697,7 +703,7 @@ export class CodexBridge {
     }
   }
 
-  async openSession(id: string, cwd?: string, options: { allowCwdChange?: boolean } = {}): Promise<CodexNativeSession> {
+  async openSession(id: string, cwd?: string, options: { allowCwdChange?: boolean; executionMode?: ExecutionMode } = {}): Promise<CodexNativeSession> {
     validateNativeId('codex', id);
     const result = await this.rpc<{ thread?: Thread }>('thread/read', { threadId: id, includeTurns: false });
     const thread = result.thread;
@@ -705,22 +711,24 @@ export class CodexBridge {
     const changedCwd = cwd && thread.cwd && !await sameDirectory(thread.cwd, cwd);
     if (changedCwd && !options.allowCwdChange) throw new Error('Codex 会话工作目录与联系人不一致');
     if (changedCwd && (this.observers.has(id) || this.observing.has(id))) throw new Error('Codex 会话已连接，请先停止再更换工作目录');
+    if (options.executionMode) this.executionModes.set(id, options.executionMode);
     await this.observe(id, changedCwd ? cwd : undefined);
     return { nativeSessionId: id, remoteUrl: this.endpoint };
   }
 
-  async forkSession(id: string, cwd?: string): Promise<CodexNativeSession> {
+  async forkSession(id: string, cwd?: string, mode?: ExecutionMode): Promise<CodexNativeSession> {
     validateNativeId('codex', id);
     const source = await this.rpc<{ thread?: Thread }>('thread/read', { threadId: id, includeTurns: false });
     if (source.thread?.id !== id) throw new Error('Codex 返回了不匹配的原生来源会话');
     const targetCwd = cwd ? resolve(cwd) : undefined;
     const connection = await this.connect();
     try {
-      const response = await this.call(connection, 'thread/fork', { threadId: id, ...(targetCwd ? { cwd: targetCwd } : {}), ephemeral: false, excludeTurns: true });
+      const response = await this.call(connection, 'thread/fork', { threadId: id, ...(targetCwd ? { cwd: targetCwd } : {}), ephemeral: false, excludeTurns: true, ...this.autoPermissions(mode ?? this.executionModes.get(id)) });
       if (response.error) throw this.rpcError(response, 'Codex Fork 失败');
       const child = (response.result as { thread?: Thread } | undefined)?.thread;
       if (!child?.id || !UUID.test(child.id) || child.id === id || child.forkedFromId !== id) throw new Error('Codex 未创建独立 Fork 会话');
       if (targetCwd && child.cwd && !await sameDirectory(child.cwd, targetCwd)) throw new Error('Codex Fork 未使用请求的工作目录');
+      this.executionModes.set(child.id, mode ?? this.executionModes.get(id) ?? 'default');
       this.retainObserver(child.id, connection);
       this.chat.reconcile(child.id, child, this.chat.get(child.id)?.revision ?? 0, true);
       if (child.status) this.emitStatus(child.id, this.mapStatus(child.status, 'Codex Fork 会话已连接'));
@@ -831,7 +839,7 @@ export class CodexBridge {
     if (!this.ready || !this.endpoint || !this.token) throw new Error('Codex app-server 尚未就绪');
     return {
       file: executable,
-      args: ['--remote', this.endpoint, '--remote-auth-token-env', TOKEN_ENV, 'resume', id, '--no-alt-screen'],
+      args: ['--remote', this.endpoint, '--remote-auth-token-env', TOKEN_ENV, ...(this.executionModes.get(id) === 'auto' ? ['--approve-for-me'] : []), 'resume', id, '--no-alt-screen'],
       env: { [TOKEN_ENV]: this.token, ...(cwd ? { PWD: resolve(cwd) } : {}) },
     };
   }

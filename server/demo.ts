@@ -2,9 +2,9 @@ import type { BackendInfo } from '../shared/types.ts';
 import type { Store } from './store.ts';
 
 export const demoBackends: BackendInfo[] = [
-  { id: 'claude', label: 'Claude Code', installed: true, version: '演示', capabilities: { terminal: true, resume: true, fork: true, discovery: true } },
-  { id: 'codex', label: 'Codex', installed: true, version: '演示', capabilities: { terminal: true, resume: true, fork: true, discovery: true } },
-  { id: 'dsh', label: 'DeepSeek Harness', installed: true, version: '演示', capabilities: { terminal: true, resume: true, fork: true, discovery: true } },
+  { id: 'claude', label: 'Claude Code', installed: true, version: '演示', capabilities: { terminal: true, resume: true, fork: true, discovery: true, autoMode: true } },
+  { id: 'codex', label: 'Codex', installed: true, version: '演示', capabilities: { terminal: true, resume: true, fork: true, discovery: true, autoMode: true } },
+  { id: 'dsh', label: 'DeepSeek Harness', installed: true, version: '演示', capabilities: { terminal: true, resume: true, fork: true, discovery: true, autoMode: true } },
 ];
 
 export function seedDemo(store: Store, cwd: string) {

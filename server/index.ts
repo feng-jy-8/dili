@@ -11,6 +11,7 @@ import { Store } from './store.ts';
 import { ScratchpadStore } from './scratchpad.ts';
 import { Terminals, type LaunchCommand } from './terminal.ts';
 import { ShellTerminals } from './shell-terminals.ts';
+import { executionMode } from '../shared/execution.ts';
 import { AgentSetup } from './agent-setup.ts';
 import { StartupService } from './startup.ts';
 import { allowedRemoteRequest, allowedRequest, readCookie, validToken } from './security.ts';
@@ -622,7 +623,7 @@ app.post('/api/import', (req, res) => {
 });
 app.post('/api/sessions', (req, res) => {
   const id = backend(req.body.backend);
-  const item = store.addSession({ backend: id, title: text(req.body.title, '名称'), cwd: directory(req.body.cwd), groupId: groupId(req.body.groupId) });
+  const item = store.addSession({ backend: id, title: text(req.body.title, '名称'), cwd: directory(req.body.cwd), groupId: groupId(req.body.groupId), executionMode: executionMode(req.body.executionMode) });
   store.activity(item.id, 'create', `创建了 ${item.title}`); broadcast(); res.status(201).json(item);
 });
 app.patch('/api/sessions/:id', (req, res) => {
@@ -667,17 +668,17 @@ app.post('/api/sessions/:id/fork', async (req, res) => {
   let child: Session;
   if (dshWeb(parent)) {
     const native = await dsh.forkSession(parent.nativeSessionId, cwd);
-    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, origin: 'forked', ...native, running: true, status: 'idle', statusSource: 'native', statusDetail: '已通过原生能力 Fork，点击进入' });
+    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', origin: 'forked', ...native, running: true, status: 'idle', statusSource: 'native', statusDetail: '已通过原生能力 Fork，点击进入' });
   } else if (parent.backend === 'codex' && !demo && info('codex').capabilities.nativeControl) {
     if (!parent.nativeSessionId || parent.forkPending) fail('Codex 原生会话 ID 尚未确定，请先启动来源会话');
     const bridge = await ensureCodexBridge();
     // Codex's native fork returns a new exact thread immediately. Persist that
     // identity before exposing the card; a failed fork never becomes a fake child.
-    const native = await bridge.forkSession(parent.nativeSessionId, cwd);
-    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, origin: 'forked', nativeSessionId: native.nativeSessionId, running: false, status: 'idle', statusSource: 'native', statusDetail: '已通过 Codex 原生能力 Fork，点击进入' });
+    const native = await bridge.forkSession(parent.nativeSessionId, cwd, parent.executionMode);
+    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', origin: 'forked', nativeSessionId: native.nativeSessionId, running: false, status: 'idle', statusSource: 'native', statusDetail: '已通过 Codex 原生能力 Fork，点击进入' });
     bridge.releaseSession(native.nativeSessionId);
   } else {
-    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, origin: 'forked', nativeSessionId: demo ? `demo-${randomUUID()}` : parent.nativeSessionId, forkPending: !demo, statusDetail: demo ? '演示分支已创建' : '待启动：将调用原生 Fork，原会话保持独立' });
+    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', origin: 'forked', nativeSessionId: demo ? `demo-${randomUUID()}` : parent.nativeSessionId, forkPending: !demo, statusDetail: demo ? '演示分支已创建' : '待启动：将调用原生 Fork，原会话保持独立' });
   }
   store.activity(child.id, 'fork', `从 ${parent.title} 分叉为 ${child.title}`); broadcast(); res.status(201).json(child);
 });
@@ -721,6 +722,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
     return res.json(session(item.id));
   }
   if (item.running || starting.has(item.id)) return res.json(item);
+  if (item.executionMode === 'auto' && !info(item.backend).capabilities.autoMode) fail('当前后端版本不支持原生 Auto，请更新后端并刷新检测');
   if (!info(item.backend).installed) fail(`${info(item.backend).label} 尚未安装或不可用`);
   directory(item.cwd);
   starting.add(item.id);
@@ -730,6 +732,9 @@ app.post('/api/sessions/:id/start', async (req, res) => {
   try {
     if (dshWeb(item)) {
       const native = item.nativeSessionId ? await dsh.openSession(item.nativeSessionId) : await dsh.createSession(item.cwd, item.title);
+      // Keep the identity even if the native permission command is unavailable.
+      status(item.id, { ...native, forkPending: false });
+      if (item.executionMode === 'auto') await dsh.setAutoMode(native.nativeSessionId);
       status(item.id, { ...native, running: true, status: 'idle', statusSource: 'native', statusDetail: '原生 Web 会话已就绪', forkPending: false, lastActivity: new Date().toISOString() });
     } else if (item.backend === 'codex' && !demo && info('codex').capabilities.nativeControl) {
         const bridge = await ensureCodexBridge();
@@ -738,11 +743,11 @@ app.post('/api/sessions/:id/start', async (req, res) => {
         let native;
         if (item.forkPending) {
           if (!item.nativeSessionId) fail('Codex Fork 来源 ID 尚未确定');
-          native = await bridge.forkSession(item.nativeSessionId, item.cwd);
+          native = await bridge.forkSession(item.nativeSessionId, item.cwd, item.executionMode);
         } else if (item.nativeSessionId) {
-          native = await bridge.openSession(item.nativeSessionId, item.cwd, { allowCwdChange: item.origin === 'imported' });
+          native = await bridge.openSession(item.nativeSessionId, item.cwd, { allowCwdChange: item.origin === 'imported', executionMode: item.executionMode });
         } else {
-          native = await bridge.createSession(item.cwd, item.title);
+          native = await bridge.createSession(item.cwd, item.title, item.executionMode);
         }
         // Persist native identity even if the subsequent PTY fails. Retrying
         // this card must resume the created thread instead of making another.
@@ -752,7 +757,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
         if (mode === 'terminal') terminals.start(session(item.id), bridge.remoteLaunch(native.nativeSessionId, executable, item.cwd));
         await bridge.getStatus(native.nativeSessionId);
     } else {
-      const command: LaunchCommand = demo ? demoCommand() : await buildLaunch(item);
+      const command: LaunchCommand = demo ? demoCommand() : await buildLaunch(item, dataDir);
       if (!demo && item.backend === 'claude') {
         const hookCommand = [process.execPath, join(root, 'server/native-hook.cjs'), `http://127.0.0.1:${port}/api/native-event/${item.id}?launch=${launchId}`, token, 'claude'].map(shellQuote).join(' ');
         const hooks = Object.fromEntries(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'Notification', 'PermissionRequest'].map(event => [event, [{ hooks: [{ type: 'command', command: hookCommand, timeout: 3 }] }]]));

@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { zstdDecompressSync } from 'node:zlib';
+import { prepareDshAuto } from './dsh-auto.ts';
 import type { Backend, BackendInfo, DiscoveredSession, Session } from '../shared/types.js';
 
 const run = promisify(execFile);
@@ -73,14 +74,14 @@ export async function getBackendInfo(): Promise<BackendInfo[]> {
     const tui = id === 'dsh' ? await findDshTui() : null;
     return {
       id, label: LABELS[id], installed: true, version,
-      capabilities: { terminal: id !== 'dsh' || !!tui, resume: id === 'dsh' || /\bresume\b/.test(help), fork: id === 'dsh' || (id === 'claude' ? help.includes('--fork-session') : /\bfork\b/.test(help)), discovery: true, nativeControl, graphicalChat: nativeControl },
+      capabilities: { terminal: id !== 'dsh' || !!tui, resume: id === 'dsh' || /\bresume\b/.test(help), fork: id === 'dsh' || (id === 'claude' ? help.includes('--fork-session') : /\bfork\b/.test(help)), discovery: true, nativeControl, graphicalChat: nativeControl, autoMode: id === 'claude' ? help.includes('--permission-mode') && /["']auto["']/.test(help) : id === 'codex' ? help.includes('--approve-for-me') : true },
       note: id === 'dsh' ? (tui ? '原生终端界面（dsh-tui）与对话记录；原生 Web 界面仍可打开' : '复用原生 Web 界面与本地 session API；安装 @deepseek-harness-tui/dsh-tui 可获得原生终端') : id === 'codex' ? (nativeControl ? '原生 app-server 提供图形对话、流式回复、审批和精确会话；可切换原生终端' : '兼容终端模式：原生 ID 在完成一轮后确认；更新 Codex 可启用图形对话') : '复用原生终端，保留后端自身的登录、权限与审批',
     };
   }));
 }
 
 /** Arguments are always passed directly to exec/PTY, never through a shell. */
-export async function buildLaunch(session: Session): Promise<{ file: string; args: string[]; nativeSessionId?: string }> {
+export async function buildLaunch(session: Session, dataDir?: string): Promise<{ file: string; args: string[]; nativeSessionId?: string; env?: Record<string, string> }> {
   const source = session.nativeSessionId ? validateNativeId(session.backend, session.nativeSessionId) : null;
   if (session.forkPending && !source) throw new Error('原会话尚未获得原生 ID，无法 Fork');
   if (session.backend === 'dsh') {
@@ -89,20 +90,28 @@ export async function buildLaunch(session: Session): Promise<{ file: string; arg
     // dsh-tui resolves the workspace from the session on resume; a new session
     // takes the directory as its only positional argument. It has no fork flag,
     // so a pending fork resumes the parent and the TUI branches from there.
-    if (source) return { file: tui, args: ['--resume', source], ...(session.forkPending ? {} : { nativeSessionId: source }) };
-    return { file: tui, args: [session.cwd] };
+    let args = source ? ['--resume', source] : [session.cwd];
+    let env: Record<string, string> | undefined;
+    if (session.executionMode === 'auto') {
+      if (!dataDir) throw new Error('Harness Auto 缺少独立启动目录');
+      const overlay = await prepareDshAuto(join(dataDir, 'dsh-auto', session.id), source ?? undefined);
+      args = ['--patch', overlay.patch, ...args];
+      env = { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import ${JSON.stringify(overlay.loader)}`.trim() };
+    }
+    return { file: tui, args, ...(source && !session.forkPending ? { nativeSessionId: source } : {}), ...(env ? { env } : {}) };
   }
   const file = await findExecutable(session.backend);
   if (!file) throw new Error(`未找到 ${LABELS[session.backend]}，请安装原生命令并加入 PATH`);
+  const autoArgs = session.executionMode === 'auto' ? session.backend === 'claude' ? ['--permission-mode', 'auto'] : ['--approve-for-me'] : [];
   if (session.backend === 'claude') {
-    if (source && !session.forkPending) return { file, args: ['--resume', source], nativeSessionId: source };
+    if (source && !session.forkPending) return { file, args: ['--resume', source, ...autoArgs], nativeSessionId: source };
     const nativeSessionId = randomUUID();
     const args = source ? ['--resume', source, '--fork-session'] : [];
-    args.push('--session-id', nativeSessionId, '--name', session.title);
+    args.push(...autoArgs, '--session-id', nativeSessionId, '--name', session.title);
     return { file, args, nativeSessionId };
   }
-  if (source) return { file, args: [session.forkPending ? 'fork' : 'resume', source, '--cd', session.cwd], ...(session.forkPending ? {} : { nativeSessionId: source }) };
-  return { file, args: ['--cd', session.cwd] };
+  if (source) return { file, args: [session.forkPending ? 'fork' : 'resume', source, '--cd', session.cwd, ...autoArgs], ...(session.forkPending ? {} : { nativeSessionId: source }) };
+  return { file, args: ['--cd', session.cwd, ...autoArgs] };
 }
 
 function iso(value: unknown, fallback = Date.now()): string {

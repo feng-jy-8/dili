@@ -378,6 +378,12 @@ export class DshBridge {
     return this.reference(id);
   }
 
+  async setAutoMode(id: string): Promise<void> {
+    validateNativeId('dsh', id);
+    const result = await this.rpc<{ result?: { kind: string; text?: string } }>('commands.execute', { agentId: id, line: '/permission auto', submittedAttachments: [] });
+    if (result?.result?.kind !== 'success') throw new Error(result?.result?.text || 'Harness 原生 Auto 不可用，请检查原生权限预设与自动审核配置');
+  }
+
   async prompt(id: string, text: string): Promise<void> {
     validateNativeId('dsh', id);
     if (!text.trim()) throw new Error('消息不能为空');

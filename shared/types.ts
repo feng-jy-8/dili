@@ -1,3 +1,5 @@
+import type { ExecutionMode } from './execution.ts';
+
 export type Backend = 'claude' | 'codex' | 'dsh';
 export type SessionStatus = 'idle' | 'running' | 'waiting_input' | 'waiting_approval' | 'error' | 'stopped' | 'unknown';
 export type StatusSource = 'native' | 'terminal' | 'manual' | 'process';
@@ -7,7 +9,7 @@ export interface BackendInfo {
   label: string;
   installed: boolean;
   version: string | null;
-  capabilities: { terminal: boolean; resume: boolean; fork: boolean; discovery: boolean; nativeControl?: boolean; graphicalChat?: boolean };
+  capabilities: { terminal: boolean; resume: boolean; fork: boolean; discovery: boolean; nativeControl?: boolean; graphicalChat?: boolean; autoMode?: boolean };
   note?: string;
 }
 
@@ -40,6 +42,8 @@ export interface Session {
   running: boolean;
   /** Codex can run without a PTY; terminal attachment keeps the same native thread. */
   interactionMode?: 'chat' | 'terminal';
+  /** Per-contact native permission preset; absent means native defaults. */
+  executionMode?: ExecutionMode;
   origin: 'created' | 'imported' | 'forked' | 'handoff';
 }
 

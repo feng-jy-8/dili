@@ -27,6 +27,8 @@ Dili 的视觉标识使用对话气泡和状态亮点，表达多平台会话连
 
 详见 [安装指南](docs/installation.md) 和 [正式版发布清单](docs/releasing.md)。自动化命令：`npm run verify` 与 `npm run test:package`。Windows 原生与 macOS 尚未完成发行验收；WSL 的服务在发行版启动后运行，不等同于 Windows 开机启动。
 
+新建联系人和群组新成员可选择「原生默认」或「Auto · 自动审核」。旧联系人沿用原生默认；同平台 Fork 继承来源选择。Claude 使用原生 `--permission-mode auto`，Codex 使用 `--approve-for-me`（图形会话通过原生审批审核器与 workspace-write 沙箱），Harness 使用原生 Auto 权限预设。Auto 会减少人工审批，仍受原生审核规则和可用性限制，不等于跳过所有权限保护。设置只保存到该联系人，不修改原生全局配置；Harness 需安装并配置原生 Auto 审核能力。
+
 ## 1. 产品定义与优先级
 
 Dili 管理的是**一个个具体会话**。同一个后端可以有多个联系人，例如三个 Codex 会话分别负责实现、审查和实验。联系人不是模型，也不是一个固定的 Agent 人格。

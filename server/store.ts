@@ -82,7 +82,7 @@ export class Store {
       id: randomUUID(), nativeSessionId: null, groupId: null, parentId: null, forkPending: false,
       status: 'idle', statusSource: 'process', statusDetail: '尚未启动', lastActivity: date,
       createdAt: date, updatedAt: date, archived: false, pinned: false, unread: 0,
-      running: false, origin: 'created', ...input,
+      running: false, executionMode: 'default', origin: 'created', ...input,
     });
   }
   updateSession(id: string, patch: Partial<Session>): Session {

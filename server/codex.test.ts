@@ -247,3 +247,21 @@ test('Codex requests cannot collide with RPC responses; completion and interrupt
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+test('Codex Auto uses native automatic review, retains workspace sandbox and survives resume and Fork', async t => {
+  const executable = await findExecutable('codex');
+  if (!executable) return t.skip('codex CLI is not installed');
+  const root = await mkdtemp(join(tmpdir(), 'dili-codex-auto-'));
+  const bridge = new CodexBridge({ executable, dataDir: join(root, 'data'), port: 0, env: { ...process.env, CODEX_HOME: join(root, 'home') } });
+  try {
+    const source = await bridge.createSession(root, 'Auto contact', 'auto');
+    assert.ok(bridge.remoteLaunch(source.nativeSessionId, executable).args.includes('--approve-for-me'));
+    bridge.releaseSession(source.nativeSessionId);
+    await bridge.openSession(source.nativeSessionId, root, { executionMode: 'auto' });
+    const fork = await bridge.forkSession(source.nativeSessionId, root, 'auto');
+    assert.ok(bridge.remoteLaunch(fork.nativeSessionId, executable).args.includes('--approve-for-me'));
+    assert.equal((await bridge.getStatus(fork.nativeSessionId)).status, 'idle');
+    const normal = await bridge.createSession(root, 'Native defaults');
+    assert.ok(!bridge.remoteLaunch(normal.nativeSessionId, executable).args.includes('--approve-for-me'));
+  } finally { await bridge.close(); await rm(root, { recursive: true, force: true }); }
+});
