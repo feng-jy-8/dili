@@ -29,7 +29,16 @@ export interface CodexChatSnapshot {
   items: CodexChatItem[];
   requests: CodexChatRequest[];
   truncated: boolean;
+  /** Native cursor for loading older turns; null means the beginning is loaded. */
+  historyCursor?: string | null;
   notice?: string;
+}
+
+export interface CodexChatHistoryPage {
+  nativeSessionId: string;
+  items: CodexChatItem[];
+  nextCursor: string | null;
+  truncated: boolean;
 }
 
 export interface CodexChatPatch extends Omit<CodexChatSnapshot, 'items'> {

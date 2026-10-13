@@ -222,3 +222,26 @@ test('a graphical group member stops and resumes its exact history, then receive
   assert.equal((await calls()).filter(call => call.method === 'thread/start').length, 1);
   assert.equal((await calls()).filter(call => call.event === 'tui').length, 1);
 });
+
+test('HTTP history loads only recent turns, exposes an older cursor and keeps old pages out of the live snapshot', { timeout: 30_000 }, async t => {
+  const fixture = await launch(t), { request } = fixture;
+  const source = await fixture.create('Paginated source');
+  const started = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'chat' });
+  for (let i = 0; i < 23; i++) {
+    await request(`/api/sessions/${source.id}/chat/messages`, 'POST', { requestId: randomUUID(), text: `History request ${i}` });
+    await until(async () => (await fixture.current(source.id)).status === 'waiting_input', `Turn ${i} did not complete`);
+  }
+  const recent = await fixture.snapshot(source.id);
+  assert.equal(recent.items.filter(item => item.type === 'user').length, 20);
+  assert.ok(recent.historyCursor);
+  assert.equal(recent.items[0].text, 'History request 3');
+  const path = `/api/sessions/${source.id}/chat/history`;
+  await request(path, 'GET', undefined, 400);
+  await request(path + '?cursor=%00bad', 'GET', undefined, 400);
+  const page = await request<import('../shared/chat.ts').CodexChatHistoryPage>(path + '?cursor=' + encodeURIComponent(recent.historyCursor));
+  assert.equal(page.nativeSessionId, started.nativeSessionId);
+  assert.deepEqual(page.items.filter(item => item.type === 'user').map(item => item.text), ['History request 0', 'History request 1', 'History request 2']);
+  assert.equal(page.nextCursor, null);
+  assert.deepEqual((await fixture.snapshot(source.id)).items, recent.items);
+  assert.equal((await fixture.calls()).some(call => call.method === 'thread/read' && (call.params as Record<string, unknown>)?.includeTurns === true), false);
+});

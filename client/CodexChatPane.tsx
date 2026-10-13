@@ -2,7 +2,7 @@ import { appUrl } from './urls';
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowDownToLine, Check, ChevronRight, CircleAlert, List, LoaderCircle, MessageSquare, RefreshCw, Send, Square, TerminalSquare } from 'lucide-react';
 import type { Session } from '../shared/types';
-import type { CodexChatAnswer, CodexChatItem, CodexChatPatch, CodexChatRequest, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
+import type { CodexChatAnswer, CodexChatHistoryPage, CodexChatItem, CodexChatPatch, CodexChatRequest, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
 import { api, ApiError } from './api';
 import Markdown from './Markdown';
 import ConversationOutline from './ConversationOutline';
@@ -10,6 +10,7 @@ import './codex-chat.css';
 
 type Pending = { requestId: string; text: string };
 type Draft = { text: string; pending: Pending | null };
+type OlderHistory = { identity: string; items: CodexChatItem[]; cursor: string | null; loading: boolean; error: string; limited?: boolean };
 const draftKey = (id: string) => `sessiondeck.codex-chat-draft.${id}`;
 function readDraft(id: string): Draft {
   try {
@@ -82,6 +83,9 @@ export default function CodexChatPane(props: { session: Session; onTerminal: () 
 function ChatSession({ session, onTerminal, onSelection }: { session: Session; onTerminal: () => void; onSelection?: (text: string) => void }) {
   const [draft, setDraft] = useState(() => readDraft(session.id));
   const [snapshot, setSnapshot] = useState<CodexChatSnapshot | null>(null);
+  const [older, setOlder] = useState<OlderHistory | null>(null);
+  const olderRef = useRef(older);
+  olderRef.current = older;
   const [transport, setTransport] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -110,6 +114,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const textarea = useRef<HTMLTextAreaElement>(null);
   const followsBottom = useRef(true);
   const scrollAnchor = useRef<{ id: string; offset: number } | null>(null);
+  const olderLoading = useRef(false);
   useLayoutEffect(() => {
     const element = pane.current;
     if (!element) return;
@@ -139,6 +144,35 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 64);
     setSelectedInput(id); setHighlightedInput(id);
   }
+  async function loadOlder() {
+    const nativeId = snapshot?.nativeSessionId;
+    const cursor = older && older.identity === nativeId ? older.cursor : snapshot?.historyCursor;
+    if (!nativeId || !cursor || olderLoading.current || older?.limited) return;
+    olderLoading.current = true;
+    setOlder(previous => ({ identity: nativeId, items: previous?.identity === nativeId ? previous.items : snapshot.items, cursor, loading: true, error: '' }));
+    try {
+      const page = await api<CodexChatHistoryPage>(`/sessions/${encodeURIComponent(session.id)}/chat/history?cursor=${encodeURIComponent(cursor)}`);
+      if (!active.current || snapshotRef.current?.nativeSessionId !== nativeId) return;
+      if (page.nativeSessionId !== nativeId) throw new Error('历史记录的会话身份不匹配，请重新读取。');
+      const element = scroller.current;
+      if (element) {
+        const top = element.getBoundingClientRect().top;
+        const visible = [...element.querySelectorAll<HTMLElement>('[data-chat-item]')].find(item => item.getBoundingClientRect().bottom > top);
+        scrollAnchor.current = visible ? { id: visible.dataset.chatItem!, offset: visible.getBoundingClientRect().top - top } : null;
+      }
+      followsBottom.current = false;
+      setOlder(previous => {
+        if (previous?.identity !== nativeId || previous.cursor !== cursor) return previous;
+        const known = new Set(previous.items.map(item => item.id));
+        const items = [...page.items.filter(item => !known.has(item.id)), ...previous.items];
+        if (items.length > 1000 || items.reduce((sum, item) => sum + item.text.length + (item.output?.length ?? 0), 0) > 2_000_000) return { ...previous, loading: false, limited: true, error: '已达到本页历史显示上限。可重新进入会话释放已加载记录，或在原生终端查看完整历史。' };
+        return { identity: nativeId, items, cursor: page.nextCursor, loading: false, error: page.truncated ? '这一页的部分工具输出或超长轮次已省略，完整记录可在原生终端查看。' : '' };
+      });
+    } catch (cause) {
+      if (!active.current) return;
+      setOlder(previous => previous?.identity === nativeId && previous.cursor === cursor ? { ...previous, loading: false, error: errorText(cause) } : previous);
+    } finally { olderLoading.current = false; }
+  }
   draftRef.current = draft; sessionRef.current = session; onSelectionRef.current = onSelection;
   function updateDraft(next: Draft) {
     draftRef.current = next; saveDraft(session.id, next);
@@ -159,11 +193,24 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
       if (previous?.instanceId === next.instanceId && previous?.nativeSessionId === next.nativeSessionId && next.revision < previous.revision) return;
       const element = scroller.current;
       if (!followsBottom.current && element) {
-        const retained = new Set(next.items.map(item => item.id));
+        const historyItems = olderRef.current?.identity === next.nativeSessionId ? olderRef.current.items : [];
+        const retained = new Set([...historyItems, ...next.items].map(item => item.id));
         const top = element.getBoundingClientRect().top;
         const visible = [...element.querySelectorAll<HTMLElement>('[data-chat-item]')].find(item => retained.has(item.dataset.chatItem!) && item.getBoundingClientRect().bottom > top);
         scrollAnchor.current = visible ? { id: visible.dataset.chatItem!, offset: visible.getBoundingClientRect().top - top } : null;
       }
+      if (previous?.nativeSessionId !== next.nativeSessionId) setOlder(null);
+      else setOlder(history => {
+        if (!history || history.identity !== next.nativeSessionId) return history;
+        const known = new Set([...history.items, ...next.items].map(item => item.id));
+        const evicted = previous.items.filter(item => !known.has(item.id));
+        if (!evicted.length) return history;
+        const items = [...history.items, ...evicted];
+        let total = items.reduce((sum, item) => sum + item.text.length + (item.output?.length ?? 0), 0);
+        let removed = false;
+        while (items.length > 1000 || total > 2_000_000) { const item = items.shift()!; total -= item.text.length + (item.output?.length ?? 0); removed = true; }
+        return { ...history, items, ...(removed ? { error: '已加载记录达到显示上限，最早的一部分已收起。完整历史可在原生终端查看。' } : {}) };
+      });
       snapshotRef.current = next; setSnapshot(next); setLoading(false); setError('');
     }
     async function refresh(required = false): Promise<void> {
@@ -204,7 +251,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
         const items = new Map(previous.items.map(item => [item.id, item]));
         for (const item of patch.items) items.set(item.id, item);
         if (patch.order.some(id => !items.has(id))) { sequence++; void refresh(true); return; }
-        sequence++; install({ instanceId: patch.instanceId, nativeSessionId: patch.nativeSessionId, revision: patch.revision, connected: patch.connected, activeTurnId: patch.activeTurnId, requests: patch.requests, truncated: patch.truncated, notice: patch.notice, items: patch.order.map(id => items.get(id)!) });
+        sequence++; install({ instanceId: patch.instanceId, nativeSessionId: patch.nativeSessionId, revision: patch.revision, connected: patch.connected, activeTurnId: patch.activeTurnId, requests: patch.requests, truncated: patch.truncated, historyCursor: patch.historyCursor, notice: patch.notice, items: patch.order.map(id => items.get(id)!) });
       } catch { void refresh(); }
     });
     void refresh();
@@ -227,7 +274,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
       if (target) element.scrollTop += target.getBoundingClientRect().top - element.getBoundingClientRect().top - offset;
     }
     scrollAnchor.current = null;
-  }, [snapshot]);
+  }, [snapshot, older]);
   useEffect(() => {
     const element = scroller.current;
     const observer = new ResizeObserver(() => { if (element && followsBottom.current) element.scrollTop = element.scrollHeight; });
@@ -295,7 +342,11 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const hasTurn = !!snapshot?.activeTurnId;
   const nativeAvailable = !session.running || !!snapshot?.connected;
   const canSend = !!draft.text.trim() && !busy && !draft.pending && transport && nativeAvailable && !hasTurn && !snapshot?.requests.length && !session.archived;
-  const outlineEntries = snapshot?.items.filter(item => item.type === 'user') ?? [];
+  const olderCurrent = older?.identity === snapshot?.nativeSessionId ? older : null;
+  const existingIds = new Set(snapshot?.items.map(item => item.id));
+  const visibleItems = [...(olderCurrent?.items.filter(item => !existingIds.has(item.id)) ?? []), ...(snapshot?.items ?? [])];
+  const olderCursor = olderCurrent ? olderCurrent.cursor : snapshot?.historyCursor;
+  const outlineEntries = visibleItems.filter(item => item.type === 'user');
   return <section ref={pane} className="codex-chat-pane" aria-label="Codex 图形会话" onKeyDown={event => {
     if (outlineOpen && event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); closeOutline(); }
   }}>
@@ -303,13 +354,15 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     {!transport && !loading && <div className="codex-chat-banner" role="status">与本地服务的连接已中断，正在重连。草稿已保留。</div>}
     {error && <div className="codex-chat-error" role="alert"><span>{error}</span><button type="button" className="text-button" onClick={() => { setError(''); void readSnapshot.current(); }}>重新读取</button></div>}
     {snapshot?.notice && <p className="codex-chat-notice">{snapshot.notice}</p>}
-    {snapshot?.truncated && <p className="codex-chat-notice">当前展示最近的消息，完整历史保留在原生会话中。</p>}
+    {snapshot?.truncated && <p className="codex-chat-notice">{olderCursor ? '先展示最近的消息，可加载更早消息继续查看。' : '超长历史或工具输出可能已省略，完整记录保留在原生会话中。'}</p>}
     <div className="codex-chat-body"><div className="codex-chat-primary">
     <div className="codex-chat-scroll" ref={scroller} tabIndex={0} aria-label="Codex 消息记录" onScroll={event => {
       const element = event.currentTarget, bottom = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
       followsBottom.current = bottom; setAtBottom(bottom);
     }}>
-      {loading && !snapshot ? <div className="codex-chat-empty" role="status"><LoaderCircle className="spin" size={25} /><p>正在读取对话…</p></div> : !snapshot?.items.length ? <div className="codex-chat-empty"><MessageSquare size={30} /><h3>在这里继续你的工作</h3><p>发送消息后，Codex 会在当前工作目录中处理任务。操作审批和需要补充的问题会显示在对话里。</p></div> : <div className="codex-chat-items">{snapshot.items.map(item => <MessageItem key={item.id} item={item} highlighted={item.id === highlightedInput} />)}</div>}
+      {!!olderCursor && <button type="button" className="codex-older" disabled={olderCurrent?.loading || olderCurrent?.limited} onClick={() => void loadOlder()}>{olderCurrent?.loading ? <LoaderCircle size={13} className="spin" /> : <ArrowDownToLine size={13} className="codex-older-arrow" />}{olderCurrent?.loading ? '正在读取旧消息…' : '加载更早消息'}</button>}
+      {olderCurrent?.error && <p className="codex-chat-notice" role="alert">{olderCurrent.error}</p>}
+      {loading && !snapshot ? <div className="codex-chat-empty" role="status"><LoaderCircle className="spin" size={25} /><p>正在读取对话…</p></div> : !visibleItems.length ? <div className="codex-chat-empty"><MessageSquare size={30} /><h3>在这里继续你的工作</h3><p>发送消息后，Codex 会在当前工作目录中处理任务。操作审批和需要补充的问题会显示在对话里。</p></div> : <div className="codex-chat-items">{visibleItems.map(item => <MessageItem key={item.id} item={item} highlighted={item.id === highlightedInput} />)}</div>}
       {!!snapshot?.requests.length && <div className="codex-chat-requests">{snapshot.requests.map(request => <NativeRequest key={request.id} request={request} disabled={!transport || !snapshot.connected} answer={async (id, answer) => { await api(`/sessions/${session.id}/chat/requests/${encodeURIComponent(id)}`, answer); await readSnapshot.current(); }} />)}</div>}
     </div>
     {!atBottom && <button type="button" className="codex-latest" onClick={() => { if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; followsBottom.current = true; setAtBottom(true); }}><ArrowDownToLine size={13} />回到最新消息</button>}

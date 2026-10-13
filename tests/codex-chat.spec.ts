@@ -390,3 +390,69 @@ test('Codex outline handles empty history, evicted prompts and a resized workspa
   await expect(page.getByRole('region', { name: 'Codex 图形会话' })).toBeVisible();
   expect(app.requests).toEqual([]);
 });
+
+test('older Codex pages prepend without duplicate messages or scrolling away, and live patches keep the expanded history', async ({ page }) => {
+  const app = await fixture(page);
+  app.current.snapshot = { ...app.current.snapshot, nativeSessionId: 'history-thread', items: outlineHistory(), historyCursor: 'cursor-1', truncated: true };
+  let release!: () => void;
+  let calls = 0;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route(`**/api/sessions/${app.contact.id}/chat/history?*`, async route => {
+    calls++;
+    expect(new URL(route.request().url()).searchParams.get('cursor')).toBe('cursor-1');
+    await pending;
+    await route.fulfill({ json: { nativeSessionId: 'history-thread', items: [
+      { id: 'old-user', type: 'user', text: '最早的一条需求', status: 'completed' },
+      { id: 'old-reply', type: 'assistant', text: '## 历史回复\n\n这里是更早的工作结果。', status: 'completed' },
+      app.current.snapshot.items[0],
+    ], nextCursor: null, truncated: false } });
+  });
+  await app.open();
+  const scroller = page.getByLabel('Codex 消息记录', { exact: true });
+  await scroller.evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  const target = page.locator('[data-chat-item="input-0"]');
+  const offset = () => target.evaluate(element => element.getBoundingClientRect().top - element.closest('.codex-chat-scroll')!.getBoundingClientRect().top);
+  const before = await offset();
+  await page.getByRole('button', { name: '加载更早消息' }).click();
+  await expect(page.getByRole('button', { name: '正在读取旧消息…' })).toBeDisabled();
+  // An append during pagination must not be discarded by the late history page.
+  await app.patch({ items: [...app.current.snapshot.items, { id: 'new-reply', type: 'assistant', text: '正在到达的新回复', status: 'inProgress' }] });
+  release();
+  await expect(page.locator('[data-chat-item="old-user"]')).toHaveCount(1);
+  await expect(target).toHaveCount(1);
+  await expect(page.locator('[data-chat-item="new-reply"]')).toHaveCount(1);
+  await expect.poll(async () => Math.abs(await offset() - before)).toBeLessThan(2);
+  await expect(page.getByRole('button', { name: '加载更早消息' })).toHaveCount(0);
+  expect(calls).toBe(1);
+  await page.getByRole('button', { name: '对话目录', exact: true }).click();
+  const directory = page.getByRole('navigation', { name: '用户输入目录' });
+  await expect(directory.getByRole('button')).toHaveCount(25);
+  await directory.getByRole('button', { name: '1 最早的一条需求' }).click();
+  await expect(page.locator('[data-chat-item="old-user"]')).toBeFocused();
+  // The next live snapshot drops its oldest item; expanded history retains it.
+  await app.patch({ items: app.current.snapshot.items.slice(1) });
+  await expect(target).toHaveCount(1);
+  await expect(directory.getByRole('button')).toHaveCount(25);
+  expect(app.requests).toEqual([]);
+});
+
+test('failed older history requests preserve the current conversation and retry the same cursor', async ({ page }) => {
+  const app = await fixture(page);
+  app.current.snapshot = { ...app.current.snapshot, nativeSessionId: 'history-thread', items: outlineHistory(), historyCursor: 'retry-cursor', truncated: true };
+  let requests = 0;
+  await page.route(`**/api/sessions/${app.contact.id}/chat/history?*`, route => {
+    expect(new URL(route.request().url()).searchParams.get('cursor')).toBe('retry-cursor');
+    requests++;
+    return requests === 1 ? route.fulfill({ status: 503, json: { error: '原生历史暂时不可用' } }) : route.fulfill({ json: { nativeSessionId: 'history-thread', items: [], nextCursor: null, truncated: false } });
+  });
+  await app.open();
+  const button = page.getByRole('button', { name: '加载更早消息' });
+  await button.click();
+  await expect(page.getByRole('alert')).toContainText('原生历史暂时不可用');
+  await expect(page.locator('.codex-message')).toHaveCount(48);
+  await expect(button).toBeEnabled();
+  await button.click();
+  await expect(button).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(requests).toBe(2);
+});

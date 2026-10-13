@@ -34,7 +34,7 @@ export default function ConversationOutline({ id, open, compact, entries, select
     <header className="conversation-outline-heading"><h3><List size={15} />对话目录</h3><button type="button" className="icon-button" aria-label="关闭对话目录" title="关闭对话目录" onClick={dismiss}><X size={16} /></button></header>
     <label className="conversation-outline-search"><Search size={14} /><input type="search" aria-label="筛选用户输入" placeholder="搜索你说过的话…" value={query} onChange={event => setQuery(event.target.value)} /></label>
     <p className="conversation-outline-count">{search ? `${matches.length} / ${entries.length} 条输入` : `已加载 · ${entries.length} 条输入`}</p>
-    {truncated && <p className="conversation-outline-notice">仅列出当前已加载的输入，早期记录尚未包含。</p>}
+    {truncated && <p className="conversation-outline-notice">仅列出当前已加载的输入；可在对话中加载更早消息，记录过长时可能有所省略。</p>}
     <nav className="conversation-outline-list" aria-label="用户输入目录">
       {matches.length ? <ol>{matches.map(entry => <li key={entry.id}><button type="button" aria-current={entry.id === selectedId ? 'location' : undefined} title={entry.text || '附件或空白输入'} onClick={() => {
         // close() restores the invoker before select() focuses the message.

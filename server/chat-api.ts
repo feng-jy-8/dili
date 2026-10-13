@@ -68,17 +68,17 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
         if (options.closing()) fail('服务正在关闭', 503);
         const current = session(id);
         if (current.nativeSessionId !== identity || current.forkPending) fail('会话身份已更新，请刷新', 409);
-        // Bridge reconciles stream events received while thread/read was pending.
+        // Bridge merges live events received while the recent page was pending.
         return nativeView(current, native);
       } catch (error) {
         if (options.closing() || (error as { status?: number }).status === 409) throw error;
         const cached = bridge.chatSnapshot(identity);
-        // A complete native history can exceed the WebSocket frame limit.
-        // Prefer the bounded local reader in that case; returning the empty
-        // observer snapshot would hide the imported transcript altogether.
+        // Even one enormous turn can exceed the frame limit after reducing
+        // page size. Keep the bounded local fallback and never expose an empty
+        // observer snapshot instead of an imported transcript.
         const message = error instanceof Error ? error.message : String(error);
         const payloadTooLarge = /payload size exceeded|max payload|message too large/i.test(message);
-        if (cached && !payloadTooLarge) return nativeView(session(id), cached);
+        if (cached?.items.length && !payloadTooLarge) return nativeView(session(id), cached);
       }
     }
     const transcript = options.demo ? { messages: [], truncated: false, notice: '演示终端不调用真实 Codex，请连接原生 Codex 使用图形化聊天。' } : await conversations.read(item);
@@ -86,10 +86,11 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     const current = session(id);
     if (current.nativeSessionId !== identity || current.forkPending !== item.forkPending) fail('会话身份已更新，请刷新', 409);
     options.updatePreview(item, transcript);
+    const live = identity && !item.forkPending ? bridge.chatSnapshot(identity) : undefined;
     return remember(id, {
-      nativeSessionId: item.forkPending ? null : identity, connected: false, revision: 0, activeTurnId: null,
+      nativeSessionId: item.forkPending ? null : identity, connected: !!live?.connected && current.running && options.ready(current), revision: 0, activeTurnId: live?.activeTurnId ?? null,
       items: transcript.messages.map(message => ({ id: message.id, type: message.role, text: message.text, status: 'completed' })),
-      requests: [], truncated: transcript.truncated, notice: transcript.notice,
+      requests: live?.requests ?? [], truncated: transcript.truncated, notice: transcript.notice,
     });
   }
   function emit(id: string, snapshot: CodexChatSnapshot) {
@@ -129,15 +130,29 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
   const offStore = store.onChange(change => { if (change.table === 'sessions' && change.data.backend === 'codex') queue(change.data.id); });
 
   app.get('/api/sessions/:id/chat', async (req, res) => res.json(await read(String(req.params.id))));
+  app.get('/api/sessions/:id/chat/history', async (req, res) => {
+    const id = String(req.params.id), item = session(id), identity = item.nativeSessionId;
+    if (options.demo || !identity || item.forkPending) fail('当前会话没有可分页读取的原生历史', 409);
+    const cursor = req.query.cursor;
+    if (typeof cursor !== 'string' || !cursor || cursor.length > 8192 || /[\x00-\x1f]/.test(cursor)) fail('历史游标无效');
+    const page = await bridge.readChatHistory(identity!, cursor as string);
+    const current = session(id);
+    if (options.closing()) fail('服务正在关闭', 503);
+    if (current.nativeSessionId !== identity || current.forkPending) fail('会话身份已更新，请刷新', 409);
+    res.json(page);
+  });
   app.get('/api/sessions/:id/chat/events', async (req, res) => {
     const id = String(req.params.id);
-    session(id);
+    const item = session(id);
     const viewer: Viewer = { response: res, device: typeof res.locals.device === 'string' ? res.locals.device : undefined };
     const set = viewers.get(id) ?? new Set<Viewer>(); set.add(viewer); viewers.set(id, set);
     res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders();
     const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': heartbeat\n\n'); }, 20_000);
     const cleanup = () => { clearInterval(heartbeat); set.delete(viewer); if (!set.size) viewers.delete(id); };
     req.on('close', cleanup);
+    const native = item.nativeSessionId && !item.forkPending ? bridge.chatSnapshot(item.nativeSessionId) : undefined;
+    const cached = native?.items.length ? nativeView(item, native) : snapshots.get(id);
+    if (cached?.items.length && cached.nativeSessionId === item.nativeSessionId && !item.forkPending) emit(id, cached);
     try { const snapshot = await read(id); if (!res.destroyed) emit(id, snapshot); }
     catch (error) { if (!res.destroyed) { res.write(`event: unavailable\ndata: ${JSON.stringify({ error: error instanceof Error ? error.message : '无法读取原生聊天' })}\n\n`); res.end(); } }
   });

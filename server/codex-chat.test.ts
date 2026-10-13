@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket, { WebSocketServer } from 'ws';
+import express from 'express';
 import { CodexBridge } from './codex.ts';
 import { CodexChatState, nativeChatAnswer, nativeChatRequest } from './codex-chat.ts';
+import { registerCodexChat } from './chat-api.ts';
+import { ConversationReader } from './conversation.ts';
+import { Store } from './store.ts';
 
 type Message = { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 async function until(check: () => boolean) { for (let i = 0; i < 150; i++) { if (check()) return; await delay(5); } assert.fail('Native chat fixture did not reach expected state'); }
@@ -22,7 +26,7 @@ async function fixture(t: test.TestContext) {
       if (!message.method || message.id === undefined) return;
       if (message.method === 'thread/resume') observer = socket;
       if (intercept?.(socket, message)) return;
-      const result = message.method === 'thread/read' || message.method === 'thread/resume' ? { thread } : message.method === 'turn/start' ? { turn: { id: turnId, status: 'inProgress', items: [] } } : {};
+      const result = message.method === 'thread/turns/list' ? { data: [...(thread.turns as unknown[])].reverse(), nextCursor: null } : message.method === 'thread/read' || message.method === 'thread/resume' ? { thread } : message.method === 'turn/start' ? { turn: { id: turnId, status: 'inProgress', items: [] } } : {};
       socket.send(JSON.stringify({ id: message.id, result }));
     });
   });
@@ -150,8 +154,8 @@ test('Codex history read reconciles live deltas without overwriting completed ou
   await f.send('item/started', { turnId, item: { id: 'a', type: 'agentMessage', text: 'old' } });
   let release: (() => void) | undefined;
   f.intercept((socket, message) => {
-    if (message.method !== 'thread/read') return false;
-    release = () => socket.send(JSON.stringify({ id: message.id, result: { thread: { id: threadId, turns: [{ id: turnId, status: 'inProgress', items: [{ type: 'agentMessage', id: 'a', text: 'old' }] }] } } }));
+    if (message.method !== 'thread/turns/list') return false;
+    release = () => socket.send(JSON.stringify({ id: message.id, result: { data: [{ id: turnId, status: 'inProgress', items: [{ type: 'agentMessage', id: 'a', text: 'old' }] }], nextCursor: null } }));
     return true;
   });
   const reading = bridge.readChat(threadId);
@@ -267,4 +271,121 @@ test('native permission rejection cannot accept arbitrary grant JSON or an unoff
   assert.throws(() => nativeChatAnswer(request, { decision: 'accept' }), /当前原生请求/);
   const huge = nativeChatRequest('item/permissions/requestApproval', 2, { permissions: { fileSystem: { read: ['x'.repeat(130_000)] } } });
   assert.equal(huge.view.kind, 'unsupported'); assert.equal(huge.decisions.size, 0);
+});
+
+test('recent history is paginated, ordered and shared by concurrent readers instead of requesting all turns', async t => {
+  const f = await fixture(t), { bridge, threadId } = f;
+  await bridge.start();
+  let release: (() => void) | undefined;
+  f.intercept((socket, message) => {
+    if (message.method !== 'thread/turns/list') return false;
+    assert.deepEqual(message.params, { threadId, itemsView: 'full', sortDirection: 'desc', limit: 20 });
+    release = () => socket.send(JSON.stringify({ id: message.id, result: { data: [
+      { id: 'new', status: 'completed', items: [{ id: 'new-user', type: 'userMessage', content: [{ type: 'text', text: 'latest' }] }] },
+      { id: 'old', status: 'completed', items: [{ id: 'old-user', type: 'userMessage', content: [{ type: 'text', text: 'older' }] }] },
+    ], nextCursor: 'opaque-older-cursor' } }));
+    return true;
+  });
+  const first = bridge.readChat(threadId), second = bridge.readChat(threadId);
+  await until(() => !!release);
+  assert.equal(f.calls.filter(call => call.message.method === 'thread/turns/list').length, 1);
+  release!();
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a, b); assert.deepEqual(a.items.map(item => item.text), ['older', 'latest']);
+  assert.equal(a.historyCursor, 'opaque-older-cursor'); assert.equal(a.truncated, true);
+  assert.equal(await bridge.readChat(threadId), a);
+  assert.equal(f.calls.some(call => call.message.method === 'thread/read' && call.message.params?.includeTurns), false);
+});
+
+test('older native pages never replace live output, active turns or pending approvals', async t => {
+  const f = await fixture(t), { bridge, threadId, turnId } = f;
+  await bridge.openSession(threadId);
+  await f.send('turn/started', { turn: { id: turnId, status: 'inProgress' } });
+  await f.send('item/started', { turnId, item: { id: 'live-answer', type: 'agentMessage', text: 'live' } });
+  await f.send('item/fileChange/requestApproval', { turnId, itemId: 'file' }, 'pending-approval');
+  const before = bridge.chatSnapshot(threadId)!;
+  f.intercept((socket, message) => {
+    if (message.method !== 'thread/turns/list') return false;
+    assert.equal(message.params?.cursor, 'older-cursor');
+    socket.send(JSON.stringify({ id: message.id, result: { data: [{ id: 'old-turn', status: 'completed', items: [{ id: 'old-user', type: 'userMessage', content: [{ type: 'text', text: 'old request' }] }] }], nextCursor: null } }));
+    return true;
+  });
+  const [page, samePage] = await Promise.all([bridge.readChatHistory(threadId, 'older-cursor'), bridge.readChatHistory(threadId, 'older-cursor')]);
+  assert.equal(page, samePage);
+  assert.equal(f.calls.filter(call => call.message.method === 'thread/turns/list').length, 1);
+  assert.equal(page.items[0].text, 'old request'); assert.equal(page.nextCursor, null);
+  assert.equal(bridge.chatSnapshot(threadId), before);
+  assert.equal(before.activeTurnId, turnId); assert.equal(before.requests.length, 1);
+  await assert.rejects(bridge.readChatHistory(threadId, ''), /游标/);
+});
+
+test('oversized history pages reduce native page size while keeping the live observer usable', async t => {
+  const f = await fixture(t), { bridge, threadId } = f;
+  await bridge.openSession(threadId);
+  f.intercept((socket, message) => {
+    if (message.method !== 'thread/turns/list') return false;
+    const huge = message.params?.limit === 20;
+    socket.send(JSON.stringify({ id: message.id, result: { data: [{ id: 'turn', status: 'completed', items: [{ id: 'reply', type: 'agentMessage', text: huge ? 'x'.repeat(17 * 1024 * 1024) : 'small page' }] }], nextCursor: 'next' } }));
+    return true;
+  });
+  const snapshot = await bridge.readChat(threadId);
+  assert.deepEqual(f.calls.filter(call => call.message.method === 'thread/turns/list').map(call => call.message.params?.limit), [20, 5]);
+  assert.equal(snapshot.items[0].text, 'small page'); assert.equal(snapshot.connected, true);
+  assert.equal(f.observer().readyState, WebSocket.OPEN);
+  assert.ok(await bridge.sendPrompt(threadId, 'still works'));
+});
+
+test('failed native pagination is cooled down and never falls back to an unbounded native read', async t => {
+  const f = await fixture(t), { bridge, threadId } = f;
+  await bridge.start();
+  f.intercept((socket, message) => {
+    if (message.method !== 'thread/turns/list') return false;
+    socket.send(JSON.stringify({ id: message.id, error: { code: -32601, message: 'method not found' } }));
+    return true;
+  });
+  await assert.rejects(bridge.readChat(threadId), /method not found/);
+  await assert.rejects(bridge.readChat(threadId), /method not found/);
+  assert.equal(f.calls.filter(call => call.message.method === 'thread/turns/list').length, 1);
+  assert.equal(f.calls.some(call => call.message.method === 'thread/read'), false);
+});
+
+test('older pagination rejects a repeated cursor instead of loading the same page forever', async t => {
+  const f = await fixture(t), { bridge, threadId } = f;
+  await bridge.start();
+  f.intercept((socket, message) => {
+    if (message.method !== 'thread/turns/list') return false;
+    socket.send(JSON.stringify({ id: message.id, result: { data: [], nextCursor: message.params?.cursor } }));
+    return true;
+  });
+  await assert.rejects(bridge.readChatHistory(threadId, 'stuck'), /没有推进/);
+});
+
+test('a returning HTTP viewer receives cached messages before the fresh native page is ready', async t => {
+  const f = await fixture(t), { bridge, threadId } = f;
+  await bridge.start();
+  f.setThread({ id: threadId, turns: [{ id: 'history-turn', status: 'completed', items: [{ id: 'cached-user', type: 'userMessage', content: [{ type: 'text', text: 'cached first paint' }] }] }] });
+  const store = new Store(':memory:');
+  const contact = store.addSession({ backend: 'codex', title: 'cached fixture', cwd: '/tmp', nativeSessionId: threadId });
+  const app = express();
+  const api = registerCodexChat(app, { store, bridge, conversations: new ConversationReader(), instanceId: 'http-fixture', demo: false, closing: () => false, supported: () => true, ready: () => false, busy: () => false, sessions: () => store.sessions(), broadcast: () => {}, updatePreview: () => {} });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address === 'object');
+  const base = `http://127.0.0.1:${address.port}/api/sessions/${contact.id}/chat`;
+  const controller = new AbortController();
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const original = bridge.readChat.bind(bridge);
+  t.after(async () => { release(); controller.abort(); api.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); store.close(); });
+  const seeded = await (await fetch(base)).json();
+  assert.equal(seeded.items[0].text, 'cached first paint');
+  let refreshing = false;
+  bridge.readChat = async id => { refreshing = true; await held; return original(id); };
+  const stream = await fetch(base + '/events', { signal: controller.signal });
+  const reader = stream.body!.getReader();
+  try {
+    const first = await reader.read();
+    assert.equal(refreshing, true);
+    assert.match(new TextDecoder().decode(first.value), /event: state[\s\S]*cached first paint/);
+  } finally { controller.abort(); reader.releaseLock(); }
 });

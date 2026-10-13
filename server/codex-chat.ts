@@ -84,7 +84,7 @@ export class CodexChatState {
     else items[index] = { ...items[index], ...item };
     this.publish(id, { items, ...(item.text.length >= 64_000 || (item.output?.length ?? 0) >= 64_000 ? { truncated: true } : {}) }, [item.id]);
   }
-  reconcile(id: string, nativeThread: unknown, basis: number, connected: boolean): CodexChatSnapshot {
+  reconcile(id: string, nativeThread: unknown, basis: number, connected: boolean, historyCursor?: string | null): CodexChatSnapshot {
     const thread = object(nativeThread);
     if (thread?.id !== id) throw new Error('Codex 返回了不匹配的图形会话');
     const view = this.view(id), turns = Array.isArray(thread.turns) ? thread.turns : [];
@@ -101,7 +101,7 @@ export class CodexChatState {
     const newer = new Map(live.map(item => [item.id, item]));
     items = items.map(item => { const current = newer.get(item.id); newer.delete(item.id); return current ?? item; });
     items.push(...newer.values());
-    return this.publish(id, { items, connected, truncated: view.snapshot.truncated || truncated || items.some(item => item.text.length >= 64_000 || (item.output?.length ?? 0) >= 64_000), ...(view.turnVersion <= basis ? { activeTurnId: active } : {}), notice: truncated ? '部分原生历史未加载；完整记录可在原生终端查看。' : undefined }, items.map(item => item.id));
+    return this.publish(id, { items, connected, truncated: view.snapshot.truncated || truncated || !!historyCursor || items.some(item => item.text.length >= 64_000 || (item.output?.length ?? 0) >= 64_000), ...(historyCursor !== undefined ? { historyCursor } : {}), ...(view.turnVersion <= basis ? { activeTurnId: active } : {}), notice: truncated ? '部分原生历史未加载；完整记录可在原生终端查看。' : undefined }, items.map(item => item.id));
   }
   event(id: string, method: string, params: Obj): void {
     const view = this.view(id), turnId = string(params.turnId), itemId = string(params.itemId);

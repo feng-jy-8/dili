@@ -35,6 +35,8 @@ test('shares are scoped to one session and owner-only routes stay closed', () =>
   assert.equal(authorize(null, true, 'POST', '/api/auth/login').allowed, true);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/mine/workspace/git/diff').allowed, true);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/other/workspace/file').allowed, false);
+  assert.equal(authorize(read, true, 'GET', '/api/sessions/mine/chat/history').allowed, true);
+  assert.equal(authorize(read, true, 'GET', '/api/sessions/other/chat/history').allowed, false);
   assert.equal(authorize(read, true, 'POST', '/api/sessions/mine/start').allowed, false);
   assert.equal(authorize(write, true, 'POST', '/api/sessions/mine/start').allowed, true);
   assert.equal(authorize(write, true, 'POST', '/api/sessions/other/start').allowed, false);

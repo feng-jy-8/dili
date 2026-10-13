@@ -12,7 +12,7 @@ import type { SessionStatus } from '../shared/types.js';
 import { validateNativeId } from './adapters.js';
 import { OwnedProcess } from './owned-process.ts';
 import { sameDirectory } from './paths.ts';
-import type { CodexChatAnswer, CodexChatSnapshot } from '../shared/chat.ts';
+import type { CodexChatAnswer, CodexChatHistoryPage, CodexChatSnapshot } from '../shared/chat.ts';
 import { CodexChatState, nativeChatAnswer, nativeChatRequest, type NativeChatRequest } from './codex-chat.ts';
 
 export interface CodexNativeSession {
@@ -147,6 +147,10 @@ export class CodexBridge {
   private chatRequests = new Map<string, { threadId: string; connection: RpcConnection; request: NativeChatRequest }>();
   private answeredChatRequests = new WeakMap<RpcConnection, Set<number | string>>();
   private sendingPrompts = new Set<string>();
+  private historyReads = new Map<string, Promise<CodexChatSnapshot>>();
+  private historyChecked = new Map<string, number>();
+  private historyFailures = new Map<string, { until: number; error: Error }>();
+  private historyPages = new Map<string, Promise<CodexChatHistoryPage>>();
 
   constructor(options: CodexBridgeOptions = {}) {
     this.options = options;
@@ -172,22 +176,82 @@ export class CodexBridge {
   async readChat(id: string): Promise<CodexChatSnapshot> {
     validateNativeId('codex', id);
     if (!this.ready) throw new Error('请先打开 Codex 图形会话');
+    const pending = this.historyReads.get(id);
+    if (pending) return pending;
+    const cached = this.chat.get(id);
+    if (cached && Date.now() - (this.historyChecked.get(id) ?? 0) < 2000) return cached;
+    const failure = this.historyFailures.get(id);
+    if (failure && failure.until > Date.now()) throw failure.error;
+    const generation = this.bootGeneration;
+    const job = this.readRecentChat(id).then(snapshot => {
+      if (generation === this.bootGeneration) {
+        this.historyChecked.delete(id); this.historyChecked.set(id, Date.now());
+        this.historyFailures.delete(id);
+        while (this.historyChecked.size > 128) this.historyChecked.delete(this.historyChecked.keys().next().value!);
+      }
+      return snapshot;
+    }).catch(cause => {
+      if (generation === this.bootGeneration && this.ready) {
+        this.historyFailures.delete(id);
+        this.historyFailures.set(id, { until: Date.now() + 10_000, error: cause instanceof Error ? cause : new Error(String(cause)) });
+        while (this.historyFailures.size > 128) this.historyFailures.delete(this.historyFailures.keys().next().value!);
+      }
+      throw cause;
+    }).finally(() => { if (this.historyReads.get(id) === job) this.historyReads.delete(id); });
+    this.historyReads.set(id, job);
+    return job;
+  }
+
+  private async readRecentChat(id: string): Promise<CodexChatSnapshot> {
     const generation = this.bootGeneration;
     await this.observing.get(id)?.promise;
     if (!this.ready || generation !== this.bootGeneration) throw new Error('Codex 图形会话已停止，请重新打开');
-    // Keep history reads on a short-lived connection. A native thread can
-    // contain many megabytes of turns; if the response exceeds the payload
-    // limit, only this read must be sacrificed and the live observer must stay
-    // available for status, prompts and approvals.
-    const connection = await this.connect(false);
     const basis = this.chat.get(id)?.revision ?? 0;
-    try {
-      const response = await this.call(connection, 'thread/read', { threadId: id, includeTurns: true });
-      if (response.error) throw this.rpcError(response, 'Codex 对话读取失败');
-      if (connection.closed || connection.generation !== this.bootGeneration) throw new Error('Codex 对话读取连接已失效');
-      const retained = this.observers.get(id);
-      return this.chat.reconcile(id, (response.result as { thread?: Thread } | undefined)?.thread, basis, !!retained && !retained.closed);
-    } finally { this.closeConnection(connection); this.connections.delete(connection); }
+    const page = await this.readTurns(id);
+    if (!this.ready || generation !== this.bootGeneration) throw new Error('Codex 对话读取连接已失效');
+    const retained = this.observers.get(id);
+    return this.chat.reconcile(id, { id, turns: page.turns }, basis, !!retained && !retained.closed, page.nextCursor);
+  }
+
+  /** Older pages stay separate from live state so reading history cannot change
+   * active turns, approvals, or evict current output in other viewers. */
+  async readChatHistory(id: string, cursor: string): Promise<CodexChatHistoryPage> {
+    validateNativeId('codex', id);
+    if (!cursor || cursor.length > 8192 || /[\x00-\x1f]/.test(cursor)) throw new Error('历史游标无效');
+    if (!this.ready) throw new Error('请先打开 Codex 图形会话');
+    const key = `${id}:${cursor}`;
+    const pending = this.historyPages.get(key);
+    if (pending) return pending;
+    if (this.historyPages.size >= 32) throw new Error('历史读取繁忙，请稍后重试');
+    const generation = this.bootGeneration;
+    const job = this.readTurns(id, cursor).then(page => {
+      if (!this.ready || generation !== this.bootGeneration) throw new Error('Codex 对话读取连接已失效');
+      if (page.nextCursor === cursor) throw new Error('原生历史游标没有推进，请刷新后重试');
+      const view = new CodexChatState().reconcile(id, { id, turns: page.turns }, 0, false);
+      return { nativeSessionId: id, items: view.items, nextCursor: page.nextCursor, truncated: view.truncated };
+    }).finally(() => { if (this.historyPages.get(key) === job) this.historyPages.delete(key); });
+    this.historyPages.set(key, job);
+    return job;
+  }
+
+  private async readTurns(id: string, cursor?: string): Promise<{ turns: unknown[]; nextCursor: string | null }> {
+    // Never request includeTurns:true: large logs can spend seconds rebuilding
+    // an oversized response only to hit the frame limit. Short-lived sockets
+    // isolate paginated reads from the observer that owns approvals and input.
+    for (const limit of [20, 5, 1]) {
+      const connection = await this.connect(false);
+      try {
+        const response = await this.call(connection, 'thread/turns/list', { threadId: id, itemsView: 'full', sortDirection: 'desc', limit, ...(cursor ? { cursor } : {}) }, 5000);
+        if (response.error) throw this.rpcError(response, 'Codex 分页历史读取失败');
+        if (connection.closed || connection.generation !== this.bootGeneration) throw new Error('Codex 对话读取连接已失效');
+        const page = response.result as { data?: unknown[]; nextCursor?: unknown } | undefined;
+        if (!Array.isArray(page?.data) || (page.nextCursor != null && (typeof page.nextCursor !== 'string' || !page.nextCursor || page.nextCursor.length > 8192))) throw new Error('Codex 返回了无效的分页历史');
+        return { turns: page.data.toReversed(), nextCursor: typeof page.nextCursor === 'string' ? page.nextCursor : null };
+      } catch (cause) {
+        if (limit === 1 || !/payload size exceeded|max payload|message too large/i.test(errorMessage(cause, ''))) throw cause;
+      } finally { this.closeConnection(connection); this.connections.delete(connection); }
+    }
+    throw new Error('Codex 分页历史读取失败');
   }
 
   /** The retained connection must own this request so approvals and questions
@@ -254,6 +318,7 @@ export class CodexBridge {
     if (this.ready) return;
     if (this.starting) return this.starting;
     const generation = ++this.bootGeneration;
+    this.historyReads.clear(); this.historyChecked.clear(); this.historyFailures.clear(); this.historyPages.clear();
     const pending = this.boot(generation).finally(() => { if (this.starting === pending) this.starting = null; });
     this.starting = pending;
     return pending;
@@ -349,6 +414,7 @@ export class CodexBridge {
     ++this.bootGeneration;
     this.starting = null;
     this.ready = false;
+    this.historyReads.clear(); this.historyChecked.clear(); this.historyFailures.clear(); this.historyPages.clear();
     this.closeConnections();
     this.turnIds.clear();
     this.completed.clear();

@@ -70,7 +70,10 @@ if (args[0] !== 'app-server') {
       } else if (message.method === 'thread/name/set') {
         thread = threads.get(params.threadId); if (thread) thread.name = params.name;
       } else if (message.method === 'thread/turns/list') {
-        thread = threads.get(params.threadId); result = { data: thread?.turns ?? [], nextCursor: null };
+        thread = threads.get(params.threadId);
+        const ordered = params.sortDirection === 'desc' ? [...(thread?.turns ?? [])].reverse() : thread?.turns ?? [];
+        const offset = Number(params.cursor || 0), limit = params.limit || 20;
+        result = { data: ordered.slice(offset, offset + limit), nextCursor: offset + limit < ordered.length ? String(offset + limit) : null };
       } else if (message.method === 'thread/fork') {
         const parent = threads.get(params.threadId);
         thread = structuredClone(parent); thread.id = crypto.randomUUID(); thread.cwd = params.cwd || parent.cwd; thread.forkedFromId = parent.id; thread.status = { type: 'idle' };
