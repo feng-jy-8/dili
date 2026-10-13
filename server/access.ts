@@ -52,6 +52,7 @@ export const ROUTES: Route[] = [
   { method: 'POST', path: '/api/sessions/:id/chat/messages', access: 'write' },
   { method: 'POST', path: '/api/sessions/:id/chat/requests/:requestId', access: 'write' },
   { method: 'POST', path: '/api/sessions/:id/chat/interrupt', access: 'write' },
+  { method: 'POST', path: '/api/sessions/:id/chat/connect', access: 'write' },
 
   { method: 'POST', path: '/api/native-event/:id', access: 'local' },
 

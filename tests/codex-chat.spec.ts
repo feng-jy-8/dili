@@ -456,3 +456,59 @@ test('failed older history requests preserve the current conversation and retry 
   await expect(page.getByRole('alert')).toHaveCount(0);
   expect(requests).toBe(2);
 });
+
+test('a disconnected native session can retry without losing its draft or sending it automatically', async ({ page }) => {
+  const app = await fixture(page);
+  Object.assign(app.contact, { running: true, nativeSessionId: 'exact-native-thread', interactionMode: 'chat' });
+  app.current.snapshot = { ...app.current.snapshot, nativeSessionId: app.contact.nativeSessionId, items: outlineHistory() };
+  let attempts = 0;
+  await page.route(`**/api/sessions/${app.contact.id}/chat/connect`, async route => {
+    attempts++;
+    expect(route.request().method()).toBe('POST');
+    if (attempts === 1) return route.fulfill({ status: 503, json: { error: '原生连接暂时不可用' } });
+    await app.patch({ connected: true });
+    await route.fulfill({ json: { connected: true } });
+  });
+  await app.open();
+  const input = page.getByLabel('给 Codex 发送消息');
+  await input.fill('保留的草稿，连接恢复后由我发送');
+  const retry = page.getByRole('button', { name: '重新连接原生会话', exact: true });
+  await expect(retry).toBeEnabled();
+  await expect(page.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
+  await retry.click();
+  await expect(page.getByRole('alert')).toContainText('原生连接暂时不可用');
+  await expect(retry).toBeEnabled();
+  await expect(input).toHaveValue('保留的草稿，连接恢复后由我发送');
+  await retry.click();
+  await expect(retry).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled();
+  await expect(input).toHaveValue('保留的草稿，连接恢复后由我发送');
+  await expect(page.locator('.codex-user')).toHaveCount(24);
+  expect(app.requests).toEqual([]);
+  expect(attempts).toBe(2);
+});
+
+test('the mobile input outline loads older inputs within its drawer and locates them', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const app = await fixture(page);
+  app.current.snapshot = { ...app.current.snapshot, nativeSessionId: 'history-thread', items: outlineHistory().slice(-6), historyCursor: 'older-inputs', truncated: true };
+  let calls = 0;
+  await page.route(`**/api/sessions/${app.contact.id}/chat/history?*`, route => {
+    calls++;
+    expect(new URL(route.request().url()).searchParams.get('cursor')).toBe('older-inputs');
+    return route.fulfill({ json: { nativeSessionId: 'history-thread', items: outlineHistory().slice(0, -6), nextCursor: null, truncated: false } });
+  });
+  await app.open();
+  await page.getByRole('button', { name: '对话目录', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: '对话目录', exact: true });
+  await expect(drawer).toContainText('已加载 · 3 条输入');
+  await drawer.getByRole('button', { name: '加载更早输入' }).click();
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toContainText('已加载 · 24 条输入');
+  await expect(drawer.getByRole('button', { name: '加载更早输入' })).toHaveCount(0);
+  await drawer.getByRole('navigation').getByRole('button').first().click();
+  await expect(drawer).toHaveCount(0);
+  await expect(page.locator('[data-chat-item="input-0"]')).toBeFocused();
+  expect(calls).toBe(1);
+  expect(app.requests).toEqual([]);
+});

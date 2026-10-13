@@ -184,6 +184,16 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
       else res.status(202).json(result);
     }
   });
+  app.post('/api/sessions/:id/chat/connect', async (req, res) => {
+    const item = writable(String(req.params.id)), identity = item.nativeSessionId!;
+    // Recover just the subscription. Never start an agent or interrupt a turn
+    // as a side effect of retrying a failed graphical connection.
+    const result = await bridge.getStatus(identity);
+    const current = session(item.id);
+    if (options.closing() || options.busy(item.id) || current.nativeSessionId !== identity || current.archived || current.forkPending || !current.running || !options.ready(current)) fail('会话身份或运行状态已变化，请重新进入会话', 409);
+    if (!bridge.chatSnapshot(identity)?.connected) fail(result.detail || '原生连接恢复失败，请检查会话状态', 503);
+    res.json({ connected: true });
+  });
   app.post('/api/sessions/:id/chat/requests/:requestId', async (req, res) => {
     const item = writable(String(req.params.id));
     const id = String(req.params.requestId);

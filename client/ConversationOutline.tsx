@@ -5,9 +5,10 @@ import './conversation-outline.css';
 export interface OutlineEntry { id: string; text: string }
 
 /** Native dialog supplies focus trapping and Escape on narrow workspaces. */
-export default function ConversationOutline({ id, open, compact, entries, selectedId, truncated, close, select }: {
+export default function ConversationOutline({ id, open, compact, entries, selectedId, truncated, close, select, loadOlder, loadingOlder = false }: {
   id: string; open: boolean; compact: boolean; entries: OutlineEntry[]; selectedId: string | null;
   truncated: boolean; close: () => void; select: (id: string) => void;
+  loadOlder?: () => void; loadingOlder?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
@@ -35,6 +36,7 @@ export default function ConversationOutline({ id, open, compact, entries, select
     <label className="conversation-outline-search"><Search size={14} /><input type="search" aria-label="筛选用户输入" placeholder="搜索你说过的话…" value={query} onChange={event => setQuery(event.target.value)} /></label>
     <p className="conversation-outline-count">{search ? `${matches.length} / ${entries.length} 条输入` : `已加载 · ${entries.length} 条输入`}</p>
     {truncated && <p className="conversation-outline-notice">仅列出当前已加载的输入；可在对话中加载更早消息，记录过长时可能有所省略。</p>}
+    {loadOlder && <button type="button" className="conversation-outline-more" disabled={loadingOlder} onClick={loadOlder}>{loadingOlder ? '正在加载目录…' : '加载更早输入'}</button>}
     <nav className="conversation-outline-list" aria-label="用户输入目录">
       {matches.length ? <ol>{matches.map(entry => <li key={entry.id}><button type="button" aria-current={entry.id === selectedId ? 'location' : undefined} title={entry.text || '附件或空白输入'} onClick={() => {
         // close() restores the invoker before select() focuses the message.

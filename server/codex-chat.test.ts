@@ -389,3 +389,70 @@ test('a returning HTTP viewer receives cached messages before the fresh native p
     assert.match(new TextDecoder().decode(first.value), /event: state[\s\S]*cached first paint/);
   } finally { controller.abort(); reader.releaseLock(); }
 });
+
+test('metadata-only native resume retains loaded history and an observed active turn', () => {
+  const state = new CodexChatState(), id = randomUUID(), turnId = randomUUID();
+  state.reconcile(id, { id, turns: [{ id: turnId, status: 'inProgress', items: [{ id: 'user', type: 'userMessage', content: [{ type: 'text', text: 'Keep my history' }] }] }] }, 0, true, 'older-cursor');
+  state.connected(id, false);
+  const before = state.get(id)!;
+  const after = state.reconcile(id, { id, status: { type: 'active' } }, before.revision, true);
+  assert.deepEqual(after.items, before.items);
+  assert.equal(after.activeTurnId, turnId);
+  assert.equal(after.historyCursor, 'older-cursor');
+  assert.equal(after.connected, true);
+  const empty = state.reconcile(id, { id, turns: [] }, after.revision, true, null);
+  assert.deepEqual(empty.items, []);
+  assert.equal(empty.activeTurnId, null, 'Explicit empty history remains authoritative');
+});
+
+test('graphical reconnect recovers a lost observer without clearing history or starting a turn', async t => {
+  const f = await fixture(t), { bridge, threadId, turnId } = f;
+  await bridge.start(); await bridge.openSession(threadId, '/tmp');
+  f.setThread({ id: threadId, turns: [{ id: turnId, status: 'completed', items: [{ id: 'user', type: 'userMessage', content: [{ type: 'text', text: 'Saved history' }] }] }] });
+  const history = (await bridge.readChat(threadId)).items;
+  f.observer().terminate();
+  await until(() => !bridge.chatSnapshot(threadId)?.connected);
+  f.setThread({ id: threadId, cwd: '/tmp', status: { type: 'idle' } });
+  const store = new Store(':memory:');
+  const contact = store.addSession({ backend: 'codex', title: 'reconnect fixture', cwd: '/tmp', nativeSessionId: threadId });
+  store.updateSession(contact.id, { running: true });
+  let busy = false;
+  const app = express(); app.use(express.json());
+  const api = registerCodexChat(app, { store, bridge, conversations: new ConversationReader(), instanceId: 'reconnect-fixture', demo: false, closing: () => false, supported: () => true, ready: () => true, busy: () => busy, sessions: () => store.sessions(), broadcast: () => {}, updatePreview: () => {} });
+  app.use((error: Error & { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => { res.status(error.status ?? 500).json({ error: error.message }); });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address === 'object');
+  t.after(async () => { api.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); store.close(); });
+  const connect = () => fetch(`http://127.0.0.1:${address.port}/api/sessions/${contact.id}/chat/connect`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal((await connect()).status, 200);
+  assert.equal(bridge.chatSnapshot(threadId)!.connected, true);
+  assert.deepEqual(bridge.chatSnapshot(threadId)!.items, history);
+  assert.equal(f.calls.filter(call => ['turn/start', 'turn/interrupt', 'thread/start'].includes(call.message.method ?? '')).length, 0);
+  busy = true;
+  assert.equal((await connect()).status, 409);
+  busy = false; store.updateSession(contact.id, { running: false });
+  assert.equal((await connect()).status, 409);
+  store.updateSession(contact.id, { running: true });
+  f.intercept((socket, message) => {
+    if (message.method !== 'thread/read') return false;
+    socket.send(JSON.stringify({ id: message.id, error: { message: 'Native read unavailable' } }));
+    return true;
+  });
+  const unavailable = await connect();
+  assert.equal(unavailable.status, 503);
+  assert.match((await unavailable.json()).error, /Native read unavailable/);
+  assert.equal(bridge.chatSnapshot(threadId)!.connected, false);
+  assert.deepEqual(bridge.chatSnapshot(threadId)!.items, history);
+  f.intercept();
+  let entered = false, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const getStatus = bridge.getStatus.bind(bridge);
+  bridge.getStatus = async id => { entered = true; await held; return getStatus(id); };
+  t.after(() => release());
+  const pending = connect();
+  await until(() => entered);
+  store.updateSession(contact.id, { nativeSessionId: randomUUID() });
+  release();
+  assert.equal((await pending).status, 409, 'A reconnect cannot claim success after its native identity changes');
+});

@@ -4,6 +4,7 @@
 .codex-chat-toolbar i { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }.codex-chat-toolbar i.online { background: var(--green); }
 .codex-chat-banner,.codex-chat-error,.codex-chat-notice { padding: 9px 16px; font-size: 12px; line-height: 1.65; }
 .codex-chat-banner { background: var(--warning-bg); color: var(--warning-text); }.codex-chat-error { display: flex; justify-content: space-between; gap: 10px; background: var(--error-bg); color: var(--error-text); }.codex-chat-error>span { overflow-wrap: anywhere; }
+.codex-native-retry { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .codex-chat-notice { color: var(--muted); border-bottom: 1px solid var(--line); }
 .codex-chat-body { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .codex-chat-primary { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }

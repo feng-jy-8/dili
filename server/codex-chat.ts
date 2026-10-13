@@ -88,7 +88,11 @@ export class CodexChatState {
     const thread = object(nativeThread);
     if (thread?.id !== id) throw new Error('Codex 返回了不匹配的图形会话');
     const view = this.view(id), turns = Array.isArray(thread.turns) ? thread.turns : [];
-    let items: CodexChatItem[] = [], active: string | null = null, truncated = turns.length > 200;
+    // excludeTurns resume responses are connection metadata, not an empty
+    // transcript. Reconnecting must retain history and an observed live turn.
+    const hasHistory = Array.isArray(thread.turns);
+    let items: CodexChatItem[] = hasHistory ? [] : [...view.snapshot.items];
+    let active: string | null = hasHistory ? null : view.snapshot.activeTurnId, truncated = turns.length > 200;
     for (const value of turns.slice(-200)) {
       const turn = object(value);
       if (!turn || typeof turn.id !== 'string') continue;
