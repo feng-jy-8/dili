@@ -533,7 +533,7 @@ scripts/restart-service.sh    # 每次重启：在独立会话里后台执行，
 推送 `v*` 格式的 Git tag 会触发 GitHub Actions。流水线通过类型检查、服务端测试，构建前端和中继服务，并发布两个 Linux x86_64 压缩包：`dili-版本-linux-x86_64.tar.gz` 是 Dili 工作台，`dili-relay-版本-linux-x86_64.tar.gz` 是服务器中继包。工作台包解压后执行 `npm ci && ./start.sh`；中继包解压后配置 `SESSIONDECK_RELAY_URL` 或 `SESSIONDECK_RELAY_DOMAINS`，执行 `./start-relay.sh`。
 # 邀请码远程配对
 
-管理员打开 `https://discoverpaw.com/connect/`，使用服务器上的管理密钥生成一次性邀请码。生成时可选择中继白名单中的访问域名，默认是 `discoverpaw.com`。本机 Dili 在“连接与能力 → 远程访问”粘贴邀请码并填写设备名称，服务会自动安装并启动官方 frp 客户端，生成可复制的设备链接。手机打开设备链接后使用 Dili 所有者密码登录。
+管理员打开 `https://discoverpaw.com/connect/`，使用服务器上的管理密钥生成一次性邀请码。生成时可选择中继白名单中的访问域名，默认是 `discoverpaw.com`。本机 Dili 在“连接与能力 → 远程访问”粘贴邀请码并填写设备名称，服务会自动安装并启动官方 frp 客户端，生成可复制的设备链接。手机打开设备链接后使用 Dili 所有者密码登录。 支持从其他网站点击设备链接进入登录页；仅对工作台入口的顶层页面跳转放行，跨站 API、iframe、终端连接和修改请求仍受到来源校验。
 
 中继服务运行在 `paw` 的 `sessiondeck-relay.service`，frp 服务运行在 `sessiondeck-frps.service`；两个服务只监听回环地址，Caddy 通过 `/connect/` 和 `/~!frp` 转发。管理密钥保存在 `/var/lib/sessiondeck-relay/admin.token`，不会写入仓库或 URL。可通过 `SESSIONDECK_RELAY_DOMAINS=discoverpaw.com,example.com` 配置额外域名白名单；这些域名必须在 Caddy／DNS 中指向同一个中继服务。现有 SSH 远程方式仍可在高级设置中使用。
 

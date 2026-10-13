@@ -73,6 +73,25 @@ test('remote requests need the configured host and a same-origin mutation', () =
   assert.equal(sshTarget({ ...inferred, sshHost: 'bastion.example.com' }), 'bastion.example.com');
 });
 
+test('remote device links allow cross-site entry navigation while API, frames and mutations remain protected', () => {
+  const publicUrl = 'https://deck.example.com/connect/d/browserfixture01';
+  const headers = { host: 'deck.example.com', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' };
+  const entry = { headers, method: 'GET', url: '/' };
+  const allowed = (request: typeof entry) => allowedRemoteRequest(request, publicUrl, 4318);
+  assert.equal(allowed(entry), true);
+  assert.equal(allowed({ ...entry, url: '/?from=shared-link' }), true);
+  assert.equal(allowed({ ...entry, method: 'HEAD' }), true);
+  for (const url of ['/api/state', '/api/auth/status', '/api/auth/login', '/ws/shell', '/assets/index.js', '/%61pi/state', '//api/state']) assert.equal(allowed({ ...entry, url }), false, url);
+  for (const method of ['POST', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowed({ ...entry, method }), false, method);
+  assert.equal(allowed({ ...entry, headers: { ...headers, 'sec-fetch-mode': 'cors' } }), false);
+  assert.equal(allowed({ ...entry, headers: { ...headers, 'sec-fetch-dest': 'iframe' } }), false);
+  assert.equal(allowedRemoteRequest({ ...entry, headers: { ...headers, origin: 'https://evil.example' } }, publicUrl, 4318), false);
+  assert.equal(allowedRemoteRequest({ ...entry, headers: { ...headers, origin: 'https://deck.example.com' } }, publicUrl, 4318), false);
+  assert.equal(allowedRemoteRequest({ ...entry, headers: { ...headers, upgrade: 'websocket' } }, publicUrl, 4318), false);
+  assert.equal(allowed({ ...entry, headers: { ...headers, host: 'evil.example' } }), false);
+  assert.equal(allowedRemoteRequest({ headers, method: 'GET' }, publicUrl, 4318), false);
+});
+
 test('auth store hashes secrets, throttles guesses and revokes share devices', async () => {
   const db = new DatabaseSync(':memory:');
   const auth = new AuthStore(db, 'k'.repeat(64));

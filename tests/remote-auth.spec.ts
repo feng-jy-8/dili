@@ -211,3 +211,29 @@ test('remote owner logs in, shares a session read-only, and revocation closes th
   for (const share of await (await request.get(`/api/sessions/${target.id}/shares`)).json() as { id: string }[]) await request.delete(`/api/shares/${share.id}`, { headers, data: {} });
   await ownerRemote.close(); await colleagueContext.close();
 });
+
+test('opening a remote link from another website reaches the login page and permits same-origin login', async ({ page, baseURL, request }) => {
+  const remote = remoteOrigin(baseURL!);
+  const headers = await mutationHeaders(request);
+  const password = 'cross-site remote link password';
+  expect((await request.post('/api/auth/password', { headers, data: { password } })).ok()).toBe(true);
+  const source = 'http://localhost:39999/shared-device-link';
+  await page.route(source, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<a href="${remote}/#/contacts">打开我的 Dili</a>` }));
+  let navigations = 0;
+  // Chromium can omit Fetch Metadata for a route-fulfilled source document.
+  // Supply the real production link-click headers only on the initial entry;
+  // assets, API requests and the following login use their own browser headers.
+  await page.route(`${remote}/`, route => {
+    if (!route.request().isNavigationRequest()) return route.continue();
+    navigations++;
+    return route.continue({ headers: { ...route.request().headers(), 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' } });
+  });
+  await page.goto(source);
+  await page.getByRole('link', { name: '打开我的 Dili' }).click();
+  await expect(page.getByLabel('所有者密码')).toBeVisible();
+  expect(navigations).toBe(1);
+  await page.getByLabel('所有者密码').fill(password);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page.getByRole('button', { name: '打开随手记', exact: true })).toBeVisible();
+  expect(await page.locator('body').innerText()).not.toContain('请求来源不被允许');
+});

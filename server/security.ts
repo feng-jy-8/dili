@@ -30,7 +30,7 @@ export function validToken(value: unknown, expected: string): boolean {
  * it accepts the configured public host (plus its own loopback address for
  * debugging) and a matching Origin. Loopback trust never applies there.
  */
-export function allowedRemoteRequest(req: Pick<IncomingMessage, 'headers' | 'method'>, publicUrl: string, localPort: number): boolean {
+export function allowedRemoteRequest(req: Pick<IncomingMessage, 'headers' | 'method'> & Pick<Partial<IncomingMessage>, 'url'>, publicUrl: string, localPort: number): boolean {
   const requestHost = req.headers.host;
   if (!requestHost) return false;
   const publicHost = publicUrl ? new URL(publicUrl).host : null;
@@ -42,7 +42,16 @@ export function allowedRemoteRequest(req: Pick<IncomingMessage, 'headers' | 'met
   // Browsers always send Origin on cross-origin mutations; require it remotely
   // so a missing header cannot stand in for a same-origin request.
   if (!origin && req.method && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return false;
-  if (req.headers['sec-fetch-site'] === 'cross-site') return false;
+  if (req.headers['sec-fetch-site'] === 'cross-site') {
+    // Opening a shared device link from another website is a normal top-level
+    // navigation. Allow only the read-only app entry; API/fetch, frames,
+    // WebSocket upgrades and all mutations keep their same-origin boundary.
+    // The relay strips the verified device prefix before forwarding this URL.
+    const entryNavigation = !origin && !req.headers.upgrade
+      && ['GET', 'HEAD'].includes(req.method ?? '') && req.url?.split('?')[0] === '/'
+      && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
+    if (!entryNavigation) return false;
+  }
   return true;
 }
 
