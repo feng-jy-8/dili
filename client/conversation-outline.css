@@ -1,0 +1,20 @@
+.conversation-outline { display: flex; flex-direction: column; flex: 0 0 250px; width: 250px; min-width: 0; min-height: 0; padding: 0; border: 0; border-left: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.conversation-outline-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; }
+.conversation-outline-heading h3 { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
+.conversation-outline-search { display: flex; align-items: center; gap: 6px; margin: 0 12px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--muted); }
+.conversation-outline-search:focus-within { border-color: var(--accent); }
+.conversation-outline-search svg { flex-shrink: 0; }
+.conversation-outline-search input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; }
+.conversation-outline-count { padding: 9px 12px 7px; font-size: 11px; color: var(--muted); }
+.conversation-outline-notice { padding: 0 12px 9px; font-size: 11px; line-height: 1.6; color: var(--muted); }
+.conversation-outline-list { flex: 1; min-height: 0; padding: 0 6px 12px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.conversation-outline-list ol { padding: 0; margin: 0; list-style: none; }
+.conversation-outline-list button { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 10px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; }
+.conversation-outline-list button:hover { background: var(--subtle); }
+.conversation-outline-list button[aria-current] { background: var(--accent-soft); color: var(--accent-dark); }
+.conversation-outline-number { flex-shrink: 0; min-width: 20px; margin-top: 1px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.conversation-outline-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.conversation-outline-empty { padding: 25px 12px; color: var(--muted); text-align: center; font-size: 12px; }
+.conversation-outline-dialog { position: fixed; inset: 0 0 0 auto; width: min(360px, calc(100% - 24px)); max-width: none; height: 100dvh; max-height: none; margin: 0; padding-bottom: env(safe-area-inset-bottom); box-shadow: var(--shadow); }
+.conversation-outline-dialog::backdrop { background: #0000004d; }
+.conversation-outline-dialog:not([open]) { display: none; }

@@ -1,10 +1,11 @@
 import { appUrl } from './urls';
-import { memo, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowDownToLine, Check, ChevronRight, CircleAlert, LoaderCircle, MessageSquare, RefreshCw, Send, Square, TerminalSquare } from 'lucide-react';
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { ArrowDownToLine, Check, ChevronRight, CircleAlert, List, LoaderCircle, MessageSquare, RefreshCw, Send, Square, TerminalSquare } from 'lucide-react';
 import type { Session } from '../shared/types';
 import type { CodexChatAnswer, CodexChatItem, CodexChatPatch, CodexChatRequest, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
 import { api, ApiError } from './api';
 import Markdown from './Markdown';
+import ConversationOutline from './ConversationOutline';
 import './codex-chat.css';
 
 type Pending = { requestId: string; text: string };
@@ -29,8 +30,8 @@ function requestId() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('');
 }
 
-const MessageItem = memo(function MessageItem({ item }: { item: CodexChatItem }) {
-  if (item.type === 'assistant' || item.type === 'user') return <article className={`codex-message codex-${item.type}`} data-chat-item={item.id}>
+const MessageItem = memo(function MessageItem({ item, highlighted = false }: { item: CodexChatItem; highlighted?: boolean }) {
+  if (item.type === 'assistant' || item.type === 'user') return <article className={`codex-message codex-${item.type}${highlighted ? ' codex-message-highlighted' : ''}`} data-chat-item={item.id} tabIndex={item.type === 'user' ? -1 : undefined}>
     <div className="codex-message-heading"><strong>{item.type === 'user' ? '你' : 'Codex'}</strong>{item.status === 'inProgress' && <span><LoaderCircle size={11} className="spin" />正在回复</span>}{item.status === 'failed' && <span>未完成</span>}</div>
     <div className="codex-message-body">{item.type === 'assistant' ? <Markdown text={item.text || '…'} /> : <p>{item.text}</p>}</div>
   </article>;
@@ -91,6 +92,13 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const [checkNotice, setCheckNotice] = useState('');
   const [interrupting, setInterrupting] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [compactOutline, setCompactOutline] = useState(false);
+  const [selectedInput, setSelectedInput] = useState<string | null>(null);
+  const [highlightedInput, setHighlightedInput] = useState<string | null>(null);
+  const outlineId = useId();
+  const pane = useRef<HTMLElement>(null);
+  const outlineButton = useRef<HTMLButtonElement>(null);
   const snapshotRef = useRef(snapshot);
   const draftRef = useRef(draft);
   const sessionRef = useRef(session);
@@ -102,6 +110,35 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const textarea = useRef<HTMLTextAreaElement>(null);
   const followsBottom = useRef(true);
   const scrollAnchor = useRef<{ id: string; offset: number } | null>(null);
+  useLayoutEffect(() => {
+    const element = pane.current;
+    if (!element) return;
+    const measure = () => setCompactOutline(element.clientWidth <= 720);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!highlightedInput) return;
+    const timer = setTimeout(() => setHighlightedInput(null), 1800);
+    return () => clearTimeout(timer);
+  }, [highlightedInput]);
+  function closeOutline() {
+    setOutlineOpen(false);
+    outlineButton.current?.focus({ preventScroll: true });
+  }
+  function jumpToInput(id: string) {
+    const element = scroller.current;
+    const target = [...(element?.querySelectorAll<HTMLElement>('[data-chat-item]') ?? [])].find(item => item.dataset.chatItem === id);
+    if (!element || !target) return;
+    followsBottom.current = false;
+    scrollAnchor.current = null;
+    element.scrollTop += target.getBoundingClientRect().top - element.getBoundingClientRect().top - 12;
+    target.focus({ preventScroll: true });
+    setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 64);
+    setSelectedInput(id); setHighlightedInput(id);
+  }
   draftRef.current = draft; sessionRef.current = session; onSelectionRef.current = onSelection;
   function updateDraft(next: Draft) {
     draftRef.current = next; saveDraft(session.id, next);
@@ -258,20 +295,27 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const hasTurn = !!snapshot?.activeTurnId;
   const nativeAvailable = !session.running || !!snapshot?.connected;
   const canSend = !!draft.text.trim() && !busy && !draft.pending && transport && nativeAvailable && !hasTurn && !snapshot?.requests.length && !session.archived;
-  return <section className="codex-chat-pane" aria-label="Codex 图形会话">
-    <header className="codex-chat-toolbar"><span><MessageSquare size={15} /><strong>Codex</strong><i className={transport && nativeAvailable ? 'online' : ''} />{!transport ? '连接中' : snapshot?.requests.length ? '需要你回复' : hasTurn ? '正在处理' : session.running ? '已连接' : '尚未启动'}</span><div><label className="codex-model-select">模型<input aria-label="当前会话模型" list="codex-models" value={model} placeholder="默认" onChange={event => { setModel(event.target.value); localStorage.setItem(`sessiondeck.codex-model.${session.id}`, event.target.value); }} /></label><datalist id="codex-models"><option value="gpt-5-codex" /><option value="o3" /><option value="gpt-4.1" /></datalist><button className="icon-button" type="button" aria-label="刷新对话" title="刷新对话" onClick={() => void readSnapshot.current()}><RefreshCw size={14} /></button><button type="button" className="text-button" onClick={onTerminal}><TerminalSquare size={14} />原生终端</button></div></header>
+  const outlineEntries = snapshot?.items.filter(item => item.type === 'user') ?? [];
+  return <section ref={pane} className="codex-chat-pane" aria-label="Codex 图形会话" onKeyDown={event => {
+    if (outlineOpen && event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); closeOutline(); }
+  }}>
+    <header className="codex-chat-toolbar"><span><MessageSquare size={15} /><strong>Codex</strong><i className={transport && nativeAvailable ? 'online' : ''} />{!transport ? '连接中' : snapshot?.requests.length ? '需要你回复' : hasTurn ? '正在处理' : session.running ? '已连接' : '尚未启动'}</span><div><label className="codex-model-select">模型<input aria-label="当前会话模型" list="codex-models" value={model} placeholder="默认" onChange={event => { setModel(event.target.value); localStorage.setItem(`sessiondeck.codex-model.${session.id}`, event.target.value); }} /></label><datalist id="codex-models"><option value="gpt-5-codex" /><option value="o3" /><option value="gpt-4.1" /></datalist><button ref={outlineButton} className="icon-button" type="button" aria-label="对话目录" title="对话目录" aria-expanded={outlineOpen} aria-controls={outlineOpen ? outlineId : undefined} onClick={() => outlineOpen ? closeOutline() : setOutlineOpen(true)}><List size={15} /></button><button className="icon-button" type="button" aria-label="刷新对话" title="刷新对话" onClick={() => void readSnapshot.current()}><RefreshCw size={14} /></button><button type="button" className="text-button" aria-label="原生终端" title="原生终端" onClick={onTerminal}><TerminalSquare size={14} /><span>原生终端</span></button></div></header>
     {!transport && !loading && <div className="codex-chat-banner" role="status">与本地服务的连接已中断，正在重连。草稿已保留。</div>}
     {error && <div className="codex-chat-error" role="alert"><span>{error}</span><button type="button" className="text-button" onClick={() => { setError(''); void readSnapshot.current(); }}>重新读取</button></div>}
     {snapshot?.notice && <p className="codex-chat-notice">{snapshot.notice}</p>}
     {snapshot?.truncated && <p className="codex-chat-notice">当前展示最近的消息，完整历史保留在原生会话中。</p>}
+    <div className="codex-chat-body"><div className="codex-chat-primary">
     <div className="codex-chat-scroll" ref={scroller} tabIndex={0} aria-label="Codex 消息记录" onScroll={event => {
       const element = event.currentTarget, bottom = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
       followsBottom.current = bottom; setAtBottom(bottom);
     }}>
-      {loading && !snapshot ? <div className="codex-chat-empty" role="status"><LoaderCircle className="spin" size={25} /><p>正在读取对话…</p></div> : !snapshot?.items.length ? <div className="codex-chat-empty"><MessageSquare size={30} /><h3>在这里继续你的工作</h3><p>发送消息后，Codex 会在当前工作目录中处理任务。操作审批和需要补充的问题会显示在对话里。</p></div> : <div className="codex-chat-items">{snapshot.items.map(item => <MessageItem key={item.id} item={item} />)}</div>}
+      {loading && !snapshot ? <div className="codex-chat-empty" role="status"><LoaderCircle className="spin" size={25} /><p>正在读取对话…</p></div> : !snapshot?.items.length ? <div className="codex-chat-empty"><MessageSquare size={30} /><h3>在这里继续你的工作</h3><p>发送消息后，Codex 会在当前工作目录中处理任务。操作审批和需要补充的问题会显示在对话里。</p></div> : <div className="codex-chat-items">{snapshot.items.map(item => <MessageItem key={item.id} item={item} highlighted={item.id === highlightedInput} />)}</div>}
       {!!snapshot?.requests.length && <div className="codex-chat-requests">{snapshot.requests.map(request => <NativeRequest key={request.id} request={request} disabled={!transport || !snapshot.connected} answer={async (id, answer) => { await api(`/sessions/${session.id}/chat/requests/${encodeURIComponent(id)}`, answer); await readSnapshot.current(); }} />)}</div>}
     </div>
     {!atBottom && <button type="button" className="codex-latest" onClick={() => { if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; followsBottom.current = true; setAtBottom(true); }}><ArrowDownToLine size={13} />回到最新消息</button>}
+    </div>
+    <ConversationOutline id={outlineId} open={outlineOpen} compact={compactOutline} entries={outlineEntries} selectedId={selectedInput} truncated={snapshot?.truncated ?? false} close={closeOutline} select={jumpToInput} />
+    </div>
     {draft.pending && !busy && <div className="codex-pending" role="status"><strong>发送结果待确认</strong><p>{checkNotice || '这条消息可能已被原生会话接收。查询结果前不会重复发送。'}</p><div><button type="button" className="button secondary small-button" disabled={checking} onClick={() => void checkSubmission()}>{checking ? '正在查询…' : '查询发送结果'}</button>{checkedUnknown && <><button type="button" className="text-button" onClick={() => { if (draftRef.current.pending) accepted(draftRef.current.pending); setError(''); }}>已核对收到，完成发送</button><button type="button" className="text-button" onClick={() => { updateDraft({ ...draftRef.current, pending: null }); setCheckedUnknown(false); setCheckNotice(''); setError(''); }}>已核对未发送，恢复草稿</button></>}</div></div>}
     <form className="codex-composer" onSubmit={event => void send(event)}>
       <textarea ref={textarea} aria-label="给 Codex 发送消息" placeholder={session.archived ? '恢复联系人后继续对话' : hasTurn ? '可以先写下下一条消息…' : '描述任务，或继续补充你的想法…'} value={draft.text} maxLength={30000} disabled={session.archived} rows={3} onChange={event => updateDraft({ ...draftRef.current, text: event.target.value })} onKeyDown={event => {

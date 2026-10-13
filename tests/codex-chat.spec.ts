@@ -1,7 +1,7 @@
 import { mutationHeaders, test } from './fixtures';
 import { expect, type Page } from '@playwright/test';
 import type { AppState, Session } from '../shared/types';
-import type { CodexChatAnswer, CodexChatPatch, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
+import type { CodexChatAnswer, CodexChatItem, CodexChatPatch, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
 
 type Source = EventTarget & { url: string; closed: boolean };
 async function emit(page: Page, url: string, type: string, data?: unknown) {
@@ -273,4 +273,120 @@ test('sending from an existing terminal session selects native chat delivery wit
   expect(app.requests[0].body).toEqual({ mode: 'chat' });
   expect(app.contact.nativeSessionId).toBe('exact-native-thread');
   expect(app.contact.interactionMode).toBe('chat');
+});
+
+function outlineHistory(): CodexChatItem[] {
+  return Array.from({ length: 24 }, (_, index): CodexChatItem[] => [
+    { id: `input-${index}`, turnId: `turn-${index}`, type: 'user', text: index === 4 || index === 8 ? '配置发布\n\n增加按钮样式' : `需求 ${index + 1}：检查当前工作进展`, status: 'completed' },
+    { id: `reply-${index}`, turnId: `turn-${index}`, type: 'assistant', text: `## 第 ${index + 1} 次回复\n\n检查工作目录与界面。\n\n保留历史阅读位置，新的回复不会打断查看。`, status: 'completed' },
+  ]).flat();
+}
+
+test('Codex input outline filters only user messages, locates duplicate prompts by ID and preserves reading during live updates', async ({ page }) => {
+  const app = await fixture(page);
+  app.current.snapshot = { ...app.current.snapshot, items: outlineHistory(), truncated: true };
+  await app.open();
+  const toggle = page.getByRole('button', { name: '对话目录', exact: true });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+  const directory = page.getByRole('complementary', { name: '对话目录', exact: true });
+  const entries = directory.getByRole('navigation', { name: '用户输入目录' }).getByRole('button');
+  await expect(entries).toHaveCount(24);
+  await expect(directory).toContainText('仅列出当前已加载的输入');
+  const input = page.getByRole('searchbox', { name: '筛选用户输入' });
+  await expect(input).toBeFocused();
+  await input.fill('配置发布 增加按钮');
+  await expect(entries).toHaveCount(2);
+  await expect(directory).toContainText('2 / 24 条输入');
+  await entries.nth(1).click();
+  const target = page.locator('[data-chat-item="input-8"]');
+  await expect(target).toBeFocused();
+  await expect(target).toHaveClass(/codex-message-highlighted/);
+  await expect(entries.nth(1)).toHaveAttribute('aria-current', 'location');
+  const scroller = page.getByLabel('Codex 消息记录', { exact: true });
+  await expect.poll(() => target.evaluate(element => element.getBoundingClientRect().top - element.closest('.codex-chat-scroll')!.getBoundingClientRect().top)).toBeCloseTo(12, 0);
+  const before = await scroller.evaluate(element => element.scrollTop);
+  await app.patch({ items: [...app.current.snapshot.items,
+    { id: 'input-live', type: 'user', text: '新需求：配置发布 增加按钮', status: 'completed' },
+    { id: 'reply-live', type: 'assistant', text: '新的回复正在追加。', status: 'inProgress' },
+  ] });
+  await expect(entries).toHaveCount(3);
+  expect(Math.abs(await scroller.evaluate(element => element.scrollTop) - before)).toBeLessThan(2);
+  await input.fill('不存在的需求');
+  await expect(entries).toHaveCount(0);
+  await expect(directory.getByRole('status')).toHaveText('没有匹配的输入');
+  await input.fill('');
+  await expect(entries).toHaveCount(25);
+  await page.screenshot({ path: 'artifacts/codex-input-outline-desktop.png', animations: 'disabled' });
+  await page.getByRole('button', { name: '关闭对话目录' }).click();
+  await expect(toggle).toBeFocused();
+  await expect(directory).toHaveCount(0);
+  await page.getByRole('button', { name: '回到最新消息', exact: true }).click();
+  await expect.poll(() => scroller.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(2);
+  expect(app.requests).toEqual([]);
+});
+
+test('Codex input outline uses a native drawer on mobile, keeps Escape local and closes after locating a message', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const app = await fixture(page);
+  app.current.snapshot = { ...app.current.snapshot, items: outlineHistory() };
+  await app.open();
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const toggle = page.getByRole('button', { name: '对话目录', exact: true });
+  await toggle.click();
+  const drawer = page.getByRole('dialog', { name: '对话目录', exact: true });
+  await expect(drawer).toBeVisible();
+  const search = drawer.getByRole('searchbox', { name: '筛选用户输入' });
+  await expect(search).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await expect(toggle).toBeFocused();
+  await expect(page.getByRole('region', { name: 'Codex 图形会话' })).toBeVisible();
+  await toggle.click();
+  // Native modality prevents focus from reaching the background composer.
+  expect(await drawer.evaluate(element => element.matches(':modal'))).toBe(true);
+  expect(await page.getByLabel('给 Codex 发送消息').evaluate(element => { (element as HTMLElement).focus(); return document.activeElement === element; })).toBe(false);
+  await search.fill('需求 3：');
+  await page.screenshot({ path: 'artifacts/codex-input-outline-mobile.png', animations: 'disabled' });
+  await drawer.getByRole('navigation').getByRole('button').click();
+  await expect(drawer).toHaveCount(0);
+  const target = page.locator('[data-chat-item="input-2"]');
+  await expect(target).toBeFocused();
+  await expect(target).toHaveClass(/codex-message-highlighted/);
+  await expect(page.getByLabel('给 Codex 发送消息')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  // Search survives reopening; clicking the native backdrop closes the drawer.
+  await toggle.click();
+  await expect(search).toHaveValue('需求 3：');
+  await page.mouse.click(5, 100);
+  await expect(drawer).toHaveCount(0);
+  await expect(toggle).toBeFocused();
+  expect(errors).toEqual([]);
+  expect(app.requests).toEqual([]);
+});
+
+test('Codex outline handles empty history, evicted prompts and a resized workspace without changing the conversation', async ({ page }) => {
+  const app = await fixture(page);
+  await app.open();
+  const toggle = page.getByRole('button', { name: '对话目录', exact: true });
+  await toggle.click();
+  await expect(page.getByRole('navigation', { name: '用户输入目录' }).getByRole('status')).toHaveText('还没有用户输入');
+  await app.patch({ items: outlineHistory() });
+  const entries = page.getByRole('navigation', { name: '用户输入目录' }).getByRole('button');
+  await entries.first().click();
+  await expect(entries.first()).toHaveAttribute('aria-current', 'location');
+  await app.patch({ items: app.current.snapshot.items.slice(2), truncated: true });
+  await expect(entries).toHaveCount(23);
+  await expect(page.locator('.conversation-outline-list [aria-current]')).toHaveCount(0);
+  await page.setViewportSize({ width: 640, height: 844 });
+  const drawer = page.getByRole('dialog', { name: '对话目录', exact: true });
+  await expect(drawer).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(drawer).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: '对话目录' })).toBeVisible();
+  await page.getByRole('searchbox', { name: '筛选用户输入' }).press('Escape');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('region', { name: 'Codex 图形会话' })).toBeVisible();
+  expect(app.requests).toEqual([]);
 });
