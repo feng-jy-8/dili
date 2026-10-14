@@ -17,6 +17,8 @@
 
 Dili 的视觉标识使用对话气泡和状态亮点，表达多平台会话连接、持续工作和需要关注的状态。`public/logo.svg` 可用于官网、登录页和宣传材料；`public/icon.svg` 与 `public/favicon.svg` 用于应用图标。
 
+12 个新 Logo 候选已保存至 [设计选型文档](docs/logo-concepts/README.md)，提供交互选型页、浅色／深色总览，以及 SVG 和 PNG 素材，供评审选择。
+
 仓库目录、`sessiondeck` systemd 服务名、`SESSIONDECK_*` 环境变量、`X-SessionDeck-*` 请求头和浏览器存储键保留为兼容标识。它们属于内部接口，不影响产品名称，也避免升级后丢失已有会话、笔记和远程配置。
 
 ## 安装与产品化
