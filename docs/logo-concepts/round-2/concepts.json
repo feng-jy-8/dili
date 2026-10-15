@@ -1,0 +1,170 @@
+[
+  {
+    "id": "13",
+    "name": "D 里有你",
+    "en": "A Smile Inside",
+    "category": "D × iLi · 完整字母",
+    "description": "大 D 是外形；两枚 i 是眼睛，居中的 L 转弯向上成为鼻子和笑线。最直接回应 D + iLi 的构想。",
+    "slogan": "D 里，是一个微笑。",
+    "colors": [
+      "#51418c",
+      "#fff5df",
+      "#ffb59d"
+    ],
+    "kind": "literal"
+  },
+  {
+    "id": "14",
+    "name": "留白的笑",
+    "en": "Room to Smile",
+    "category": "D × iLi · 线框",
+    "description": "用大 D 的线框包住 iLi；保留字母笔画和内部留白，适合更轻、更克制的工具界面。",
+    "slogan": "给下一步，留点空间。",
+    "colors": [
+      "#145d61",
+      "#fff5df",
+      "#efaa76"
+    ],
+    "kind": "outline"
+  },
+  {
+    "id": "15",
+    "name": "奶油嘀",
+    "en": "Soft D",
+    "category": "D × iLi · 图标",
+    "description": "珊瑚色方块里嵌入奶油色大 D，缩短 i 的竖笔，让字母自然过渡成一张小脸。",
+    "slogan": "打开，就有好心情。",
+    "colors": [
+      "#dd6852",
+      "#fff1cf",
+      "#55372f"
+    ],
+    "kind": "cream"
+  },
+  {
+    "id": "16",
+    "name": "歪头嘀",
+    "en": "Little Wink",
+    "category": "D × iLi · 表情",
+    "description": "轻轻歪头的大 D，右侧 i 变成眨眼；L 保留向上弯的笑线，更强调伙伴的性格。",
+    "slogan": "懂你，也陪你开工。",
+    "colors": [
+      "#ad4b64",
+      "#fff1dc",
+      "#ffc4a3"
+    ],
+    "kind": "wink"
+  },
+  {
+    "id": "17",
+    "name": "两个 i",
+    "en": "Two Little Agents",
+    "category": "D × iLi · 双伙伴",
+    "description": "两枚不同颜色的 i 共处一个 D；眼睛各自独立，中间的 L 把它们连成一张笑脸。",
+    "slogan": "各有所长，一起向前。",
+    "colors": [
+      "#164f68",
+      "#c5f1df",
+      "#ffbe8e"
+    ],
+    "kind": "twins"
+  },
+  {
+    "id": "18",
+    "name": "一笔笑 D",
+    "en": "An Open Smile",
+    "category": "D × 笑脸 · 连续线",
+    "description": "D 的左侧轮廓转入内部成为笑线，配上两枚眼睛；字母关系更含蓄，适合简洁的品牌。",
+    "slogan": "一笔相连，一直在线。",
+    "colors": [
+      "#20665b",
+      "#eff5d8",
+      "#e8ac6d"
+    ],
+    "kind": "line"
+  },
+  {
+    "id": "19",
+    "name": "口袋伙伴",
+    "en": "Pocket Companion",
+    "category": "D × iLi · 口袋",
+    "description": "深蓝大 D 像一只小口袋；双 i、弯折 L 和两侧的小脸颊，让工作台有一点温度。",
+    "slogan": "把工作，装进口袋。",
+    "colors": [
+      "#29395d",
+      "#f5e8ca",
+      "#ee9c83"
+    ],
+    "kind": "pocket"
+  },
+  {
+    "id": "20",
+    "name": "折角 D",
+    "en": "Folded D",
+    "category": "D × iLi · 几何",
+    "description": "把 D 的右侧做成切角轮廓，内部使用方点 i 和直角 L；更利落，也保留轻微笑意。",
+    "slogan": "有棱角，也有笑意。",
+    "colors": [
+      "#e7b84d",
+      "#303a31",
+      "#fff6dc"
+    ],
+    "kind": "fold"
+  },
+  {
+    "id": "21",
+    "name": "括号伙伴",
+    "en": "Friendly Syntax",
+    "category": "其他方向 · 开发工具",
+    "description": "一对方括号围住两枚眼睛和笑线；把代码里的结构感变成一个轻松的工作伙伴。",
+    "slogan": "把想法，接进工作。",
+    "colors": [
+      "#385b9b",
+      "#f6f0df",
+      "#e6aa73"
+    ],
+    "kind": "brackets"
+  },
+  {
+    "id": "22",
+    "name": "双页笑脸",
+    "en": "Happy Handoff",
+    "category": "其他方向 · 上下文",
+    "description": "两张错开的纸页，一张留下、一张继续；前面的笑脸呼应笔记、交接和上下文延续。",
+    "slogan": "这一页，接着往下做。",
+    "colors": [
+      "#276658",
+      "#d2efc9",
+      "#f4b48c"
+    ],
+    "kind": "pages"
+  },
+  {
+    "id": "23",
+    "name": "笑着开工",
+    "en": "Ready to Go",
+    "category": "其他方向 · 纯表情",
+    "description": "不依赖字母或气泡，用两枚短竖眼和一条粗笑弧形成直接的表情；圆形轮廓便于小尺寸识别。",
+    "slogan": "有回应，就有动力。",
+    "colors": [
+      "#f2b16e",
+      "#4d3b52",
+      "#fff4dc"
+    ],
+    "kind": "smile"
+  },
+  {
+    "id": "24",
+    "name": "四瓣回应",
+    "en": "A Little Bloom",
+    "category": "其他方向 · 伙伴标记",
+    "description": "四个圆瓣围住一张小脸，像一个会回应的工作印章；用柔软形状表达多个会话共同参与。",
+    "slogan": "让每个想法，有回响。",
+    "colors": [
+      "#7057a0",
+      "#fff2d7",
+      "#eeb18f"
+    ],
+    "kind": "bloom"
+  }
+]

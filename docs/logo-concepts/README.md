@@ -1,6 +1,8 @@
 # Dili Logo 设计候选
 
-为 Dili（嘀哩工作台）设计的 12 个视觉方向。**已选用 02「开口 d / Open D」作为正式 Logo**，其余方向保留作为设计记录。
+为 Dili（嘀哩工作台）设计的第一轮 12 个视觉方向。应用当前使用 02「开口 d / Open D」；因轮廓容易让人联想到抖音，正在探索替代方案。
+
+**新增 [第二轮 13—24：大 D 与 iLi 笑脸](round-2/README.md)**，提供 [浅色总览](round-2/overview.png)、[深色总览](round-2/overview-dark.png) 和 [交互选型页](round-2/gallery.html)。
 
 打开 [交互选型页](gallery.html)，可切换浅色／深色背景、收藏方案、比较 16／24／32 px 小尺寸效果，并下载素材。收藏保存在当前浏览器中。也可直接查看 [浅色总览](overview.png) 和 [深色总览](overview-dark.png)。
 

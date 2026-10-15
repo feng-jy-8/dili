@@ -17,7 +17,7 @@
 
 Dili 的视觉标识采用 **开口 d（Open D）**：深炭色圆角底、白色小写 d 和一颗青柠色亮点。d 的开口代表进入会话的入口，亮点表达随时可以继续工作。`public/logo.svg` 可用于官网、登录页和宣传材料；`public/icon.svg`、`public/favicon.svg` 与 `public/icon-maskable.svg` 用于应用图标。应用中的标志保持固定品牌配色，兼容浅色和深色页面主题。
 
-12 个 Logo 设计方向保存于 [设计选型文档](docs/logo-concepts/README.md)，已选用 **02 开口 d**。其余方案及浅色／深色总览保留作为设计记录。
+Logo 设计方向保存于 [设计选型文档](docs/logo-concepts/README.md)，应用当前使用 **02 开口 d**。[第二轮 13—24](docs/logo-concepts/round-2/README.md) 围绕“大 D 外轮廓与 iLi 笑脸”探索替代方案，等待选定。
 
 仓库目录、`sessiondeck` systemd 服务名、`SESSIONDECK_*` 环境变量、`X-SessionDeck-*` 请求头和浏览器存储键保留为兼容标识。它们属于内部接口，不影响产品名称，也避免升级后丢失已有会话、笔记和远程配置。
 
