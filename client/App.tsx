@@ -67,9 +67,9 @@ const relativeTime = (value: string) => {
 };
 const shortPath = (path: string) => path.replace(/\/$/, '').split('/').filter(Boolean).slice(-2).join('/') || path;
 
-/** Dili mark: two connected conversation lanes and a live status dot. */
+/** Dili Open D: an open conversation entrance with a lime signal dot. */
 export function BrandMark({ size = 18 }: { size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h8A4.5 4.5 0 0 1 19 7.5v1A4.5 4.5 0 0 1 14.5 13H9l-4.5 3v-8.5Z" fill="currentColor" /><path d="M5 15.5A3.5 3.5 0 0 0 8.5 19H13l3.5 2v-4.5" fill="currentColor" opacity=".48" /><circle cx="16.7" cy="7.5" r="1.7" fill="#ff6258" stroke="var(--accent, #3370ff)" strokeWidth="1" /></svg>;
+  return <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="28" fill="#20231f" /><path d="M72 22v34a22 22 0 1 1-11-19" fill="none" stroke="#fff" strokeWidth="12" strokeLinecap="round" /><circle cx="72" cy="22" r="9" fill="#d5ff45" /></svg>;
 }
 export function BackendAvatar({ backend, small = false }: { backend: Backend; small?: boolean }) {
   return <span className={`backend-avatar ${BACKEND[backend].color} ${small ? 'small' : ''}`} aria-label={BACKEND[backend].name}>{BACKEND[backend].glyph}</span>;
@@ -272,7 +272,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
           if (soundRef.current) notificationSound();
           if (!notificationRef.current || typeof Notification === 'undefined' || Notification.permission !== 'granted') continue;
           try {
-            const notification = new Notification(`${session.title} · ${STATUS[session.status].label}`, { body: session.statusDetail || '点击进入会话继续处理', tag: session.id, icon: '/favicon.svg' });
+            const notification = new Notification(`${session.title} · ${STATUS[session.status].label}`, { body: session.statusDetail || '点击进入会话继续处理', tag: session.id, icon: '/favicon.svg?v=open-d' });
             notification.onclick = () => { window.focus(); setSelectedId(session.id); setSelection(''); notification.close(); };
           } catch {
             // Some mobile browsers expose Notification but reject its constructor.
