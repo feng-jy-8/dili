@@ -1,0 +1,170 @@
+[
+  {
+    "id": "25",
+    "name": "字母建筑",
+    "en": "Letter Architecture",
+    "category": "字母融合 · 结构",
+    "description": "大 D 构成外部框架，内部保留清楚的 i、L、i，统一直线和圆角，像三个并列的工作区。",
+    "slogan": "把名字，搭成一个空间。",
+    "colors": [
+      "#29495d",
+      "#f4f0df",
+      "#eca978"
+    ],
+    "kind": "architecture"
+  },
+  {
+    "id": "26",
+    "name": "刻进 D 里",
+    "en": "Carved Monogram",
+    "category": "字母融合 · 负空间",
+    "description": "完整的 D 色块里挖出 iLi，形成像印章一样的标记；统一字母基线，不再借用五官。",
+    "slogan": "一个轮廓，装下整个名字。",
+    "colors": [
+      "#845047",
+      "#fff1dc",
+      "#c6aa89"
+    ],
+    "kind": "carved"
+  },
+  {
+    "id": "27",
+    "name": "拼写 D",
+    "en": "Built from Letters",
+    "category": "字母融合 · 模块",
+    "description": "左边的 i、中间的 L 和右侧半圆共同组成 D。字母参与构造外形，避免在 D 中再塞一套小字。",
+    "slogan": "各自成形，合而成名。",
+    "colors": [
+      "#314956",
+      "#d88a5e",
+      "#a3c7b7"
+    ],
+    "kind": "assembled"
+  },
+  {
+    "id": "28",
+    "name": "回廊",
+    "en": "Inner Passage",
+    "category": "字母融合 · 路径",
+    "description": "一条 L 形路径穿入几何 D，旁边的两个短竖块暗示 i。像工作台的分栏，也像可走进去的空间。",
+    "slogan": "进入工作，有路可循。",
+    "colors": [
+      "#e8b952",
+      "#323c4c",
+      "#fff2d1"
+    ],
+    "kind": "corridor"
+  },
+  {
+    "id": "29",
+    "name": "折带",
+    "en": "Folded Continuity",
+    "category": "轮廓探索 · 折叠",
+    "description": "两段宽折带在转角处拼出有厚度的 D。保留明确折面，把上下文延续转化为结构。",
+    "slogan": "转个方向，接着向前。",
+    "colors": [
+      "#5d4d91",
+      "#b4a0d9",
+      "#efb77f"
+    ],
+    "kind": "ribbon"
+  },
+  {
+    "id": "30",
+    "name": "相扣",
+    "en": "Linked Work",
+    "category": "轮廓探索 · 连结",
+    "description": "一个竖向 L 与一条圆弧相扣，构成精简 D。直线和曲线分别保留自己的颜色，表达独立与连接。",
+    "slogan": "独立工作，彼此相连。",
+    "colors": [
+      "#2d5d86",
+      "#e68c70",
+      "#e8e8d9"
+    ],
+    "kind": "linked"
+  },
+  {
+    "id": "31",
+    "name": "像素门",
+    "en": "Pixel Gateway",
+    "category": "轮廓探索 · 网格",
+    "description": "在粗网格上构造 D，内部的留白是一扇门；小色块像一次刚刚抵达的输入，偏开发工具气质。",
+    "slogan": "给每一次输入，一个入口。",
+    "colors": [
+      "#255a4f",
+      "#c0d9a1",
+      "#eed9a2"
+    ],
+    "kind": "pixel"
+  },
+  {
+    "id": "32",
+    "name": "双轨 D",
+    "en": "Parallel Context",
+    "category": "轮廓探索 · 双轨",
+    "description": "两条等宽轨道沿 D 形并行，在左侧错开收口。保留极少笔画，表达会话与上下文同步向前。",
+    "slogan": "并行推进，始终相随。",
+    "colors": [
+      "#305d68",
+      "#efaa79",
+      "#c1dfd6"
+    ],
+    "kind": "tracks"
+  },
+  {
+    "id": "33",
+    "name": "交汇",
+    "en": "Meeting Point",
+    "category": "抽象符号 · 协作",
+    "description": "两个向内靠近的半圆，中央由一枚方块承接。图形指向共同任务，不依赖字母或表情。",
+    "slogan": "把不同能力，汇到一起。",
+    "colors": [
+      "#9e5365",
+      "#e7a171",
+      "#5d476e"
+    ],
+    "kind": "meeting"
+  },
+  {
+    "id": "34",
+    "name": "书签接力",
+    "en": "Context Bookmark",
+    "category": "抽象符号 · 交接",
+    "description": "两枚方向相反的书签错位交叠；一枚留下位置，一枚继续往前，呼应会话 Fork 和任务交接。",
+    "slogan": "记住这里，继续下一步。",
+    "colors": [
+      "#4b527e",
+      "#a7bba4",
+      "#efc690"
+    ],
+    "kind": "bookmarks"
+  },
+  {
+    "id": "35",
+    "name": "四向工作",
+    "en": "Shared Centre",
+    "category": "抽象符号 · 组织",
+    "description": "四枚向中心收拢的角块，留下一个清楚的菱形空隙。强调多个会话围绕同一个任务组织。",
+    "slogan": "各有方向，共同推进。",
+    "colors": [
+      "#2b6661",
+      "#db925d",
+      "#a7c0b2"
+    ],
+    "kind": "centre"
+  },
+  {
+    "id": "36",
+    "name": "嘀哩节拍",
+    "en": "Dili Rhythm",
+    "category": "抽象符号 · 节奏",
+    "description": "三枚高低不同的圆角竖块组成一个斜向节拍，呼应名字的读音；颜色和比例承担识别，不加表情。",
+    "slogan": "把想法，推进一个节拍。",
+    "colors": [
+      "#b75c46",
+      "#e8ac70",
+      "#6a5054"
+    ],
+    "kind": "rhythm"
+  }
+]
