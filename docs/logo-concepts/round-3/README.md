@@ -2,6 +2,8 @@
 
 笑脸是上一轮的举例。这一轮扩大形状范围，探索字母、负空间和结构本身的识别度，编号为 **25—36**。
 
+**已选用 35「四向工作」**。正式版本保留几何轮廓，配色改用应用的强调色、文字色和次要文字色，随页面主题变化。此目录保留选型时的原始绿橙草案；正式素材见 `public/`，页面组件见 `client/App.tsx` 的 `BrandMark`。
+
 - [浅色总览](overview.png) · [深色总览](overview-dark.png)
 - [单色轮廓对比](shapes.png)：统一颜色，先比较形状。
 - [交互选型页](gallery.html)：支持深浅背景、收藏、复制编号、16／24／32 px 比较和素材下载。
@@ -37,4 +39,4 @@
 
 执行 `python3 docs/logo-concepts/round-3/generate.py` 生成 SVG 和 HTML；加 `--render` 导出 PNG 与总览。渲染依赖系统的 PyGObject/Rsvg、pycairo、Pillow、Noto Sans CJK 和 DejaVu Sans 字体，不修改应用依赖。
 
-素材已保存用于选择，应用仍使用当前 Logo。
+应用已采用 35，其他素材和总览保留为设计记录。

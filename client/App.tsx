@@ -67,9 +67,9 @@ const relativeTime = (value: string) => {
 };
 const shortPath = (path: string) => path.replace(/\/$/, '').split('/').filter(Boolean).slice(-2).join('/') || path;
 
-/** Dili Open D: an open conversation entrance with a lime signal dot. */
+/** Four independent sessions gather around a shared task; colors follow the theme. */
 export function BrandMark({ size = 18 }: { size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="28" fill="#20231f" /><path d="M72 22v34a22 22 0 1 1-11-19" fill="none" stroke="#fff" strokeWidth="12" strokeLinecap="round" /><circle cx="72" cy="22" r="9" fill="#d5ff45" /></svg>;
+  return <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true"><g transform="rotate(-8 50 50)"><path d="M14 14H44V29L29 44H14Z" fill="var(--accent)" /><path d="M56 14H86V44H71L56 29Z" fill="var(--text)" /><path d="M86 56V86H56V71L71 56Z" fill="var(--accent)" /><path d="M44 86H14V56H29L44 71Z" fill="var(--muted)" /></g></svg>;
 }
 export function BackendAvatar({ backend, small = false }: { backend: Backend; small?: boolean }) {
   return <span className={`backend-avatar ${BACKEND[backend].color} ${small ? 'small' : ''}`} aria-label={BACKEND[backend].name}>{BACKEND[backend].glyph}</span>;
@@ -272,7 +272,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
           if (soundRef.current) notificationSound();
           if (!notificationRef.current || typeof Notification === 'undefined' || Notification.permission !== 'granted') continue;
           try {
-            const notification = new Notification(`${session.title} · ${STATUS[session.status].label}`, { body: session.statusDetail || '点击进入会话继续处理', tag: session.id, icon: '/favicon.svg?v=open-d' });
+            const notification = new Notification(`${session.title} · ${STATUS[session.status].label}`, { body: session.statusDetail || '点击进入会话继续处理', tag: session.id, icon: '/favicon.svg?v=shared-centre' });
             notification.onclick = () => { window.focus(); setSelectedId(session.id); setSelection(''); notification.close(); };
           } catch {
             // Some mobile browsers expose Notification but reject its constructor.

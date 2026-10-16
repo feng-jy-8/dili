@@ -15,9 +15,9 @@
 
 > **让每一次 AI 对话，都能继续成为工作。**
 
-Dili 的视觉标识采用 **开口 d（Open D）**：深炭色圆角底、白色小写 d 和一颗青柠色亮点。d 的开口代表进入会话的入口，亮点表达随时可以继续工作。`public/logo.svg` 可用于官网、登录页和宣传材料；`public/icon.svg`、`public/favicon.svg` 与 `public/icon-maskable.svg` 用于应用图标。应用中的标志保持固定品牌配色，兼容浅色和深色页面主题。
+Dili 的视觉标识采用 **35 四向工作（Shared Centre）**：四块向中心收拢的几何形，表达多个独立会话围绕同一任务共同推进。页面内的标志使用主题强调色、文字色和次要文字色，随浅色、暖色和深色主题切换。`public/logo.svg` 为横版组合；`public/icon.svg`、`public/favicon.svg` 与 `public/icon-maskable.svg` 用于应用图标，独立 SVG 根据系统深浅色偏好适配配色。
 
-Logo 设计方向保存于 [设计选型文档](docs/logo-concepts/README.md)，应用当前使用 **02 开口 d**。[第二轮 13—24](docs/logo-concepts/round-2/README.md) 探索 D 与 iLi 笑脸，[第三轮 25—36](docs/logo-concepts/round-3/README.md) 扩展为字母融合、负空间和抽象结构，等待选定。
+Logo 设计方向保存于 [设计选型文档](docs/logo-concepts/README.md)，已选用第三轮的 **35 四向工作**，并调整为与应用主题一致的配色。各轮原始草案保留作为设计记录。
 
 仓库目录、`sessiondeck` systemd 服务名、`SESSIONDECK_*` 环境变量、`X-SessionDeck-*` 请求头和浏览器存储键保留为兼容标识。它们属于内部接口，不影响产品名称，也避免升级后丢失已有会话、笔记和远程配置。
 
