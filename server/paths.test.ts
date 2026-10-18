@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, realpath, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,15 @@ test('directory identity accepts native canonical paths and user aliases, never 
   assert.equal(await sameDirectory(join(directory, 'alias'), await realpath(join(directory, 'original'))), true);
   assert.equal(await sameDirectory(join(directory, 'alias'), join(directory, 'different')), false);
   assert.equal(await sameDirectory(join(directory, 'missing'), join(directory, 'original')), false);
+});
+
+test('directory identity accepts other casings on case-insensitive mounts such as WSL /mnt drives', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'sessiondeck-paths-case-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(join(directory, 'Working'));
+  const folded = await stat(join(directory, 'working')).then(() => true, () => false);
+  if (!folded) return t.skip('temporary directory is case-sensitive');
+  assert.equal(await sameDirectory(join(directory, 'Working'), join(directory, 'working')), true);
 });
 
 test('instance lock supports paths longer than Unix socket address limits', async t => {
