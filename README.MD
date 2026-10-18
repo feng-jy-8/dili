@@ -19,7 +19,7 @@ Dili 的视觉标识采用 **35 四向工作（Shared Centre）**：四块向中
 
 Logo 设计方向保存于 [设计选型文档](docs/logo-concepts/README.md)，已选用第三轮的 **35 四向工作**，并调整为与应用主题一致的配色。各轮原始草案保留作为设计记录。
 
-仓库目录、`sessiondeck` systemd 服务名、`SESSIONDECK_*` 环境变量、`X-SessionDeck-*` 请求头和浏览器存储键保留为兼容标识。它们属于内部接口，不影响产品名称，也避免升级后丢失已有会话、笔记和远程配置。
+仓库目录、`SESSIONDECK_*` 环境变量、`X-SessionDeck-*` 请求头和浏览器存储键保留为兼容标识。它们属于内部接口，不影响产品名称，也避免升级后丢失已有会话、笔记和远程配置。
 
 ## 安装与产品化
 
@@ -510,7 +510,9 @@ scripts/install-service.sh    # 一次性：安装单元并启用 linger，不�
 scripts/restart-service.sh    # 每次重启：在独立会话里后台执行，发起它的终端被关闭也不影响
 ```
 
-重启会停止所有正在运行的 Agent 会话（它们是服务的子进程）；联系人保留原生会话 ID，进入卡片即可恢复。脚本只会停止本项目、监听该端口的 Dili 进程，不会按端口误杀其他程序。手动查看：`systemctl --user status sessiondeck`，日志：`journalctl --user -u sessiondeck -f`。
+重启会停止所有正在运行的 Agent 会话（它们是服务的子进程）；联系人保留原生会话 ID，进入卡片即可恢复。脚本只会停止本项目、监听该端口的 Dili 进程，不会按端口误杀其他程序。手动查看：`systemctl --user status dili`，日志：`journalctl --user -u dili -f`。
+
+用户服务名为 `dili.service`。旧版本安装的 `sessiondeck.service` 仍会被识别：设置页「迁移到 dili.service」、`dili service enable` 或重新执行 `scripts/install-service.sh` 都会启用新单元并停用旧单元，但不停止正在运行的实例；`scripts/restart-service.sh` 会把旧单元托管的实例切换到 `dili.service`。
 
 
 

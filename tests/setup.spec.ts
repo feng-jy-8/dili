@@ -38,7 +38,7 @@ test('auto-start toggle changes only future startup and mobile settings do not o
   const actions: unknown[] = [];
   await page.route('**/api/setup/startup', route => {
     if (route.request().method() === 'POST') { actions.push(route.request().postDataJSON()); enabled = true; }
-    return route.fulfill({ json: { supported: true, enabled, active: true, linger: false, conflict: false, wsl: true, unitPath: '/home/test/.config/systemd/user/sessiondeck.service', note: '在 WSL 发行版启动后自动运行；不会停止当前会话。' } });
+    return route.fulfill({ json: { supported: true, enabled, active: true, linger: false, conflict: false, legacy: false, wsl: true, unitPath: '/home/test/.config/systemd/user/dili.service', note: '在 WSL 发行版启动后自动运行；不会停止当前会话。' } });
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#/backends');

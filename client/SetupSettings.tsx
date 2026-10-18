@@ -58,19 +58,18 @@ export function StartupSettings({ local }: { local: boolean }) {
   const [error, setError] = useState('');
   const load = async () => { try { setStatus(await api<StartupStatus>('/setup/startup')); setError(''); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法读取启动设置'); } };
   useEffect(() => { void load(); }, []);
-  const toggle = async () => {
-    if (!status) return;
+  const change = async (enabled: boolean) => {
     setBusy(true); setError('');
-    try { setStatus(await api<StartupStatus>('/setup/startup', { enabled: !status.enabled })); }
+    try { setStatus(await api<StartupStatus>('/setup/startup', { enabled })); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '更新失败'); }
     finally { setBusy(false); }
   };
   return <section className="backend-setting-card" aria-label="自动启动">
     <div className="backend-setting-title"><Power size={20} /><div><h2>自动启动</h2><p>启动电脑后继续使用你的工作台。</p></div></div>
     <p className="backend-note">{status?.note ?? '正在读取本机启动设置…'}</p>
-    {status?.supported && <><div className="setup-actions"><button className="button secondary small-button" role="switch" aria-checked={status.enabled} disabled={busy || !local || status.conflict} onClick={() => void toggle()}>{busy ? <LoaderCircle size={14} className="spin" /> : <Power size={14} />}{status.enabled ? '自动启动已开启' : '开启自动启动'}</button><span className="muted">{status.active ? '用户服务正在运行' : '用户服务未运行'}</span></div>
+    {status?.supported && <><div className="setup-actions"><button className="button secondary small-button" role="switch" aria-checked={status.enabled} disabled={busy || !local || status.conflict} onClick={() => void change(!status.enabled)}>{busy ? <LoaderCircle size={14} className="spin" /> : <Power size={14} />}{status.enabled ? '自动启动已开启' : '开启自动启动'}</button>{status.legacy && <button className="button secondary small-button" disabled={busy || !local} onClick={() => void change(true)}>迁移到 dili.service</button>}<span className="muted">{status.active ? '用户服务正在运行' : '用户服务未运行'}</span></div>
       {!status.wsl && !status.linger && <p className="backend-note">如需在登录前运行，可在本机终端执行 <code>loginctl enable-linger</code>。此操作可能需要系统授权。</p>}
-      <details><summary>服务位置</summary><code>{status.unitPath}</code><small className="muted">保留兼容的 sessiondeck.service 名称。开关不会停止或重启当前服务。</small></details></>}
+      <details><summary>服务位置</summary><code>{status.unitPath}</code><small className="muted">开关不会停止或重启当前服务。</small></details></>}
     {!local && <p className="backend-note">请在本机更改自动启动设置。</p>}
     {error && <p role="alert" className="setup-message">{error}</p>}
     <button className="text-button" disabled={busy} onClick={() => void load()}><RefreshCw size={13} />重新检测</button>
