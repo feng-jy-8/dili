@@ -268,7 +268,8 @@ test('a slow shell creation follows the latest contact directory and reconnect p
     await page.getByRole('button', { name: '打开终端', exact: true }).click();
     releaseFirst();
     const dock = page.getByRole('region', { name: '底部终端面板' });
-    await expect(dock.locator('.terminal-dock-pane-heading')).toHaveText(secondCwd);
+    await expect(dock.locator('.terminal-dock-pane-heading')).toHaveCount(0);
+    await expect(dock.getByRole('tab', { selected: true })).toHaveAttribute('title', new RegExp(secondCwd));
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(1);
     await command(dock, `printf 'CWD_RESULT:%s\\n' "$PWD"`);
     await expect(dock.locator('.xterm-rows')).toContainText(`CWD_RESULT:${secondCwd}`);

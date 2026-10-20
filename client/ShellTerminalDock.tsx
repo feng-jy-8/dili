@@ -159,7 +159,6 @@ export default function ShellTerminalDock({ open, sessionId, requestedShellId, o
     {error && <div className="terminal-dock-error" role="alert"><span>{error}</span><button className="text-button" onClick={() => { setError(''); void refresh().catch(cause => setError(cause.message)); }}><RefreshCw size={13} />刷新列表</button></div>}
     <div className="terminal-dock-body">
       {panes.map(shell => <div className="terminal-dock-pane" key={shell.id} id={`shell-pane-${shell.id}`} role="tabpanel" aria-label={`${shell.title} 终端`} aria-labelledby={`shell-tab-${shell.id}`}>
-        <div className="terminal-dock-pane-heading"><span title={shell.cwd}>{shell.cwd}</span>{!shell.running && <small>已退出 · {shell.exitCode}</small>}</div>
         <TerminalPane sessionId={shell.id} running={shell.running} channel="shell" focusRequest={focusTarget?.id === shell.id ? focusTarget.request : undefined} onSelection={ignoreSelection} onExit={exitCode => setShells(current => current.some(entry => entry.id === shell.id && (entry.running || entry.exitCode !== exitCode)) ? current.map(entry => entry.id === shell.id ? { ...entry, running: false, exitCode } : entry) : current)} />
       </div>)}
       {!panes.length && <div className="terminal-dock-empty">{loading || busy ? <><LoaderCircle size={18} className="spin" /><span>正在打开 Shell…</span></> : <><TerminalSquare size={22} /><span>新建终端，在工作目录运行命令。</span><button className="button secondary small-button" onClick={() => void createShell()}><Plus size={14} />新建终端</button></>}</div>}

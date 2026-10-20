@@ -7,7 +7,7 @@ import {
   GitFork, LoaderCircle, MessageSquare, Pencil, Pin, PinOff, Play, Plus,
   Radio, Search, Send, Settings2, Share2, SlidersHorizontal, Square, UsersRound, X,
   PanelBottomOpen, Volume2, VolumeX, TerminalSquare, Link2, PanelLeftOpen, PanelLeftClose,
-  FilePenLine, Palette,
+  FilePenLine, Palette, Maximize2, Minimize2,
 } from 'lucide-react';
 import type { AppState, StatePatch, Backend, DiscoveredSession, Delivery, Group, GroupDetail, GroupMessage, Session, SessionStatus } from '../shared/types';
 import { applyStatePatch } from './state';
@@ -26,6 +26,7 @@ import type { AgentSetupInfo } from '../shared/setup';
 import ScratchpadPanel from './ScratchpadPanel';
 import AppearanceDialog from './AppearanceDialog';
 import InterfaceZoom from './InterfaceZoom';
+import BackendLogo from './BackendLogo';
 import { useContactFilters, useContactSort, type ContactSort } from './preferences';
 import { readLocalPreference, writeLocalPreference, useDialog } from './ui';
 import ModalShell from './Modal';
@@ -34,10 +35,10 @@ import type { AuthStatus } from '../shared/auth';
 
 const CodexChatPane = lazy(() => import('./CodexChatPane'));
 
-export const BACKEND: Record<Backend, { name: string; short: string; glyph: string; color: string }> = {
-  claude: { name: 'Claude Code', short: 'Claude', glyph: '✳', color: 'coral' },
-  codex: { name: 'Codex', short: 'Codex', glyph: '⌘', color: 'green' },
-  dsh: { name: 'DeepSeek Harness', short: 'DeepSeek', glyph: '≈', color: 'blue' },
+export const BACKEND: Record<Backend, { name: string; short: string; color: string }> = {
+  claude: { name: 'Claude Code', short: 'Claude', color: 'coral' },
+  codex: { name: 'Codex', short: 'Codex', color: 'green' },
+  dsh: { name: 'DeepSeek Harness', short: 'DeepSeek', color: 'blue' },
 };
 export const STATUS: Record<SessionStatus, { label: string; className: string }> = {
   idle: { label: '空闲', className: 'idle' }, running: { label: '运行中', className: 'running' },
@@ -73,7 +74,7 @@ export function BrandMark({ size = 18 }: { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true"><g transform="rotate(-8 50 50)"><path d="M14 14H44V29L29 44H14Z" fill="var(--accent)" /><path d="M56 14H86V44H71L56 29Z" fill="var(--text)" /><path d="M86 56V86H56V71L71 56Z" fill="var(--accent)" /><path d="M44 86H14V56H29L44 71Z" fill="var(--muted)" /></g></svg>;
 }
 export function BackendAvatar({ backend, small = false }: { backend: Backend; small?: boolean }) {
-  return <span className={`backend-avatar ${BACKEND[backend].color} ${small ? 'small' : ''}`} aria-label={BACKEND[backend].name}>{BACKEND[backend].glyph}</span>;
+  return <span className={`backend-avatar ${BACKEND[backend].color} ${small ? 'small' : ''}`} aria-label={BACKEND[backend].name}><BackendLogo backend={backend} /></span>;
 }
 export function StatusBadge({ session }: { session: Session }) {
   return <span className={`status-badge ${STATUS[session.status].className}`} title={`${session.statusDetail || STATUS[session.status].label} · ${session.statusSource === 'native' ? '来自后端' : session.statusSource === 'terminal' ? '根据终端输出推测' : session.statusSource === 'manual' ? '手动设置' : '进程状态'}`}><i />{STATUS[session.status].label}{session.statusSource === 'terminal' && <span className="estimated">估测</span>}</span>;
@@ -159,6 +160,8 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const seenServerInstancesRef = useRef(new Set<string>());
   const operationRef = useRef(false);
   const drawerRef = useRef<HTMLElement>(null);
+  const [fullscreenSessionId, setFullscreenSessionId] = useState<string | null>(null);
+  useEffect(() => { setFullscreenSessionId(null); }, [selectedId]);
   const sessionInvokersRef = useRef(new Map<string, HTMLElement>());
   const focusedSessionIdRef = useRef<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -593,15 +596,20 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
       </> : <div className="conversation-welcome"><BrandMark size={42} /><h2>选择一个联系人，继续会话</h2><p>你的 Agent、上下文和工作目录，都在左侧。</p></div>}
     </section>}
 
-    {selected && state && <section ref={drawerRef} inert={!!modal} className="session-drawer" role="dialog" aria-modal="false" aria-label={`${selected.title} 的私聊`}>
+    {selected && state && <section ref={drawerRef} inert={!!modal} className={`session-drawer${fullscreenSessionId === selected.id ? ' session-fullscreen' : ''}`} onKeyDown={event => {
+      if (event.nativeEvent.isComposing || event.defaultPrevented || event.target instanceof HTMLElement && event.target.closest('.terminal-pane')) return;
+      if (event.key === 'Escape' && fullscreenSessionId === selected.id) { event.preventDefault(); event.stopPropagation(); setFullscreenSessionId(null); }
+      else if (event.key === 'Enter' && event.shiftKey && (event.ctrlKey || event.metaKey)) { event.preventDefault(); event.stopPropagation(); setFullscreenSessionId(value => value ? null : selected.id); }
+    }} role="dialog" aria-modal="false" aria-label={`${selected.title} 的私聊`}>
       <header className="drawer-header">
         <button className="icon-button session-back" aria-label="返回联系人列表" title="返回联系人列表" onClick={() => setSelectedId(null)}><ArrowLeft size={18} /></button>
         <div className="drawer-heading-text">
           <div className="drawer-title"><h2 title={selected.title}>{selected.title}</h2><button className="icon-button rename-button" title="改名" aria-label="改名" onClick={() => setModal({ type: 'rename', session: selected })}><Pencil size={12} /></button><StatusBadge session={selected} /></div>
           <nav className="session-meta" aria-label="会话关系">{selected.statusDetail && <span className={`session-status-detail ${attention(selected) ? 'needs-attention' : ''}`} title={`${selected.statusDetail} · ${selected.statusSource === 'native' ? '后端状态' : selected.statusSource === 'terminal' ? '终端估测' : selected.statusSource === 'manual' ? '手动标记' : '进程状态'}`}>{selected.statusDetail}</span>}{selected.archived && <button className="session-meta-link" onClick={() => void patch(selected, { archived: false })}><Archive size={12} />已归档 · 恢复联系人</button>}<span>{BACKEND[selected.backend].short}</span><button className="session-cwd" aria-label="复制工作目录" title={`${selected.cwd}\n点击复制`} onClick={() => void copyText(selected.cwd, '工作目录')}><Folder size={12} /><span><bdi>{selected.cwd}</bdi></span></button>{selectedGroup && <button className="session-meta-link" onClick={() => navigate(`group:${selectedGroup.id}`)}><UsersRound size={12} />{selectedGroup.title}</button>}{selectedParent && <button className="session-meta-link" onClick={() => openSession(selectedParent)}><GitFork size={12} />来源：{selectedParent.title}</button>}</nav>
         </div>
-        {!dshWebOnly && <div className="private-view-switch" role="group" aria-label="会话显示方式" title="同一个会话，切换视图不重启"><button aria-label={codexChatAvailable ? '图形对话' : '对话记录'} title={codexChatAvailable ? '图形对话' : '对话记录'} aria-pressed={privateView !== 'terminal'} onClick={() => switchPrivateView(codexChatAvailable ? 'chat' : 'conversation')}><MessageSquare size={14} /><span>{codexChatAvailable ? '图形对话' : '对话记录'}</span></button><button aria-label="原生终端" title="原生终端" aria-pressed={privateView === 'terminal'} disabled={!!busy} onClick={() => switchPrivateView('terminal')}><TerminalSquare size={14} /><span>原生终端</span></button></div>}
+        <div className="private-view-switch" role="group" aria-label="会话显示方式" title="同一个会话，切换视图不重启"><button aria-label={codexChatAvailable ? '图形对话' : '对话记录'} title={codexChatAvailable ? '图形对话' : '对话记录'} aria-pressed={dshWebOnly ? privateView === 'conversation' : privateView !== 'terminal'} onClick={() => switchPrivateView(codexChatAvailable ? 'chat' : 'conversation')}><MessageSquare size={14} /><span>{codexChatAvailable ? '图形对话' : '对话记录'}</span></button><button aria-label={dshWebOnly ? '原生界面' : '原生终端'} title={dshWebOnly ? '原生界面' : '原生终端'} aria-pressed={privateView === 'terminal'} disabled={!!busy} onClick={() => switchPrivateView('terminal')}><TerminalSquare size={14} /><span>{dshWebOnly ? '原生界面' : '原生终端'}</span></button></div>
         <div className="drawer-actions">
+          <button className="icon-button" aria-label={fullscreenSessionId === selected.id ? '退出会话全屏' : '全屏会话'} title={fullscreenSessionId === selected.id ? '退出全屏（Esc）' : '全屏会话（Ctrl / ⌘ + Shift + Enter）'} aria-pressed={fullscreenSessionId === selected.id} onClick={() => setFullscreenSessionId(value => value ? null : selected.id)}>{fullscreenSessionId === selected.id ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
           {selected.running ? <button className="button secondary small-button session-lifecycle" aria-label={stopLabel} title={stopLabel} disabled={!!busy} onClick={() => void run(`stop:${selected.id}`, () => api(`/sessions/${selected.id}/stop`, {}), dshWebOnly ? '已停止当前任务，原生会话历史仍保留' : '已停止进程，原生会话历史仍保留')}><Square size={12} /><span>{stopLabel}</span></button> : <button className="button primary small-button session-lifecycle" aria-label={startLabel} title={startLabel} disabled={!!busy || selected.archived || !selectedBackend?.installed} onClick={() => void startSelected()}>{busy === `start:${selected.id}` ? <LoaderCircle size={13} className="spin" /> : <Play size={13} />}<span>{startLabel}</span></button>}
           {selected.groupId && <button className="icon-button session-extra-action" aria-label="分享结果到群组" title="分享结果到群组" onClick={() => setModal({ type: 'share', session: selected, text: selection })}><Share2 size={15} /></button>}
           {selected.nativeUrl && <a className="icon-button session-extra-action" aria-label="原生窗口" title="在新窗口打开原生界面" target="_blank" rel="noreferrer" href={selected.nativeUrl}><ExternalLink size={15} /></a>}
@@ -633,7 +641,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
       {nativeSessionBusy && <div role="alert" className="error-banner native-session-busy"><span>这个 Codex 会话正被其他原生客户端占用。关闭原客户端后可重试恢复；也可以 Fork 继承上下文，独立继续。</span><div><button className="button secondary small-button" disabled={!!busy} onClick={() => void startSelected()}>重试恢复</button><button className="button secondary small-button" disabled={!!busy || !selectedBackend?.capabilities.fork || !selected.nativeSessionId || selected.forkPending} onClick={() => { setError(''); setModal({ type: 'fork', session: selected, groupId: selected.groupId ?? undefined }); }}><GitFork size={13} />Fork 后继续</button></div></div>}
       {error && !nativeSessionBusy && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label="关闭会话错误提示" onClick={() => setError('')}><X size={15} /></button></div>}
       <div className="session-conversation">
-      {dshWebOnly ? selected.nativeUrl ? <div className="native-web"><iframe title="DeepSeek Harness 会话" src={selected.nativeUrl} allow="clipboard-read; clipboard-write" /></div> : <div className="terminal-empty"><BackendAvatar backend="dsh" /><h3>直接使用 Harness 原生界面</h3><p>{busy === `start:${selected.id}` ? '正在启动原生会话…' : '启动会话后，在这里继续这个联系人的上下文。'}</p></div> : privateView === 'chat' ? <Suspense fallback={<div className="loading-state"><LoaderCircle size={22} className="spin" /><p>正在加载对话…</p></div>}><CodexChatPane key={selected.id} session={selected} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /></Suspense> : privateView === 'conversation' ? <ConversationPane key={selected.id} session={selected} allowInput={!state.demo} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /> : codexChatAvailable && selected.running && selected.interactionMode === 'chat' ? <div className="terminal-empty"><Command size={26} /><h3>连接同一个 Codex 会话</h3><button className="button primary" disabled={!!busy} onClick={() => switchPrivateView('terminal')}>连接原生终端</button></div> : <TerminalPane key={selected.id} sessionId={selected.id} running={selected.running} status={selected.status} allowImages={['codex', 'claude', 'dsh'].includes(selected.backend) && !state.demo} onSelection={setSelection} />}
+      {dshWebOnly && privateView !== 'conversation' ? selected.nativeUrl ? <div className="native-web"><iframe title="DeepSeek Harness 会话" src={selected.nativeUrl} allow="clipboard-read; clipboard-write" /></div> : <div className="terminal-empty"><BackendAvatar backend="dsh" /><h3>直接使用 Harness 原生界面</h3><p>{busy === `start:${selected.id}` ? '正在启动原生会话…' : '启动会话后，在这里继续这个联系人的上下文。'}</p></div> : privateView === 'chat' ? <Suspense fallback={<div className="loading-state"><LoaderCircle size={22} className="spin" /><p>正在加载对话…</p></div>}><CodexChatPane key={selected.id} session={selected} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /></Suspense> : privateView === 'conversation' ? <ConversationPane key={selected.id} session={selected} allowInput={!state.demo && !dshWebOnly} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /> : codexChatAvailable && selected.running && selected.interactionMode === 'chat' ? <div className="terminal-empty"><Command size={26} /><h3>连接同一个 Codex 会话</h3><button className="button primary" disabled={!!busy} onClick={() => switchPrivateView('terminal')}>连接原生终端</button></div> : <TerminalPane key={selected.id} sessionId={selected.id} running={selected.running} status={selected.status} allowImages={['codex', 'claude', 'dsh'].includes(selected.backend) && !state.demo} onSelection={setSelection} />}
       </div>
     </section>}
     </div>

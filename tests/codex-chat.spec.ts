@@ -3,6 +3,65 @@ import { expect, type Page } from '@playwright/test';
 import type { AppState, Session } from '../shared/types';
 import type { CodexChatAnswer, CodexChatItem, CodexChatPatch, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
 
+test('active Codex turns accept supplemental input and approval still blocks sending', async ({ page }) => {
+  const app = await fixture(page); await app.open();
+  const input = page.getByLabel('给 Codex 发送消息');
+  await input.fill('initial task'); await input.press('Enter');
+  await expect(input).toHaveValue(''); await input.fill('supplement current task');
+  await expect(page.getByRole('button', { name: '发送', exact: true })).toBeEnabled(); await input.press('Enter');
+  await expect.poll(() => app.requests.filter(item => item.path === 'messages').length).toBe(2);
+  expect(app.requests.filter(item => item.path === 'messages').at(-1)?.body).toMatchObject({ text: 'supplement current task', expectedTurnId: 'turn-1' });
+  expect(app.requests.filter(item => item.path === 'messages').every(item => !('model' in item.body))).toBe(true);
+  expect(app.requests.filter(item => item.path === 'start')).toHaveLength(1);
+  expect(app.requests.filter(item => item.path === 'interrupt')).toHaveLength(0);
+  await expect(page.getByLabel('当前会话模型')).toHaveCount(0);
+  await app.patch({ requests: [{ id: 'pending', kind: 'approval', title: '审批', options: [{ id: 'deny', label: '拒绝' }] }] });
+  await input.fill('approval must stay explicit');
+  await expect(page.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
+});
+
+test('composer resizes both axes and fullscreen preserves the draft and connection', async ({ page }) => {
+  const app = await fixture(page); await app.open();
+  const input = page.getByLabel('给 Codex 发送消息'); await input.fill('resize keeps this draft');
+  const connections = () => page.evaluate(() => (window as unknown as { codexSources: Source[] }).codexSources.filter(source => !source.closed).length);
+  const before = await connections();
+  const height = page.getByRole('separator', { name: '调整输入区高度', exact: true });
+  const initial = Number(await height.getAttribute('aria-valuenow'));
+  const box = (await height.boundingBox())!; await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down(); await page.mouse.move(box.x + box.width / 2, box.y - 50, { steps: 6 }); await page.mouse.up();
+  expect(Number(await height.getAttribute('aria-valuenow'))).toBeGreaterThan(initial + 40);
+  const width = page.getByRole('separator', { name: '调整输入区右侧宽度', exact: true });
+  const previousWidth = Number(await width.getAttribute('aria-valuenow')); await width.focus(); await width.press('ArrowLeft');
+  expect(Number(await width.getAttribute('aria-valuenow'))).toBe(previousWidth - 24);
+  const adjustedHeight = await height.getAttribute('aria-valuenow');
+  await page.getByRole('button', { name: '全屏会话', exact: true }).click();
+  const drawer = page.locator('.session-drawer'); await expect(drawer).toHaveClass(/session-fullscreen/);
+  expect((await drawer.boundingBox())!.width).toBe(1440);
+  await expect(input).toHaveValue('resize keeps this draft'); expect(await connections()).toBe(before);
+  await page.getByRole('button', { name: '对话目录', exact: true }).click();
+  await page.keyboard.press('Escape'); await expect(drawer).toHaveClass(/session-fullscreen/);
+  await input.focus(); await input.press('Escape'); await expect(drawer).not.toHaveClass(/session-fullscreen/);
+  await expect(input).toHaveValue('resize keeps this draft');
+  await input.press('Control+Shift+Enter'); await expect(drawer).toHaveClass(/session-fullscreen/);
+  await input.press('Control+Shift+Enter'); await expect(drawer).not.toHaveClass(/session-fullscreen/);
+  expect(app.requests).toEqual([]);
+  await page.reload(); await expect(input).toHaveValue('resize keeps this draft');
+  await expect(height).toHaveAttribute('aria-valuenow', adjustedHeight!);
+  await page.screenshot({ path: 'artifacts/resizable-graphical-composer.png', animations: 'disabled' });
+  await page.evaluate(() => { localStorage.setItem('dili.interface-zoom', '200'); });
+  await page.reload(); await expect(input).toHaveValue('resize keeps this draft');
+  const zoomedHeight = Number(await height.getAttribute('aria-valuenow'));
+  const zoomedBox = (await height.boundingBox())!; await page.mouse.move(zoomedBox.x + zoomedBox.width / 2, zoomedBox.y + 3);
+  await page.mouse.down(); await page.mouse.move(zoomedBox.x + zoomedBox.width / 2, zoomedBox.y + 43, { steps: 5 }); await page.mouse.up();
+  expect(Number(await height.getAttribute('aria-valuenow'))).toBe(zoomedHeight - 20);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(input).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole('button', { name: '全屏会话', exact: true }).click();
+  await expect(page.getByRole('button', { name: '退出会话全屏', exact: true })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/graphical-mobile-zoom.png', animations: 'disabled' });
+});
+
 type Source = EventTarget & { url: string; closed: boolean };
 async function emit(page: Page, url: string, type: string, data?: unknown) {
   await page.evaluate(({ url, type, data }) => {

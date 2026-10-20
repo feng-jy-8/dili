@@ -475,3 +475,36 @@ test('Codex image-only prompts use native localImage inputs without exposing ser
   assert.equal(item?.imageCount,1);
   assert.equal(item?.text,'');
 });
+
+test('steering binds to the active turn, sends native images, preserves completion and never starts a fallback turn', async t => {
+  const f = await fixture(t), { bridge, threadId, turnId } = f;
+  await bridge.openSession(threadId); await bridge.sendPrompt(threadId, 'initial');
+  await assert.rejects(bridge.sendPrompt(threadId, 'stale', undefined, [], randomUUID()), /已变化/);
+  assert.equal(f.calls.filter(call => call.message.method === 'turn/steer').length, 0);
+  f.intercept((socket, message) => {
+    if (message.method !== 'turn/steer') return false;
+    socket.send(JSON.stringify({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } }));
+    socket.send(JSON.stringify({ id: message.id, result: { turnId } })); return true;
+  });
+  assert.deepEqual(await bridge.sendPrompt(threadId, 'correction', undefined, ['/private/image.png'], turnId), { turnId });
+  const steer = f.calls.find(call => call.message.method === 'turn/steer')!;
+  assert.equal(steer.socket, f.observer());
+  assert.deepEqual(steer.message.params, { threadId, expectedTurnId: turnId, input: [{ type: 'text', text: 'correction', text_elements: [] }, { type: 'localImage', path: '/private/image.png' }] });
+  assert.equal(bridge.chatSnapshot(threadId)!.activeTurnId, null);
+  assert.equal(f.calls.filter(call => call.message.method === 'turn/start').length, 1);
+});
+
+test('unsupported native steering rejects safely and concurrent steering is claimed once', async t => {
+  const f = await fixture(t), { bridge, threadId, turnId } = f;
+  await bridge.openSession(threadId); await bridge.sendPrompt(threadId, 'initial');
+  f.intercept((socket, message) => {
+    if (message.method !== 'turn/steer') return false;
+    setTimeout(() => socket.send(JSON.stringify({ id: message.id, error: { code: -32601, message: 'unknown method' } })), 20); return true;
+  });
+  const results = await Promise.allSettled([1, 2].map(() => bridge.sendPrompt(threadId, 'correction', undefined, [], turnId)));
+  assert.ok(results.every(result => result.status === 'rejected' && result.reason.deliveryUnknown === false));
+  assert.ok(results.some(result => result.status === 'rejected' && /不支持/.test(result.reason.message)));
+  assert.equal(f.calls.filter(call => call.message.method === 'turn/steer').length, 1);
+  assert.equal(f.calls.filter(call => call.message.method === 'turn/start').length, 1);
+  assert.equal(bridge.chatSnapshot(threadId)!.activeTurnId, turnId);
+});

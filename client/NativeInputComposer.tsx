@@ -4,6 +4,7 @@ import type { ChatAttachment } from '../shared/attachments';
 import { api, ApiError } from './api';
 import ImageAttachments from './ImageAttachments';
 import Markdown from './Markdown';
+import ResizableComposer from './ResizableComposer';
 import './attachments.css';
 
 type Draft = { text: string; attachments: ChatAttachment[]; pending?: string };
@@ -56,10 +57,10 @@ export default function NativeInputComposer({session,onTerminal}: {session:Sessi
     } finally { if(active.current) setBusy(false); }
   }
   const field = <>{preview && <div className="composer-preview" aria-label="消息 Markdown 预览"><Markdown text={draft.text || '还没有文字内容'}/></div>}<textarea aria-label="原生会话消息草稿" value={draft.text} maxLength={30000} rows={3} placeholder="写下消息，支持 Markdown；填入原生终端后确认发送" disabled={session.archived} onChange={event=>{try {update({...latest.current,text:event.target.value});} catch {setError('无法保存草稿，请检查浏览器存储权限');}}}/></>;
-  return <div className="native-input-composer">
+  return <ResizableComposer><div className="native-input-composer">
     {['claude','dsh'].includes(session.backend) ? <ImageAttachments sessionId={session.id} items={draft.attachments} onChange={change=>{ const current = active.current ? latest.current : read(session.id); update({...current,attachments:change(current.attachments)}); }} onBusy={setUploading} disabled={!!draft.pending || busy || session.archived}>{field}</ImageAttachments> : field}
     {error && <p className="attachment-error" role="alert">{error}</p>}
     {draft.pending && !busy && <div role="status"><p>内容可能已填入原生输入，请核对后继续，避免重复填入。</p><button type="button" className="text-button" onClick={onTerminal}>查看原生输入</button><button type="button" className="text-button" onClick={()=>update({...latest.current,pending:undefined})}>已核对，恢复草稿</button></div>}
     <div className="native-input-footer"><span>填入后到终端按回车；换行会转为空格</span><div><button className="text-button" type="button" aria-pressed={preview} onClick={()=>setPreview(value=>!value)}>Markdown 预览</button><button type="button" className="button primary small-button" disabled={busy || uploading || !!draft.pending || session.archived || !session.running || (!draft.text.trim() && !draft.attachments.length)} onClick={()=>void stage()}>{busy ? '正在填入…' : '填入原生终端'}</button></div></div>
-  </div>;
+  </div></ResizableComposer>;
 }

@@ -169,13 +169,15 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     if (typeof req.body.text !== 'string' || req.body.text.length > 32_000 || /\x00/.test(req.body.text)) fail('消息不能为空，且最多 32000 字符');
     const text = req.body.text.trim();
     const images = options.attachments.resolve(item.id, req.body.attachments);
+    const expectedTurnId = req.body.expectedTurnId;
+    if (expectedTurnId !== undefined && (typeof expectedTurnId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(expectedTurnId))) fail('任务 ID 无效');
     if (!text && !images.length) fail('消息不能为空');
-    const { created, submission } = submissions.begin(item.id, id, item.nativeSessionId!, images.length ? JSON.stringify([text, req.body.attachments]) : text);
+    const { created, submission } = submissions.begin(item.id, id, item.nativeSessionId!, expectedTurnId ? JSON.stringify([text, req.body.attachments ?? [], expectedTurnId]) : images.length ? JSON.stringify([text, req.body.attachments]) : text);
     if (!created) return res.status(submission.status === 'unknown' || submission.status === 'sending' ? 202 : 200).json(submission);
     const inputAt = new Date().toISOString();
     try {
       const model = typeof req.body.model === 'string' && /^[a-zA-Z0-9._:-]{1,100}$/.test(req.body.model) ? req.body.model : undefined;
-      const result = await bridge.sendPrompt(item.nativeSessionId!, text, model, images);
+      const result = await bridge.sendPrompt(item.nativeSessionId!, text, model, images, expectedTurnId);
       if (options.closing()) return;
       const accepted = submissions.finish(item.id, id, { status: 'accepted', turnId: result.turnId });
       options.updatePreview(item, { messages: [{ id, role: 'user', text: text || '[图片]', createdAt: inputAt }], truncated: false });

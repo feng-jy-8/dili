@@ -96,6 +96,12 @@ if (args[0] !== 'app-server') {
           const id = 'question-' + crypto.randomUUID(); pending.set(id, { thread });
           setTimeout(() => send(socket, { id, method: 'item/tool/requestUserInput', params: { threadId: thread.id, turnId: turn.id, itemId: crypto.randomUUID(), questions: [{ id: 'choice', header: 'Choose', question: 'Which option?', isOther: false, isSecret: false, options: [{ label: 'One', description: 'First option' }, { label: 'Two', description: 'Second option' }] }] } }), 10);
         } else if (!input.includes('HOLD')) setTimeout(() => complete(thread, 'Reply: ' + input), 40);
+      } else if (message.method === 'turn/steer') {
+        thread = threads.get(params.threadId); const turn = thread?.turns.at(-1);
+        if (!turn || turn.status !== 'inProgress' || turn.id !== params.expectedTurnId) { send(socket, { id: message.id, error: { code: -1, message: 'Wrong active turn' } }); return; }
+        const item = { id: crypto.randomUUID(), type: 'userMessage', content: params.input };
+        turn.items.push(item); emit(thread.id, 'item/completed', { turnId: turn.id, item });
+        result = { turnId: turn.id };
       } else if (message.method === 'turn/interrupt') {
         thread = threads.get(params.threadId); const turn = thread?.turns.at(-1);
         if (!turn || turn.id !== params.turnId) { send(socket, { id: message.id, error: { code: -1, message: 'Wrong turn' } }); return; }

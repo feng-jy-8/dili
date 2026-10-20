@@ -256,7 +256,7 @@ export class CodexBridge {
 
   /** The retained connection must own this request so approvals and questions
    * remain answerable after turn/start returns. No native policy is overridden. */
-  async sendPrompt(id: string, text: string, model?: string, images: string[] = []): Promise<{ turnId: string }> {
+  async sendPrompt(id: string, text: string, model?: string, images: string[] = [], expectedTurnId?: string): Promise<{ turnId: string }> {
     const rejected = (message: string): Error => Object.assign(new Error(message), { deliveryUnknown: false });
     try { validateNativeId('codex', id); } catch { throw rejected('无效的原生会话 ID'); }
     if (typeof text !== 'string' || (!text.trim() && !images.length) || text.length > 32_000 || text.includes('\0')) throw rejected('消息不能为空且最多 32000 字符');
@@ -264,17 +264,23 @@ export class CodexBridge {
     if (!this.ready || !connection || connection.closed || connection.ws.readyState !== WebSocket.OPEN) throw rejected('Codex 会话尚未连接，请先打开图形会话');
     const snapshot = this.chat.get(id);
     if (!snapshot?.connected) throw rejected('Codex 会话仍在连接，请等待原生恢复完成');
-    if (this.sendingPrompts.has(id) || snapshot?.activeTurnId || snapshot?.requests.length) throw rejected('Codex 仍在执行或等待答复，请处理当前任务后再发送');
+    if (this.sendingPrompts.has(id) || snapshot?.requests.length) throw rejected('Codex 正在提交消息或等待答复，请处理后再发送');
+    if (expectedTurnId !== undefined && (!UUID.test(expectedTurnId) || snapshot.activeTurnId !== expectedTurnId)) throw rejected('当前任务已变化或完成，草稿已保留，请核对后重新发送');
+    if (snapshot.activeTurnId && !expectedTurnId) throw rejected('Codex 仍在执行，请刷新后补充当前任务');
     this.sendingPrompts.add(id);
     const basis = snapshot?.revision ?? 0;
     try {
       let response: RpcMessage;
-      try { response = await this.call(connection, 'turn/start', { threadId: id, ...(model ? { model } : {}), input: [...(text.trim() ? [{ type: 'text', text, text_elements: [] }] : []), ...images.map(path => ({ type: 'localImage', path }))] }); }
+      const input = [...(text.trim() ? [{ type: 'text', text, text_elements: [] }] : []), ...images.map(path => ({ type: 'localImage', path }))];
+      try { response = await this.call(connection, expectedTurnId ? 'turn/steer' : 'turn/start', { threadId: id, ...(expectedTurnId ? { expectedTurnId } : model ? { model } : {}), input }); }
       catch (error) { throw Object.assign(error instanceof Error ? error : new Error(String(error)), { deliveryUnknown: true }); }
-      if (response.error) throw Object.assign(this.rpcError(response, 'Codex 未接受消息'), { deliveryUnknown: false });
-      const turn = (response.result as { turn?: { id?: string } } | undefined)?.turn;
+      if (response.error) throw Object.assign(response.error.code === -32601 && expectedTurnId ? new Error('当前 Codex 版本不支持生成中补充，请升级或在本轮完成后发送；草稿已保留') : this.rpcError(response, 'Codex 未接受消息'), { deliveryUnknown: false });
+      const result = response.result as { turn?: { id?: string }; turnId?: string } | undefined;
+      const turn = expectedTurnId ? { id: result?.turnId } : result?.turn;
       if (!turn?.id || !UUID.test(turn.id)) throw Object.assign(new Error('Codex 未返回有效轮次 ID，请先确认是否已接收消息'), { deliveryUnknown: true });
-      this.chat.acceptedTurn(id, turn, basis);
+      if (expectedTurnId && turn.id !== expectedTurnId) throw Object.assign(new Error('Codex 返回了不同的任务 ID，请先核对补充结果'), { deliveryUnknown: true });
+      // Steering must not resurrect a turn that completed before its response.
+      if (!expectedTurnId) this.chat.acceptedTurn(id, turn, basis);
       const active = this.chat.get(id)?.activeTurnId;
       if (active) this.turnIds.set(id, active);
       return { turnId: turn.id };

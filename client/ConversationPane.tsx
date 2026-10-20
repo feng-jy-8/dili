@@ -1,11 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDownToLine, MessageSquare, RefreshCw, TerminalSquare } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { ArrowDownToLine, List, MessageSquare, RefreshCw, TerminalSquare } from 'lucide-react';
 import type { ConversationTranscript, Session } from '../shared/types';
 import { api } from './api';
 import Markdown from './Markdown';
 import { interfaceScale } from './zoom';
 import NativeInputComposer from './NativeInputComposer';
 import NoticeToasts from './NoticeToasts';
+import ConversationOutline from './ConversationOutline';
 import './conversation.css';
 
 type Snapshot = { identity: string; transcript: ConversationTranscript; syncedAt: Date };
@@ -29,6 +30,13 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [atBottom, setAtBottom] = useState(true);
+  const pane = useRef<HTMLElement>(null);
+  const outlineButton = useRef<HTMLButtonElement>(null);
+  const outlineId = useId();
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [compactOutline, setCompactOutline] = useState(false);
+  const [selectedInput, setSelectedInput] = useState<string | null>(null);
+  const [highlightedInput, setHighlightedInput] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const followBottom = useRef(true);
   const anchor = useRef<ScrollAnchor | null>(null);
@@ -38,6 +46,28 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
   running.current = session.running;
   selectionCallback.current = onSelection;
   const current = snapshot?.identity === identity ? snapshot : null;
+  useLayoutEffect(() => {
+    const element = pane.current; if (!element) return;
+    const measure = () => setCompactOutline(element.clientWidth <= 720);
+    measure(); const observer = new ResizeObserver(measure); observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!highlightedInput) return;
+    const timer = setTimeout(() => setHighlightedInput(null), 1800);
+    return () => clearTimeout(timer);
+  }, [highlightedInput]);
+  function closeOutline() { setOutlineOpen(false); outlineButton.current?.focus({ preventScroll: true }); }
+  function jumpToInput(id: string) {
+    const element = scroller.current;
+    const target = [...(element?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])].find(item => item.dataset.messageId === id);
+    if (!element || !target) return;
+    followBottom.current = false; anchor.current = null;
+    element.scrollTop += (target.getBoundingClientRect().top - element.getBoundingClientRect().top) / interfaceScale() - 12;
+    target.focus({ preventScroll: true });
+    setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 64);
+    setSelectedInput(id); setHighlightedInput(id);
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -135,7 +165,9 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
     followBottom.current = true; setAtBottom(true);
   };
 
-  return <section className="conversation-pane" aria-label="原生对话记录">
+  return <section ref={pane} className="conversation-pane" aria-label="原生对话记录" onKeyDown={event => {
+    if (outlineOpen && event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); closeOutline(); }
+  }}>
     {/* One quiet row: what this is, how much is shown, and the two actions. The
         view switch in the session header already names the backend. */}
     <header className="conversation-toolbar">
@@ -143,6 +175,7 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
         <MessageSquare size={13} />{transcript && !empty ? `${transcript.messages.length} 条` : '记录'}{current && <time dateTime={current.syncedAt.toISOString()}>{current.syncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>}
       </span>
       <span className="conversation-actions">
+        <button ref={outlineButton} className="icon-button" type="button" aria-label="对话目录" title="对话目录" aria-expanded={outlineOpen} aria-controls={outlineOpen ? outlineId : undefined} onClick={() => outlineOpen ? closeOutline() : setOutlineOpen(true)}><List size={15} /></button>
         {!atBottom && !empty && <button className="text-button" onClick={scrollToBottom}><ArrowDownToLine size={13} />回到最新消息</button>}
         <button className="icon-button" aria-label="刷新记录" title="刷新记录" disabled={isLoading || refreshing} onClick={() => refresh.current(true)}><RefreshCw size={14} className={isLoading || refreshing ? 'spin' : undefined} /></button>
         <button className="icon-button" aria-label="进入原生终端" title="进入原生终端" onClick={onTerminal}><TerminalSquare size={14} /></button>
@@ -150,7 +183,7 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
     </header>
     <NoticeToasts scope={'conversation.' + identity} notices={transcript?.notice ? [{ id: 'native:' + transcript.notice, text: transcript.notice }] : transcript?.truncated ? [{ id: 'history-window', text: '最近部分，完整上下文请在原生终端中查看' }] : []} />
     {error && <div className="conversation-error" role="alert"><span>{error}</span><button className="text-button" disabled={refreshing} onClick={() => refresh.current(true)}>重试读取</button></div>}
-    <div className="conversation-scroller" ref={scroller} tabIndex={0} aria-label="会话消息" onScroll={(event) => {
+    <div className="conversation-body"><div className="conversation-scroller" ref={scroller} tabIndex={0} aria-label="会话消息" onScroll={(event) => {
       const element = event.currentTarget;
       const next = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
       followBottom.current = next; setAtBottom(next);
@@ -159,10 +192,12 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
         : empty ? <div className="conversation-empty"><MessageSquare size={28} /><h3>{error ? '暂时无法显示对话' : '还没有可显示的对话'}</h3>
           <p>{session.forkPending ? '启动 Fork 后，这里将显示新会话的记录。' : !session.nativeSessionId ? '启动原生会话并发送第一条消息后，记录会显示在这里。' : '原生记录保存后会出现在这里；可刷新记录或进入终端继续。'}</p>
           <button className="button secondary" onClick={onTerminal}><TerminalSquare size={14} />进入原生终端</button></div>
-          : <ol className="conversation-messages">{transcript!.messages.map(message => <li key={message.id} data-message-id={message.id} className={`conversation-message from-${message.role}`}>
+          : <ol className="conversation-messages">{transcript!.messages.map(message => <li key={message.id} data-message-id={message.id} tabIndex={message.role === 'user' ? -1 : undefined} className={`conversation-message from-${message.role}${message.id === highlightedInput ? ' conversation-message-highlighted' : ''}`}>
             <div className="conversation-message-meta"><span>{message.role === 'user' ? '你' : backendName[session.backend]}</span>{messageTime(message.createdAt) && <time dateTime={message.createdAt}>{messageTime(message.createdAt)}</time>}</div>
             <div className="conversation-text">{message.role === 'assistant' ? <Markdown text={message.text} /> : message.text}</div>
           </li>)}</ol>}
+    </div>
+    <ConversationOutline id={outlineId} open={outlineOpen} compact={compactOutline} entries={transcript?.messages.filter(message => message.role === 'user') ?? []} selectedId={selectedInput} truncated={transcript?.truncated ?? false} close={closeOutline} select={jumpToInput} />
     </div>
     {allowInput && session.backend !== 'codex' && <NativeInputComposer key={session.id} session={session} onTerminal={onTerminal} />}
   </section>;

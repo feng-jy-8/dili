@@ -2,6 +2,59 @@ import { mutationHeaders, test } from './fixtures';
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { AppState, ConversationTranscript, Group, Session } from '../shared/types';
 
+for (const backend of ['claude', 'codex', 'dsh'] as const) {
+  test(`${backend} outline filters user inputs, jumps to exact duplicates and supports fullscreen`, async ({ page }) => {
+    const seed = await (await page.request.get('/api/state')).json() as AppState;
+    const contact = await mutate<Session>(page.request, '/sessions', { backend, title: backend + ' directory', cwd: seed.defaultCwd });
+    const history: ConversationTranscript = { messages: Array.from({ length: 64 }, (_, index) => ({ id: 'entry-' + index, role: index % 2 ? 'assistant' : 'user', text: index % 2 ? 'assistant response ' + index : '重复需求 ' + (index % 4) })), truncated: true };
+    await page.route(`**/api/sessions/${contact.id}/conversation`, route => route.fulfill({ json: history }));
+    await openConversation(page, contact);
+    await expect(page.locator('.backend-avatar svg').first()).toBeVisible();
+    await page.getByRole('button', { name: '对话目录', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: '用户输入目录' });
+    await expect(nav.getByRole('button')).toHaveCount(32);
+    await page.getByRole('searchbox', { name: '筛选用户输入' }).fill('重复需求 0');
+    await expect(nav.getByRole('button')).toHaveCount(16); await nav.getByRole('button').nth(2).click();
+    const target = page.locator('[data-message-id=entry-8]'); await expect(target).toBeFocused();
+    expect(await target.evaluate(element => Math.abs(element.getBoundingClientRect().top - element.closest('.conversation-scroller')!.getBoundingClientRect().top - 12))).toBeLessThan(2);
+    await page.getByRole('button', { name: '关闭对话目录', exact: true }).click();
+    await page.getByRole('button', { name: '全屏会话', exact: true }).click(); await expect(page.locator('.session-drawer')).toHaveClass(/session-fullscreen/);
+    await page.keyboard.press('Escape'); await expect(page.locator('.session-drawer')).not.toHaveClass(/session-fullscreen/);
+    await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '对话目录', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '对话目录', exact: true }); await expect(dialog).toBeVisible();
+    await dialog.getByRole('navigation').getByRole('button').first().click(); await expect(dialog).toHaveCount(0);
+    await expect(page.locator('.conversation-message.from-user').first()).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}
+
+test('Harness without a TUI exposes its transcript directory and returns to its native web view', async ({ page }) => {
+  const seed = await (await page.request.get('/api/state')).json() as AppState;
+  const contact = await mutate<Session>(page.request, '/sessions', { backend: 'dsh', title: 'Harness Web directory', cwd: seed.defaultCwd });
+  const state = { ...seed, demo: false, sessions: [contact], groups: [], activities: [], backends: seed.backends.map(item => item.id === 'dsh' ? { ...item, installed: true, capabilities: { ...item.capabilities, terminal: false } } : item) };
+  // Keep the fixture state authoritative: the real demo SSE would replace it.
+  await page.addInitScript(() => {
+    class FixtureEvents extends EventTarget {
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor() { super(); queueMicrotask(() => this.onopen?.()); }
+      close() {}
+    }
+    Object.defineProperty(window, 'EventSource', { configurable: true, value: FixtureEvents });
+  });
+  await page.route('**/api/state', route => route.fulfill({ json: state }));
+  await page.route(`**/api/sessions/${contact.id}/conversation`, route => route.fulfill({ json: { messages: [{ id: 'web-user', role: 'user', text: 'Harness 原生需求' }], truncated: false } }));
+  await page.goto(`/#/contacts?session=${contact.id}`);
+  await expect(page.getByRole('heading', { name: '直接使用 Harness 原生界面', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '对话记录', exact: true }).click();
+  await page.getByRole('button', { name: '对话目录', exact: true }).click();
+  await expect(page.getByRole('navigation', { name: '用户输入目录' }).getByRole('button')).toContainText('Harness 原生需求');
+  await page.getByRole('button', { name: '关闭对话目录', exact: true }).click();
+  await expect(page.getByLabel('原生会话消息草稿')).toHaveCount(0);
+  await page.getByRole('button', { name: '原生界面', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '直接使用 Harness 原生界面', exact: true })).toBeVisible();
+});
+
 async function mutate<T>(request: APIRequestContext, path: string, body: unknown = {}): Promise<T> {
   const headers = await mutationHeaders(request);
   const response = await request.post(`/api${path}`, {

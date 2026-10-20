@@ -118,6 +118,13 @@ for (const backend of ['codex','claude','dsh'] as const) baseTest(`${backend} pr
     });
     await page.getByRole('button',{name:'对话记录',exact:true}).click();
     await page.getByLabel('原生会话消息草稿').fill('中文任务 **解释**');
+    const composerHeight = page.getByRole('separator', { name: '调整输入区高度', exact: true });
+    const originalHeight = Number(await composerHeight.getAttribute('aria-valuenow'));
+    await composerHeight.focus(); await composerHeight.press('ArrowUp');
+    expect(Number(await composerHeight.getAttribute('aria-valuenow'))).toBe(originalHeight + 24);
+    const composerWidth = page.getByRole('separator', { name: '调整输入区右侧宽度', exact: true });
+    await composerWidth.focus(); await composerWidth.press('ArrowLeft');
+    await expect(page.getByLabel('原生会话消息草稿')).toHaveValue('中文任务 **解释**');
     await page.getByRole('button',{name:'Markdown 预览',exact:true}).click();
     await expect(page.getByLabel('消息 Markdown 预览').locator('strong')).toHaveText('解释');
     await page.getByRole('button',{name:'填入原生终端',exact:true}).click();

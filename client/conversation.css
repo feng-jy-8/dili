@@ -32,3 +32,7 @@
 }
 
 .conversation-text:has(.chat-markdown) { white-space: normal; }
+.conversation-body { display:flex; flex:1; min-height:0; min-width:0; }
+.conversation-scroller { min-width:0; }
+.conversation-message-highlighted .conversation-text,.conversation-message.from-user:focus-visible .conversation-text { outline:2px solid var(--accent); outline-offset:3px; }
+.conversation-message.from-user:focus { outline:none; }

@@ -156,6 +156,16 @@ test('graphical approvals and questions validate opaque handles; interrupt keeps
   const turnsBeforeRetry = (await calls()).filter(call => call.method === 'turn/start').length;
   assert.equal((await request<CodexChatSubmission>(`/api/sessions/${source.id}/chat/messages`, 'POST', busyRequest)).status, 'rejected');
   assert.equal((await calls()).filter(call => call.method === 'turn/start').length, turnsBeforeRetry);
+  const activeTurn = (await snapshot(source.id)).activeTurnId!;
+  const supplemental = { requestId: randomUUID(), text: 'Supplement while running', expectedTurnId: activeTurn };
+  const acceptedSupplement = await request<CodexChatSubmission>(`/api/sessions/${source.id}/chat/messages`, 'POST', supplemental);
+  assert.equal(acceptedSupplement.status, 'accepted'); assert.equal(acceptedSupplement.turnId, activeTurn);
+  assert.deepEqual(await request(`/api/sessions/${source.id}/chat/messages`, 'POST', supplemental), acceptedSupplement);
+  assert.equal((await calls()).filter(call => call.method === 'turn/steer').length, 1, 'Retry must not steer twice');
+  assert.equal((await calls()).filter(call => call.method === 'turn/start').length, turnsBeforeRetry);
+  assert.equal((await snapshot(source.id)).activeTurnId, activeTurn);
+  assert.ok((await snapshot(source.id)).items.some(item => item.text === supplemental.text));
+  await request(`/api/sessions/${source.id}/chat/messages`, 'POST', { requestId: randomUUID(), text: 'stale', expectedTurnId: randomUUID() }, 409);
   await request(`/api/sessions/${source.id}/chat/interrupt`, 'POST', {});
   await until(async () => (await snapshot(source.id)).activeTurnId === null, 'Interrupt did not end the turn');
   assert.equal((await fixture.current(source.id)).running, true, 'Interrupt must retain the connected session');
