@@ -113,8 +113,8 @@ for (const backend of ['codex','claude','dsh'] as const) baseTest(`${backend} pr
   if(backend !== 'codex') {
     let staged: Record<string,unknown> | undefined;
     await page.route('**/api/sessions/'+contact.id+'/input',route=> {
-      if(route.request().method() === 'GET') return route.fulfill({json:{generation:'test-generation'}});
-      staged=route.request().postDataJSON(); return route.fulfill({json:{status:'accepted',staged:true}});
+      if(route.request().method() === 'GET') return route.fulfill({json:{generation:'test-generation',directSubmit:true}});
+      staged=route.request().postDataJSON(); return route.fulfill({json:{status:'accepted',submitted:true}});
     });
     await page.getByRole('button',{name:'对话记录',exact:true}).click();
     await page.getByLabel('原生会话消息草稿').fill('中文任务 **解释**');
@@ -127,8 +127,10 @@ for (const backend of ['codex','claude','dsh'] as const) baseTest(`${backend} pr
     await expect(page.getByLabel('原生会话消息草稿')).toHaveValue('中文任务 **解释**');
     await page.getByRole('button',{name:'Markdown 预览',exact:true}).click();
     await expect(page.getByLabel('消息 Markdown 预览').locator('strong')).toHaveText('解释');
-    await page.getByRole('button',{name:'填入原生终端',exact:true}).click();
-    await expect(page.getByRole('button',{name:'原生终端',exact:true})).toHaveAttribute('aria-pressed','true');
+    await page.getByRole('button',{name:'发送',exact:true}).click();
+    await expect(page.getByLabel('原生会话消息草稿')).toHaveValue('');
+    await expect(page.getByRole('button',{name:'对话记录',exact:true})).toHaveAttribute('aria-pressed','true');
+    expect(staged?.submit).toBe(true);
     expect(staged?.text).toBe('中文任务 **解释**'); expect(staged?.generation).toBe('test-generation');
     expect(staged?.requestId).toBeTruthy();
     await page.getByRole('button',{name:'对话记录',exact:true}).click();

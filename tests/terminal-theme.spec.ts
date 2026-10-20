@@ -21,7 +21,7 @@ for (const mobile of [false, true]) {
         await page.goto('/');
         await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
         const native = page.locator('.session-conversation .terminal-pane');
-        await expect(native.locator('.terminal-connection.connected')).toHaveCount(1);
+        await expect(page.locator('.drawer-header .terminal-connection.connected')).toHaveCount(1);
         const panes: Locator[] = [native];
         if (!mobile) {
           await page.getByRole('button', { name: '打开终端', exact: true }).click();
@@ -55,7 +55,7 @@ for (const mobile of [false, true]) {
         for (let i = 0; i < panes.length; i++) {
           await expectColors(panes[i], 'rgb(255, 255, 255)', 'rgb(37, 43, 53)');
           expect(await elements[i]!.evaluate(element => element.isConnected)).toBe(true);
-          await expect(panes[i].locator('.terminal-connection.connected')).toHaveCount(1);
+          await expect(i === 0 ? page.locator('.drawer-header .terminal-connection.connected') : panes[i].locator('.terminal-connection.connected')).toHaveCount(1);
         }
         if (!mobile) {
           const input = panes[1].locator('.xterm-helper-textarea');

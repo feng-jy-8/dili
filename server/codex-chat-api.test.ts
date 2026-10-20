@@ -317,3 +317,33 @@ test('Claude graphical staging uses separate native image pastes, no Enter, and 
   const terminal=await fetch(f.base+'/api/sessions/'+contact.id+'/terminal/image',{method:'POST',headers:{'content-type':'image/png','x-sessiondeck-token':f.csrfToken,'x-sessiondeck-terminal':native.generation},body:new Uint8Array(png)});
   assert.equal(terminal.status,200);
 });
+
+test('Claude graphical send submits multiline text and images once, exposes recovery, and leaves approvals native', {timeout:30000}, async t => {
+  const f=await launch(t);
+  const contact=await f.request<Session>('/api/sessions','POST',{backend:'claude',title:'Direct graphical send',cwd:f.directory},201);
+  await f.request('/api/sessions/'+contact.id+'/start','POST',{}); await delay(150);
+  const native=await f.request<{generation:string;directSubmit:boolean}>('/api/sessions/'+contact.id+'/input');
+  assert.equal(native.directSubmit,true);
+  const path='/api/sessions/'+contact.id+'/input';
+  const payload={text:'检查任务\n保留换行🙂',generation:native.generation,requestId:randomUUID(),submit:true};
+  const results=await Promise.all([1,2].map(()=>f.request<{status:string;submitted:boolean}>(path,'POST',payload)));
+  assert.ok(results.some(result=>result.status==='accepted'&&result.submitted));
+  const recovered=await f.request<{submission:CodexChatSubmission}>(path+'?requestId='+payload.requestId);
+  assert.equal(recovered.submission.status,'accepted');
+  await until(async()=> (await readFile(join(f.directory,'native-input.log'),'utf8').catch(()=>'' )).endsWith('\r'),'Native send did not submit');
+  assert.equal(await readFile(join(f.directory,'native-input.log'),'utf8'),'\x1b[200~检查任务\n保留换行🙂\x1b[201~\r');
+  await f.request(path,'POST',{...payload,submit:false},409);
+  await f.request(path,'POST',{...payload,requestId:randomUUID(),generation:'old-generation'},409);
+  await f.request('/api/sessions/'+contact.id,'PATCH',{status:'waiting_approval'});
+  await f.request(path,'POST',{...payload,requestId:randomUUID()},409);
+  await f.request('/api/sessions/'+contact.id,'PATCH',{status:'waiting_input'});
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
+  const uploaded=await fetch(f.base+'/api/sessions/'+contact.id+'/attachments',{method:'POST',headers:{'content-type':'image/png','x-sessiondeck-token':f.csrfToken},body:new Uint8Array(png)});
+  assert.equal(uploaded.status,201); const image=await uploaded.json() as {id:string};
+  const imagePayload={...payload,text:'',attachments:[image.id],requestId:randomUUID()};
+  await f.request(path,'POST',imagePayload); await f.request(path,'POST',imagePayload);
+  await until(async()=> (await readFile(join(f.directory,'native-input.log'),'utf8')).split('\r').length===3,'Image-only message did not submit exactly once');
+  const input=await readFile(join(f.directory,'native-input.log'),'utf8');
+  assert.equal(input.split('\x1b[200~').length,3);
+  assert.ok(input.endsWith(JSON.stringify(join(f.directory,'data','chat-images',image.id+'.png'))+'\x1b[201~\r'));
+});

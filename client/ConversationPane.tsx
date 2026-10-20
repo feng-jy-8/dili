@@ -1,3 +1,5 @@
+import { PaneToolOverflow, SessionToolbar, useSessionChrome } from './SessionToolbar';
+import './chat-presentation.css';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, List, MessageSquare, RefreshCw, TerminalSquare } from 'lucide-react';
 import type { ConversationTranscript, Session } from '../shared/types';
@@ -20,10 +22,11 @@ function messageTime(value?: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-/** Reads native structured history. Input and permission decisions remain native. */
+/** Native history remains authoritative; graphical input reuses the running Agent. */
 export default function ConversationPane({ session, onTerminal, onSelection, allowInput = false }: {
   allowInput?: boolean; session: Session; onTerminal: () => void; onSelection?: (text: string) => void;
 }) {
+  const chrome = useSessionChrome();
   const identity = `${session.id}:${session.nativeSessionId ?? ''}:${session.forkPending}`;
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -168,22 +171,16 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
   return <section ref={pane} className="conversation-pane" aria-label="原生对话记录" onKeyDown={event => {
     if (outlineOpen && event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); closeOutline(); }
   }}>
-    {/* One quiet row: what this is, how much is shown, and the two actions. The
-        view switch in the session header already names the backend. */}
-    <header className="conversation-toolbar">
-      <span className="conversation-source" title={transcript?.notice || (transcript?.truncated ? '只显示最近一部分记录，完整上下文请在原生终端中查看' : '只读 · 发送消息、工具详情和审批请使用原生终端')}>
-        <MessageSquare size={13} />{transcript && !empty ? `${transcript.messages.length} 条` : '记录'}{current && <time dateTime={current.syncedAt.toISOString()}>{current.syncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>}
-      </span>
+    <SessionToolbar className="conversation-toolbar">
+      <span className="conversation-source pane-connection" title={current ? `最近同步：${current.syncedAt.toLocaleTimeString('zh-CN')} · ${transcript?.messages.length ?? 0} 条消息` : '正在读取原生记录'}><i className={!isLoading && !error ? 'online' : ''} /><span className="pane-connection-label">{isLoading || refreshing ? '同步中' : error ? '同步失败' : '已同步'}</span></span>
       <span className="conversation-actions">
         <button ref={outlineButton} className="icon-button" type="button" aria-label="对话目录" title="对话目录" aria-expanded={outlineOpen} aria-controls={outlineOpen ? outlineId : undefined} onClick={() => outlineOpen ? closeOutline() : setOutlineOpen(true)}><List size={15} /></button>
-        {!atBottom && !empty && <button className="text-button" onClick={scrollToBottom}><ArrowDownToLine size={13} />回到最新消息</button>}
-        <button className="icon-button" aria-label="刷新记录" title="刷新记录" disabled={isLoading || refreshing} onClick={() => refresh.current(true)}><RefreshCw size={14} className={isLoading || refreshing ? 'spin' : undefined} /></button>
-        <button className="icon-button" aria-label="进入原生终端" title="进入原生终端" onClick={onTerminal}><TerminalSquare size={14} /></button>
+        <PaneToolOverflow><button className="icon-button" aria-label="刷新记录" title="刷新记录" disabled={isLoading || refreshing} onClick={() => refresh.current(true)}><RefreshCw size={14} className={isLoading || refreshing ? 'spin' : undefined} /><span>刷新记录</span></button>{!chrome && <button className="icon-button" aria-label="进入原生终端" title="进入原生终端" onClick={onTerminal}><TerminalSquare size={14} /><span>进入原生终端</span></button>}</PaneToolOverflow>
       </span>
-    </header>
+    </SessionToolbar>
     <NoticeToasts scope={'conversation.' + identity} notices={transcript?.notice ? [{ id: 'native:' + transcript.notice, text: transcript.notice }] : transcript?.truncated ? [{ id: 'history-window', text: '最近部分，完整上下文请在原生终端中查看' }] : []} />
     {error && <div className="conversation-error" role="alert"><span>{error}</span><button className="text-button" disabled={refreshing} onClick={() => refresh.current(true)}>重试读取</button></div>}
-    <div className="conversation-body"><div className="conversation-scroller" ref={scroller} tabIndex={0} aria-label="会话消息" onScroll={(event) => {
+    <div className="conversation-body"><div className="conversation-primary"><div className="chat-scroll conversation-scroller" ref={scroller} tabIndex={0} aria-label="会话消息" onScroll={(event) => {
       const element = event.currentTarget;
       const next = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
       followBottom.current = next; setAtBottom(next);
@@ -192,13 +189,15 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
         : empty ? <div className="conversation-empty"><MessageSquare size={28} /><h3>{error ? '暂时无法显示对话' : '还没有可显示的对话'}</h3>
           <p>{session.forkPending ? '启动 Fork 后，这里将显示新会话的记录。' : !session.nativeSessionId ? '启动原生会话并发送第一条消息后，记录会显示在这里。' : '原生记录保存后会出现在这里；可刷新记录或进入终端继续。'}</p>
           <button className="button secondary" onClick={onTerminal}><TerminalSquare size={14} />进入原生终端</button></div>
-          : <ol className="conversation-messages">{transcript!.messages.map(message => <li key={message.id} data-message-id={message.id} tabIndex={message.role === 'user' ? -1 : undefined} className={`conversation-message from-${message.role}${message.id === highlightedInput ? ' conversation-message-highlighted' : ''}`}>
-            <div className="conversation-message-meta"><span>{message.role === 'user' ? '你' : backendName[session.backend]}</span>{messageTime(message.createdAt) && <time dateTime={message.createdAt}>{messageTime(message.createdAt)}</time>}</div>
-            <div className="conversation-text">{message.role === 'assistant' ? <Markdown text={message.text} /> : message.text}</div>
+          : <ol className="chat-messages conversation-messages">{transcript!.messages.map(message => <li key={message.id} data-message-id={message.id} tabIndex={message.role === 'user' ? -1 : undefined} className={`chat-message chat-${message.role} conversation-message from-${message.role}${message.id === highlightedInput ? ' conversation-message-highlighted' : ''}`}>
+            <div className="chat-message-heading conversation-message-meta"><strong>{message.role === 'user' ? '你' : backendName[session.backend]}</strong>{messageTime(message.createdAt) && <time dateTime={message.createdAt}>{messageTime(message.createdAt)}</time>}</div>
+            <div className="chat-message-body conversation-text">{message.role === 'assistant' ? <Markdown text={message.text} /> : message.text}</div>
           </li>)}</ol>}
+    </div>
+    {!atBottom && !empty && <button type="button" className="chat-latest" onClick={scrollToBottom}><ArrowDownToLine size={13} />回到最新消息</button>}
     </div>
     <ConversationOutline id={outlineId} open={outlineOpen} compact={compactOutline} entries={transcript?.messages.filter(message => message.role === 'user') ?? []} selectedId={selectedInput} truncated={transcript?.truncated ?? false} close={closeOutline} select={jumpToInput} />
     </div>
-    {allowInput && session.backend !== 'codex' && <NativeInputComposer key={session.id} session={session} onTerminal={onTerminal} />}
+    {allowInput && session.backend !== 'codex' && <NativeInputComposer key={session.id} session={session} onTerminal={onTerminal} onSent={() => { followBottom.current = true; refresh.current(); }} />}
   </section>;
 }

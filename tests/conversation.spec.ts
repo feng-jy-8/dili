@@ -1,4 +1,5 @@
 import { mutationHeaders, test } from './fixtures';
+import { expectUnifiedConversation } from './conversation-layout';
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { AppState, ConversationTranscript, Group, Session } from '../shared/types';
 
@@ -9,6 +10,7 @@ for (const backend of ['claude', 'codex', 'dsh'] as const) {
     const history: ConversationTranscript = { messages: Array.from({ length: 64 }, (_, index) => ({ id: 'entry-' + index, role: index % 2 ? 'assistant' : 'user', text: index % 2 ? 'assistant response ' + index : '重复需求 ' + (index % 4) })), truncated: true };
     await page.route(`**/api/sessions/${contact.id}/conversation`, route => route.fulfill({ json: history }));
     await openConversation(page, contact);
+    await expectUnifiedConversation(page);
     await expect(page.locator('.backend-avatar svg').first()).toBeVisible();
     await page.getByRole('button', { name: '对话目录', exact: true }).click();
     const nav = page.getByRole('navigation', { name: '用户输入目录' });
@@ -109,7 +111,7 @@ test('conversation history is read-only, recovers from failed refresh and switch
   await expect(page.getByRole('button', { name: '对话记录', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.conversation-text')).toHaveCount(2);
   await expect(page.locator('.conversation-notice-toast')).toHaveCount(0);
-  await page.getByRole('button', { name: '进入原生终端', exact: true }).click();
+  await page.getByRole('button', { name: '原生终端', exact: true }).click();
   await expect(page.getByRole('dialog', { name: `${session.title} 的私聊` })).toBeVisible();
   await expect(page.locator('.terminal-connection')).toHaveText('已连接');
   await expect(page.getByRole('button', { name: '原生终端', exact: true })).toHaveAttribute('aria-pressed', 'true');

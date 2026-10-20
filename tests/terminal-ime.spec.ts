@@ -3,6 +3,43 @@ import { mutationHeaders } from './fixtures';
 import { test } from './fixtures';
 import { expect, type Page } from '@playwright/test';
 
+test('native tools share the title row, fullscreen keeps the terminal and mobile tools remain reachable', async ({ page }) => {
+  let connections = 0;
+  page.on('websocket', socket => { if (socket.url().includes('/api/terminal/')) connections++; });
+  await page.goto('/');
+  await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
+  await expect(page.locator('.drawer-header .terminal-connection.connected')).toHaveCount(1);
+  await expect(page.locator('.session-conversation .terminal-toolbar')).toHaveCount(0);
+  const terminal = await page.locator('.xterm').elementHandle();
+  const before = connections;
+  const header = (await page.locator('.drawer-header').boundingBox())!;
+  const pane = (await page.locator('.terminal-pane').boundingBox())!;
+  expect(pane.y).toBeCloseTo(header.y + header.height, 0);
+  await page.getByRole('button', { name: '全屏会话', exact: true }).click();
+  await expect(page.locator('.session-drawer')).toHaveClass(/session-fullscreen/);
+  const input = page.locator('.xterm-helper-textarea');
+  await input.focus(); await input.press('Control+Shift+Enter');
+  await expect(page.locator('.session-drawer')).not.toHaveClass(/session-fullscreen/);
+  expect(await terminal!.evaluate(element => element.isConnected)).toBe(true);
+  expect(connections).toBe(before);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const tools = page.getByRole('button', { name: '会话工具', exact: true });
+  await tools.click();
+  await expect(page.getByRole('button', { name: '粘贴到终端', exact: true })).toBeInViewport();
+  await page.getByRole('button', { name: '显示输入栏', exact: true }).click();
+  await expect(tools).toHaveAttribute('aria-expanded', 'false');
+  await page.getByLabel('终端输入栏').fill('保留草稿');
+  await tools.click(); await page.keyboard.press('Escape');
+  await expect(tools).toBeFocused();
+  await expect(page.locator('.session-drawer')).toBeVisible();
+  await page.getByRole('button', { name: '全屏会话', exact: true }).click();
+  await expect(page.getByLabel('终端输入栏')).toHaveValue('保留草稿');
+  await expect(page.locator('.session-conversation .terminal-toolbar')).toHaveCount(0);
+  expect(connections).toBe(before);
+  await tools.click();
+  await page.screenshot({ path: 'artifacts/unified-native-mobile-tools.png' });
+});
+
 /**
  * Drives xterm's hidden textarea the way Linux IMEs (fcitx/ibus in Chromium)
  * do. Playwright cannot run a real IME, so its delivery paths are replayed

@@ -199,6 +199,7 @@ test('interface zoom slider applies 100–200%, persists and synchronizes withou
   await expect(targetRow).toBeVisible();
   const row = (await targetRow.boundingBox())!;
   await page.mouse.click(row.x + 60, row.y + row.height / 2, { clickCount: 3 });
+  await page.getByRole('button', { name: '会话工具', exact: true }).click();
   await page.getByRole('button', { name: '复制选中的终端内容', exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('ZOOM_COPY_CHECK');
   await page.screenshot({ path: 'artifacts/interface-zoom-200.png' });

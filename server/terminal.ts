@@ -1,12 +1,13 @@
 import * as pty from 'node-pty';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { TerminalReplay } from './terminal-replay.ts';
 import { OwnedProcess } from './owned-process.ts';
 import type { Backend, Session, SessionStatus } from '../shared/types.ts';
 
 export interface LaunchCommand { file: string; args: string[]; nativeSessionId?: string; env?: Record<string, string> }
-interface LiveTerminal { process: pty.IPty; owner: OwnedProcess; replay: TerminalReplay; tail: string; paused: boolean; generation: string }
+interface LiveTerminal { process: pty.IPty; owner: OwnedProcess; replay: TerminalReplay; tail: string; paused: boolean; generation: string; inputRevision: number; submitting: boolean }
 
 export function stripTerminal(text: string): string {
   return text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r/g, '');
@@ -40,6 +41,7 @@ export class Terminals extends EventEmitter {
   has(id: string) { return this.live.has(id); }
   generation(id: string) { return this.live.get(id)?.generation ?? null; }
   isStopping(id: string) { return this.stopping.has(id); }
+  isSubmitting(id: string) { return this.live.get(id)?.submitting ?? false; }
   buffer(id: string) { return this.live.get(id)?.replay.snapshot() ?? this.ended.get(id) ?? ''; }
   start(session: Pick<Session, 'id' | 'cwd'>, command: LaunchCommand) {
     if (this.closed) throw new Error('终端管理服务正在关闭');
@@ -54,7 +56,7 @@ export class Terminals extends EventEmitter {
     let exited!: () => void;
     const exit = new Promise<void>(accept => { exited = accept; });
     const owner = new OwnedProcess(child.pid, exit, signal => child.kill(signal));
-    const live: LiveTerminal = { process: child, owner, replay: new TerminalReplay(), tail: '', paused: false, generation: randomUUID() };
+    const live: LiveTerminal = { process: child, owner, replay: new TerminalReplay(), tail: '', paused: false, generation: randomUUID(), inputRevision: 0, submitting: false };
     this.live.set(session.id, live);
     child.onData(data => {
       if (this.live.get(session.id) !== live) return;
@@ -81,6 +83,7 @@ export class Terminals extends EventEmitter {
     const live = this.live.get(id);
     if (!live) throw new Error('会话尚未启动或已经退出');
     live.tail = '';
+    live.inputRevision++;
     live.process.write(data);
     this.emit('input', id, data);
   }
@@ -94,6 +97,26 @@ export class Terminals extends EventEmitter {
     const actual = this.generation(id);
     if (!actual || (expectedGeneration && actual !== expectedGeneration)) throw new Error('原生终端已重启，请重新粘贴图片');
     this.stage(id, terminalPathToken(path, backend));
+  }
+  /** Explicit graphical send, retaining native history, permissions and queueing.
+   * A separate Enter event lets the TUI finish processing its pasted content. */
+  async submit(id: string, text: string, images: string[], generation: string, backend: Backend, validate: () => void) {
+    const live = this.live.get(id);
+    if (!live || live.generation !== generation || this.stopping.has(id)) throw new Error('原生连接已变化，请核对会话后重试');
+    if (live.submitting) throw Object.assign(new Error('上一条消息仍在发送，请稍候'), { status: 409 });
+    validate();
+    live.submitting = true;
+    try {
+      for (const image of images) this.stagePath(id, image, generation, backend);
+      // Both Claude Code and dsh-tui implement bracketed multiline paste.
+      const clean = text.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+      if (clean.trim()) this.input(id, `\x1b[200~${images.length ? ' ' : ''}${clean}\x1b[201~`);
+      const revision = live.inputRevision;
+      await delay(images.length ? 800 : 250);
+      if (this.live.get(id) !== live || this.stopping.has(id) || live.inputRevision !== revision) throw new Error('发送期间原生输入发生变化；请核对原生会话，避免重复发送');
+      validate();
+      this.input(id, '\r');
+    } finally { live.submitting = false; }
   }
   resize(id: string, cols: number, rows: number) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 10 || cols > 500 || rows < 3 || rows > 300) return;

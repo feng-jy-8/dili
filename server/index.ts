@@ -531,11 +531,15 @@ app.post('/api/directories/list', async (req, res) => {
 });
 app.get('/api/sessions/:id/input', (req, res) => {
   const item = session(String(req.params.id));
-  res.json({ generation: terminals.generation(item.id), nativeSessionId: item.nativeSessionId });
+  const requestId = req.query.requestId;
+  if (requestId !== undefined && (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(requestId))) fail('发送标识无效');
+  res.json({ generation: terminals.generation(item.id), nativeSessionId: item.nativeSessionId, directSubmit: true, ...(typeof requestId === 'string' ? { submission: submissions.get(item.id, requestId) ?? null } : {}) });
 });
-app.post('/api/sessions/:id/input', (req, res) => {
+app.post('/api/sessions/:id/input', async (req, res) => {
   const item = session(String(req.params.id));
-  if (demo || item.backend === 'codex' || item.archived || !item.running || item.forkPending || starting.has(item.id) || stopping.has(item.id)) fail('请先启动原生终端后填入内容',409);
+  if (demo || item.backend === 'codex' || item.archived || !item.running || item.forkPending || starting.has(item.id) || stopping.has(item.id)) fail('请先启动会话后发送消息',409);
+  if (req.body.submit !== undefined && typeof req.body.submit !== 'boolean') fail('发送方式无效');
+  const submit = req.body.submit === true;
   if (item.status === 'waiting_approval') fail('请先在原生终端中处理审批',409);
   const generation = terminals.generation(item.id);
   if (!generation || req.body.generation !== generation) fail('原生终端已变化，请核对后重新填入',409);
@@ -544,17 +548,28 @@ app.post('/api/sessions/:id/input', (req, res) => {
   const images = attachments.resolve(item.id, req.body.attachments);
 
   if (!req.body.text.trim() && !images.length) fail('内容不能为空');
-  const { created, submission } = submissions.begin(item.id,req.body.requestId, generation, JSON.stringify([req.body.text,req.body.attachments ?? []]));
-  if (!created) return res.json({ ...submission, staged:true });
+  // Keep hashes of older staging requests compatible; a send cannot reuse a staging ID.
+  const payload = [req.body.text,req.body.attachments ?? [], ...(submit ? [true] : [])];
+  const { created, submission } = submissions.begin(item.id,req.body.requestId, generation, JSON.stringify(payload));
+  if (!created) return res.json({ ...submission, staged:!submit, submitted:submit && submission.status === 'accepted' });
   try {
-    // Each native image parser expects a paste containing exactly one path.
-    // Keep text in a separate paste, and never send Enter on the user's behalf.
-    for (const image of images) terminals.stagePath(item.id, image, generation, item.backend);
-    if (req.body.text.trim()) terminals.stage(item.id, (images.length ? ' ' : '') + req.body.text);
-    res.json({ ...submissions.finish(item.id,req.body.requestId,{status:'accepted'}), staged:true });
+    if (submit) {
+      await terminals.submit(item.id, req.body.text, images, generation, item.backend, () => {
+        const current = store.session(item.id);
+        if (!current || current.archived || !current.running || current.nativeSessionId !== item.nativeSessionId || starting.has(item.id) || stopping.has(item.id)) fail('会话状态已变化，请核对原生会话',409);
+        if (current.status === 'waiting_approval') fail('请先在原生终端中处理审批',409);
+      });
+    } else {
+      // Group/task staging remains a separate, user-confirmed operation.
+      for (const image of images) terminals.stagePath(item.id, image, generation, item.backend);
+      if (req.body.text.trim()) terminals.stage(item.id, (images.length ? ' ' : '') + req.body.text);
+    }
+    res.json({ ...submissions.finish(item.id,req.body.requestId,{status:'accepted'}), staged:!submit, submitted:submit });
   } catch (cause) {
-    submissions.finish(item.id,req.body.requestId,{status:'unknown'});
-    throw cause;
+    const error = cause instanceof Error ? cause.message : '原生发送结果未知';
+    const result = submissions.finish(item.id,req.body.requestId,{status:'unknown',error});
+    // Pasted content may already be native: keep the request ID pending.
+    res.status(202).json({ ...result, staged:!submit, submitted:false });
   }
 });
 app.get('/api/sessions/:id/conversation', async (req, res) => {

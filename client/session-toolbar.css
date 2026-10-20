@@ -1,0 +1,53 @@
+.session-toolbar-host { display:flex; flex-shrink:0; align-items:center; }
+.session-toolbar-host:empty { display:none; }
+.drawer-header .session-pane-toolbar { display:flex; align-items:center; justify-content:initial; gap:8px; height:auto; min-height:0; padding:0; border:0; background:transparent; color:var(--muted); font-size:12px; }
+.session-pane-toolbar>span,.session-pane-toolbar>div { display:flex; align-items:center; gap:3px; }
+.session-pane-toolbar .pane-connection { display:inline-flex; gap:5px; white-space:nowrap; font-size:11px; }
+.pane-connection i { width:6px; height:6px; flex-shrink:0; border-radius:50%; background:var(--amber); }
+.pane-connection i.online { background:var(--green); }
+.session-pane-toolbar button { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border-radius:6px; color:var(--muted); }
+.session-pane-toolbar button:hover { background:var(--hover); color:var(--text); }
+.session-pane-toolbar button[aria-pressed="true"],.session-pane-toolbar button[aria-expanded="true"] { color:var(--accent); }
+.pane-tool-overflow { position:relative; }
+.pane-tool-overflow .pane-tools-trigger { display:none; }
+.pane-tools-panel { display:flex; align-items:center; gap:2px; }
+.pane-tools-panel button>span { display:none; }
+@container (max-width:1100px) {
+  .drawer-header { gap:5px; padding-inline:10px; }
+  .session-pane-toolbar .pane-connection-label { display:none; }
+  .drawer-header .session-pane-toolbar { gap:6px; }
+  .session-drawer .private-view-switch button { width:28px; padding:0; justify-content:center; }
+  .private-view-switch button>span,.session-lifecycle>span { display:none; }
+  .drawer-actions .session-lifecycle { width:28px; height:28px; padding:0; }
+}
+@container (max-width:900px) {
+  .pane-tool-overflow .pane-tools-trigger { display:inline-flex; }
+  .pane-tools-panel { display:none; }
+  .pane-tools-panel[data-open="true"] { position:absolute; top:calc(100% + 7px); right:0; z-index:100; display:flex; align-items:stretch; flex-direction:column; gap:2px; width:max-content; min-width:170px; max-width:calc(100vw - 20px); padding:5px; border:1px solid var(--line); border-radius:9px; background:var(--bg); box-shadow:var(--shadow); }
+  .session-pane-toolbar .pane-tools-panel button { justify-content:flex-start; gap:9px; width:100%; height:32px; padding:0 9px; font-size:12px; }
+  .pane-tools-panel button>span { display:inline; }
+  .drawer-title .status-badge,.drawer-title .rename-button { display:none; }
+  .drawer-actions .session-extra-action { display:none; }
+  .session-info-content>.compact-extra-action { display:inline-flex; }
+}
+@container (max-width:420px) {
+  .drawer-header { gap:3px; padding-inline:6px; }
+  .drawer-actions { gap:1px; }
+}
+@container (max-width:360px) {
+  .session-drawer .drawer-header { gap:2px; padding-inline:4px; }
+  .session-drawer .session-back { display:none; }
+  .session-drawer .drawer-header .drawer-actions .icon-button,.session-drawer .session-info summary,.session-drawer .drawer-header .session-pane-toolbar button { width:22px; height:28px; }
+  .session-drawer .drawer-header .private-view-switch button { width:24px; }
+  .drawer-title h2 { font-size:12px; }
+}
+.session-info-content>.compact-lifecycle { display:none; }
+@container (max-width:260px) {
+  .drawer-actions>.session-lifecycle { display:none; }
+  .session-info-content>.compact-lifecycle { display:inline-flex; }
+  .private-view-switch button[aria-pressed="true"] { display:none; }
+  .session-drawer .drawer-header { padding-inline:3px; gap:2px; }
+  .session-drawer .drawer-header .drawer-actions { gap:0; }
+  .session-drawer .drawer-header .session-pane-toolbar { gap:2px; }
+  .session-drawer .drawer-header .drawer-heading-text { flex:1; min-width:15px; }
+}

@@ -1,3 +1,4 @@
+import { PaneToolOverflow, SessionToolbar, useSessionChrome } from './SessionToolbar';
 import { appUrl } from './urls';
 import { copyToClipboard } from './clipboard';
 import { sendTerminalInput } from './terminal-input';
@@ -99,7 +100,11 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
+  const chrome = useSessionChrome();
+  const [localFullscreen, setLocalFullscreen] = useState(false);
+  const fullscreen = chrome?.fullscreen ?? localFullscreen;
+  const toggleFullscreen = useRef(() => {});
+  toggleFullscreen.current = chrome?.toggleFullscreen ?? (() => setLocalFullscreen(value => !value));
   // A plain textarea, like the Codex chat composer: every keyboard can type
   // Chinese into it. Default on touch devices; a toolbar toggle elsewhere.
   const [composerOpen, setComposerOpen] = useState(() => { try { return touchDevice || !!sessionStorage.getItem('dili.terminal-draft.' + channel + '.' + sessionId); } catch { return touchDevice; } });
@@ -155,7 +160,7 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     const detachTheme = followTerminalTheme(terminal, surface);
     // Esc belongs to the native CLI, so fullscreen uses a chord xterm never forwards.
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey && (event.metaKey || event.ctrlKey)) { setFullscreen((value) => !value); return false; }
+      if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey && (event.metaKey || event.ctrlKey)) { toggleFullscreen.current(); return false; }
       // While an IME candidate list is open, digits and Space pick a candidate.
       // Leave those keys to the IME; the chosen text arrives through the
       // composition end event, never as a raw keystroke. Only an active
@@ -421,15 +426,15 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
   };
   const quickKeys: [string, string, string][] = [['Esc', '\x1b', '发送 Esc'], ['Tab', '\t', '发送 Tab'], ['↑', '\x1b[A', '上一条'], ['↓', '\x1b[B', '下一条'], ['^C', '\x03', '发送 Ctrl+C'], ['⏎', '\r', '发送回车']];
   const toggleLabel = fullscreen ? '退出全屏' : '全屏';
-  return <div className={`terminal-pane ${fullscreen ? 'fullscreen' : ''}`} onPasteCapture={onPasteCapture}>
-    <div className="terminal-toolbar">{readOnly && <span className="terminal-readonly">只读查看</span>}<span title={connected ? '浏览器已连接终端通道；任务是否执行请查看会话状态' : '正在连接终端通道'} className={`terminal-connection ${connected ? 'connected' : ''}`}><i />{connected ? '已连接' : '连接中'}</span><div>
-      {allowImages && <><input ref={fileInputRef} className="terminal-image-input" type="file" accept={TERMINAL_IMAGE_TYPES.join(',')} onChange={onImageSelected} /><button title="选择图片并填入原生输入" aria-label="选择图片并填入原生输入" disabled={!connected || !terminalId || !running || uploadingImage} onClick={() => fileInputRef.current?.click()}>{uploadingImage ? <LoaderCircle className="spin" size={14} /> : <ImagePlus size={14} />}</button></>}
-      <button title="复制选中的终端内容（Ctrl/⌘+Shift+C）" aria-label="复制选中的终端内容" onClick={() => void copySelection()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
-      {!readOnly && <button title="粘贴剪贴板；也可使用 Ctrl/⌘+V" aria-label="粘贴到终端" disabled={!connected || !running || uploadingImage} onClick={() => void pasteClipboard()}><ClipboardPaste size={14} /></button>}
-      {channel === 'session' && <button title={composerOpen ? '隐藏输入栏' : '显示输入栏（适合手机和中文输入）'} aria-label={composerOpen ? '隐藏输入栏' : '显示输入栏'} aria-pressed={composerOpen} onClick={() => setComposerOpen(value => !value)}><Keyboard size={14} /></button>}
-      <button title="回到终端底部" aria-label="回到终端底部" onClick={() => { terminalRef.current?.scrollToBottom(); terminalRef.current?.focus(); }}><ArrowDownToLine size={14} /></button>
-      <button title={`${toggleLabel}（Ctrl / ⌘ + Shift + Enter）`} aria-label={toggleLabel} aria-pressed={fullscreen} onClick={() => setFullscreen((value) => !value)}>{fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
-    </div></div>
+  return <div className={`terminal-pane ${!chrome && fullscreen ? 'fullscreen' : ''}`} onPasteCapture={onPasteCapture}>
+    <SessionToolbar className="terminal-toolbar">{readOnly && <span className="terminal-readonly">只读查看</span>}<span title={connected ? '浏览器已连接终端通道；任务是否执行请查看会话状态' : '正在连接终端通道'} className={`terminal-connection ${connected ? 'connected' : ''}`}><i /><span className="pane-connection-label">{connected ? '已连接' : '连接中'}</span></span><div><PaneToolOverflow>
+      {allowImages && <><input ref={fileInputRef} className="terminal-image-input" type="file" accept={TERMINAL_IMAGE_TYPES.join(',')} onChange={onImageSelected} /><button title="选择图片并填入原生输入" aria-label="选择图片并填入原生输入" disabled={!connected || !terminalId || !running || uploadingImage} onClick={() => fileInputRef.current?.click()}>{uploadingImage ? <LoaderCircle className="spin" size={14} /> : <ImagePlus size={14} />}<span>选择图片并填入原生输入</span></button></>}
+      <button title="复制选中的终端内容（Ctrl/⌘+Shift+C）" aria-label="复制选中的终端内容" onClick={() => void copySelection()}>{copied ? <Check size={14} /> : <Copy size={14} />}<span>复制选中的终端内容</span></button>
+      {!readOnly && <button title="粘贴剪贴板；也可使用 Ctrl/⌘+V" aria-label="粘贴到终端" disabled={!connected || !running || uploadingImage} onClick={() => void pasteClipboard()}><ClipboardPaste size={14} /><span>粘贴到终端</span></button>}
+      {channel === 'session' && <button title={composerOpen ? '隐藏输入栏' : '显示输入栏（适合手机和中文输入）'} aria-label={composerOpen ? '隐藏输入栏' : '显示输入栏'} aria-pressed={composerOpen} onClick={() => setComposerOpen(value => !value)}><Keyboard size={14} /><span>{composerOpen ? '隐藏输入栏' : '显示输入栏'}</span></button>}
+      <button title="回到终端底部" aria-label="回到终端底部" onClick={() => { terminalRef.current?.scrollToBottom(); terminalRef.current?.focus(); }}><ArrowDownToLine size={14} /><span>回到终端底部</span></button>
+      </PaneToolOverflow>{!chrome && <button title={`${toggleLabel}（Ctrl / ⌘ + Shift + Enter）`} aria-label={toggleLabel} aria-pressed={fullscreen} onClick={() => toggleFullscreen.current()}>{fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>}
+    </div></SessionToolbar>
     {imageStatus && <div className="terminal-image-status" role="status" aria-live="polite"><ImagePlus size={14} /><span>{imageStatus}</span>{uploadingImage && <LoaderCircle className="spin" size={13} />}</div>}
     {error && <div className="terminal-error" role="alert"><WifiOff size={14} /><span>{error}</span><button className="terminal-dismiss" aria-label="关闭终端提示" onClick={() => setError('')}><X size={13} /></button></div>}
     <div ref={containerRef} className="terminal-container" />

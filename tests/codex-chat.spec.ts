@@ -1,7 +1,21 @@
 import { mutationHeaders, test } from './fixtures';
+import { expectUnifiedConversation } from './conversation-layout';
 import { expect, type Page } from '@playwright/test';
 import type { AppState, Session } from '../shared/types';
 import type { CodexChatAnswer, CodexChatItem, CodexChatPatch, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
+
+test('Codex chat shares message presentation and a single title row with the other platforms', async ({ page }) => {
+  const app = await fixture(page); await app.open();
+  await app.patch({ items: [{ id: 'layout-user', type: 'user', status: 'completed', text: '检查布局' }, { id: 'layout-assistant', type: 'assistant', status: 'completed', text: '## 检查结果\n\n排版一致。' }] });
+  await expectUnifiedConversation(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '会话工具', exact: true }).click();
+  await expect(page.getByRole('button', { name: '刷新对话', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: '会话工具', exact: true })).toBeFocused();
+  await expect(page.locator('.session-drawer')).toBeVisible();
+  await page.screenshot({ path: 'artifacts/unified-codex-mobile.png' });
+});
 
 test('active Codex turns accept supplemental input and approval still blocks sending', async ({ page }) => {
   const app = await fixture(page); await app.open();
@@ -18,6 +32,65 @@ test('active Codex turns accept supplemental input and approval still blocks sen
   await app.patch({ requests: [{ id: 'pending', kind: 'approval', title: '审批', options: [{ id: 'deny', label: '拒绝' }] }] });
   await input.fill('approval must stay explicit');
   await expect(page.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
+});
+
+test('Codex queued messages can be edited, canceled and restored, and release once per completed turn', async ({page})=>{
+  const app=await fixture(page); await app.open();
+  const input=page.getByLabel('给 Codex 发送消息'),queue=page.getByRole('region',{name:'待发送消息'});
+  await input.fill('initial');await input.press('Enter');await expect(input).toHaveValue('');
+  await input.fill('queue one');await page.getByRole('button',{name:'加入队列',exact:true}).click();
+  await expect(queue).toContainText('queue one');await expect(input).toHaveValue('');
+  expect(app.requests.filter(item=>item.path==='messages')).toHaveLength(1);
+  await queue.getByRole('button',{name:'编辑',exact:true}).click();await expect(input).toHaveValue('queue one');
+  await input.fill('edited one');await page.getByRole('button',{name:'加入队列',exact:true}).click();
+  await input.fill('queue two');await page.getByRole('button',{name:'加入队列',exact:true}).click();
+  await input.fill('cancel me');await page.getByRole('button',{name:'加入队列',exact:true}).click();
+  await queue.getByRole('button',{name:'取消排队：cancel me',exact:true}).click();
+  await page.reload();await expect(queue).toContainText('edited one');await expect(queue).toContainText('queue two');
+  await input.fill('a newer draft');
+  await app.patch({activeTurnId:null});
+  await expect.poll(()=>app.requests.filter(item=>item.path==='messages').length).toBe(2);
+  await expect(queue).not.toContainText('edited one');await expect(queue).toContainText('queue two');
+  await expect(input).toHaveValue('a newer draft');
+  expect(app.requests.filter(item=>item.path==='messages').at(-1)?.body).toMatchObject({text:'edited one'});
+  expect(app.requests.filter(item=>item.path==='messages').at(-1)?.body).not.toHaveProperty('expectedTurnId');
+  await page.screenshot({path:'artifacts/codex-message-queue.png'});
+  await app.patch({activeTurnId:null});await expect(queue).toHaveCount(0);
+  expect(app.requests.filter(item=>item.path==='messages')).toHaveLength(3);
+  expect(app.requests.filter(item=>item.path==='interrupt')).toHaveLength(0);
+});
+
+test('stopping a Codex turn pauses queued work until explicitly sent',async({page})=>{
+  const app=await fixture(page);await app.open();
+  const input=page.getByLabel('给 Codex 发送消息'),queue=page.getByRole('region',{name:'待发送消息'});
+  await input.fill('initial');await input.press('Enter');await expect(input).toHaveValue('');
+  await input.fill('wait for my review');await page.getByRole('button',{name:'加入队列',exact:true}).click();
+  await page.getByRole('button',{name:'停止生成',exact:true}).click();
+  await expect(queue).toContainText('已暂停');
+  await expect.poll(()=>app.requests.filter(item=>item.path==='interrupt').length).toBe(1);
+  await app.patch({activeTurnId:null});
+  await page.reload();await expect(queue).toContainText('已暂停');
+  expect(app.requests.filter(item=>item.path==='messages')).toHaveLength(1);
+  await queue.getByRole('button',{name:'立即发送',exact:true}).click();
+  await expect(queue).toHaveCount(0);
+  expect(app.requests.filter(item=>item.path==='messages')).toHaveLength(2);
+});
+
+test('Codex queued work pauses across a native identity change and never auto retries rejection',async({page})=>{
+  const app=await fixture(page);await app.open();
+  const input=page.getByLabel('给 Codex 发送消息'),queue=page.getByRole('region',{name:'待发送消息'});
+  await input.fill('initial');await input.press('Enter');await expect(input).toHaveValue('');
+  await input.fill('bound queued task');await page.getByRole('button',{name:'加入队列',exact:true}).click();
+  await app.patch({activeTurnId:null,instanceId:'replacement'});
+  await expect(queue).toContainText('已暂停');expect(app.requests.filter(item=>item.path==='messages')).toHaveLength(1);
+  await app.patch({activeTurnId:'replacement-turn'});await app.patch({activeTurnId:null});
+  expect(app.requests.filter(item=>item.path==='messages')).toHaveLength(1);
+  await queue.getByRole('button',{name:'编辑',exact:true}).click();
+  await app.patch({activeTurnId:'replacement-turn'});
+  await page.getByRole('button',{name:'加入队列',exact:true}).click();
+  await page.route(`**/api/sessions/${app.contact.id}/chat/messages`,route=>route.fulfill({status:409,json:{error:'本轮已结束'}}));
+  await queue.getByRole('button',{name:'立即发送',exact:true}).click();await expect(queue).toContainText('已暂停');
+  await expect(input).toHaveValue('');await expect(page.locator('.codex-pending')).toHaveCount(0);
 });
 
 test('composer resizes both axes and fullscreen preserves the draft and connection', async ({ page }) => {
@@ -59,6 +132,13 @@ test('composer resizes both axes and fullscreen preserves the draft and connecti
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByRole('button', { name: '全屏会话', exact: true }).click();
   await expect(page.getByRole('button', { name: '退出会话全屏', exact: true })).toBeVisible();
+  const narrowHeader = (await page.locator('.drawer-header').boundingBox())!;
+  expect((await page.locator('.drawer-title h2').boundingBox())!.width).toBeGreaterThan(24);
+  for (const label of ['对话目录', '会话工具', '退出会话全屏', '关闭会话']) {
+    const bounds = (await page.getByRole('button', { name: label, exact: true }).boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(narrowHeader.x);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(narrowHeader.x + narrowHeader.width);
+  }
   await page.screenshot({ path: 'artifacts/graphical-mobile-zoom.png', animations: 'disabled' });
 });
 

@@ -21,6 +21,47 @@ async function until(check: () => boolean, description: string) {
   throw new Error(description);
 }
 
+for (const backend of ['claude', 'dsh'] as const) test(`${backend} graphical send preserves multiline text, stages images separately and submits once`, async t => {
+  const terminals = new Terminals(); t.after(() => terminals.close());
+  const contact = {id: 'graphical-send', cwd: process.cwd()};
+  terminals.start(contact, {file:process.execPath,args:['-e', "process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write('READY')"]});
+  await until(() => terminals.buffer(contact.id).includes('READY'), 'Native fixture did not start');
+  const writes: string[] = []; terminals.on('input', (_id,data) => writes.push(data));
+  let validations = 0;
+  await terminals.submit(contact.id, '检查图片\r\n第二行\t🙂', ['/tmp/a quoted image.png'], terminals.generation(contact.id)!, backend, () => {validations++;});
+  assert.deepEqual(writes, ['\x1b[200~"/tmp/a quoted image.png"\x1b[201~', '\x1b[200~ 检查图片\n第二行\t🙂\x1b[201~', '\r']);
+  assert.equal(validations,2); assert.equal(terminals.isSubmitting(contact.id),false);
+});
+
+test('graphical send never submits after native input or approval state changes', async t => {
+  const terminals = new Terminals(); t.after(() => terminals.close());
+  const contact = {id:'graphical-race',cwd:process.cwd()};
+  terminals.start(contact,{file:process.execPath,args:['-e',"process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write('READY')"]});
+  await until(() => terminals.buffer(contact.id).includes('READY'),'Native fixture did not start');
+  const writes:string[]=[]; terminals.on('input',(_id,data)=>writes.push(data));
+  const pending=terminals.submit(contact.id,'保留消息',[],terminals.generation(contact.id)!,'claude',()=>{});
+  await assert.rejects(terminals.submit(contact.id,'并发消息',[],terminals.generation(contact.id)!,'claude',()=>{}),/仍在发送/);
+  terminals.input(contact.id,'other typing');
+  await assert.rejects(pending,/输入发生变化/);
+  assert.equal(writes.includes('\r'),false);
+  let checks=0;
+  await assert.rejects(terminals.submit(contact.id,'不可确认审批',[],terminals.generation(contact.id)!,'claude',()=>{if(++checks>1) throw new Error('等待审批');}),/等待审批/);
+  assert.equal(writes.includes('\r'),false); assert.equal(terminals.isSubmitting(contact.id),false);
+});
+
+test('graphical send cannot submit to a replacement terminal', async t => {
+  const terminals = new Terminals(); t.after(() => terminals.close());
+  const contact={id:'graphical-restart',cwd:process.cwd()};
+  const command={file:process.execPath,args:['-e',"process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write('READY')"]};
+  terminals.start(contact,command);
+  await until(()=>terminals.buffer(contact.id).includes('READY'),'Native fixture did not start');
+  const generation=terminals.generation(contact.id)!;
+  const result=assert.rejects(terminals.submit(contact.id,'旧消息',[],generation,'dsh',()=>{}),/输入发生变化/);
+  await terminals.stop(contact.id); terminals.start(contact,command);
+  const writes:string[]=[]; terminals.on('input',(_id,data)=>writes.push(data));
+  await result; assert.deepEqual(writes,[]);
+});
+
 test('group staging strips embedded terminal controls and does not send a submit character', { timeout: 8000 }, async t => {
   const store = new Store(':memory:');
   const terminals = new Terminals();

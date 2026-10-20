@@ -4,7 +4,8 @@
 .resizable-composer-row { display:flex; flex:1; min-height:0; align-self:center; max-width:100%; }
 .resizable-composer-content { display:flex; flex:1; min-width:0; min-height:0; }
 .resizable-composer .codex-composer,.resizable-composer .native-input-composer { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; border:0; padding:3px 6px 7px; overflow:auto; }
-.resizable-composer .image-composer { display:flex; flex:1; flex-direction:column; min-height:70px; }
+.resizable-composer .image-composer { display:flex; flex:1 0 auto; flex-direction:column; min-height:70px; }
+.resizable-composer .native-input-composer>[role="status"],.resizable-composer .attachment-error { flex-shrink:0; }
 .resizable-composer .codex-composer textarea,.resizable-composer .native-input-composer textarea { flex:1; width:100%; min-width:0; min-height:44px; max-height:none; resize:none; }
 .resizable-composer .attachment-actions,.resizable-composer .chat-attachments,.resizable-composer .codex-composer-footer,.resizable-composer .native-input-footer { flex-shrink:0; }
 .resizable-composer .composer-preview { flex-shrink:0; max-height:100px; }
