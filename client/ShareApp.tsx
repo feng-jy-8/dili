@@ -91,9 +91,9 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
         <div className="session-conversation">
           {dshWebOnly ? <div className="terminal-empty"><h3>DeepSeek Harness 暂不支持远程查看</h3><p>它的原生界面只在分享者的电脑上可用。</p></div>
             : view === 'chat' ? <Suspense fallback={<div className="loading-state"><LoaderCircle size={22} className="spin" /></div>}><CodexChatPane key={session.id} session={session} onTerminal={() => setView('terminal')} onSelection={ignoreSelection} /></Suspense>
-            : view === 'conversation' ? <ConversationPane key={session.id} session={session} onTerminal={() => setView('terminal')} onSelection={ignoreSelection} />
+            : view === 'conversation' ? <ConversationPane key={session.id} session={session} allowInput={writable && !state.demo} onTerminal={() => setView('terminal')} onSelection={ignoreSelection} />
             : chatAvailable && session.running && session.interactionMode === 'chat' ? <div className="terminal-empty"><h3>会话正在图形对话中运行</h3><p>{writable ? '切换到图形对话继续。' : '切换到对话记录查看进展。'}</p></div>
-            : <TerminalPane key={session.id} sessionId={session.id} running={session.running} status={session.status} allowImages={writable && session.backend === 'codex' && !state.demo} readOnly={!writable} onSelection={ignoreSelection} />}
+            : <TerminalPane key={session.id} sessionId={session.id} running={session.running} status={session.status} allowImages={writable && ['codex','claude','dsh'].includes(session.backend) && !state.demo} readOnly={!writable} onSelection={ignoreSelection} />}
         </div>
       </section></div>
     </div>

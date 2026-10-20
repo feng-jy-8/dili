@@ -4,6 +4,10 @@ import { test } from 'node:test';
 import { Store } from './store.ts';
 import { terminalPathToken, Terminals } from './terminal.ts';
 
+test('Claude image tokens use its native quote parser rather than shell concatenation', () => {
+  assert.equal(terminalPathToken("/tmp/a 'quoted' image.png", 'claude'), JSON.stringify("/tmp/a 'quoted' image.png"));
+});
+
 test('terminal image path tokens preserve one native composer token', () => {
   assert.equal(terminalPathToken('/tmp/session deck/a$b\'s.png'), "'/tmp/session deck/a$b'\\''s.png'");
 });

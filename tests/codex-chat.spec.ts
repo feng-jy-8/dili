@@ -512,3 +512,68 @@ test('the mobile input outline loads older inputs within its drawer and locates 
   expect(calls).toBe(1);
   expect(app.requests).toEqual([]);
 });
+
+test('graphical images survive reload and can be submitted without text', async ({ page }) => {
+  const app = await fixture(page);
+  const image = { id: 'b37fc923-bc83-467c-8259-79edf171ec64', name: '截图.png', type: 'image/png', size: 68 };
+  let uploads = 0;
+  await page.route(`**/api/sessions/${app.contact.id}/attachments`, async route => {
+    uploads++; expect(route.request().headers()['content-type']).toBe('image/png');
+    await route.fulfill({ status: 201, json: image });
+  });
+  await app.open();
+  await page.locator('.image-composer input[type=file]').setInputFiles({ name: image.name, mimeType: image.type, buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB', 'base64') });
+  await expect(page.getByLabel('待发送图片').locator('figure')).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByLabel('待发送图片')).toContainText(image.name);
+  await expect(page.getByLabel('给 Codex 发送消息')).toHaveValue('');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect.poll(() => app.requests.filter(item => item.path === 'messages')).toHaveLength(1);
+  const sent = app.requests.find(item => item.path === 'messages')!.body;
+  expect(sent.text).toBe(''); expect(sent.attachments).toEqual([image.id]); expect(uploads).toBe(1);
+  await expect(page.getByLabel('待发送图片')).toHaveCount(0);
+});
+
+test('pasting rich clipboard preserves text and failed image upload keeps the draft', async ({ page }) => {
+  const app = await fixture(page);
+  await page.route(`**/api/sessions/${app.contact.id}/attachments`, route => route.fulfill({ status: 503, json: { error: '图片服务暂时不可用' } }));
+  await app.open();
+  const input = page.getByLabel('给 Codex 发送消息');
+  await input.fill('现有草稿');
+  await input.evaluate((field: HTMLTextAreaElement) => {
+    field.setSelectionRange(field.value.length, field.value.length);
+    const data = new DataTransfer();
+    data.setData('text/plain', ' 和粘贴文字');
+    data.items.add(new File([new Uint8Array([137,80,78,71])], 'clip.png', {type:'image/png'}));
+    field.dispatchEvent(new ClipboardEvent('paste', { bubbles:true, cancelable:true, clipboardData:data }));
+  });
+  await expect(input).toHaveValue('现有草稿 和粘贴文字');
+  await expect(page.locator('.attachment-error')).toContainText('图片服务暂时不可用');
+  await page.reload();
+  await expect(page.getByLabel('给 Codex 发送消息')).toHaveValue('现有草稿 和粘贴文字');
+  expect(app.requests).toEqual([]);
+});
+
+test('a late image upload merges into a reopened draft without replacing new attachments or text', async ({page}) => {
+  const app=await fixture(page);
+  let release!:()=>void; const held=new Promise<void>(resolve=>{release=resolve;}); let began=false;
+  const first={id:'a37fc923-bc83-467c-8259-79edf171ec64',name:'first.png',type:'image/png',size:12};
+  const second={...first,id:'c37fc923-bc83-467c-8259-79edf171ec64',name:'second.png'};
+  await page.route('**/api/sessions/'+app.contact.id+'/attachments',async route=>{
+    if(!began){began=true;await held;await route.fulfill({status:201,json:first});}
+    else await route.fulfill({status:201,json:second});
+  });
+  await app.open();
+  const file={name:'first.png',mimeType:'image/png',buffer:Buffer.from([137,80,78,71])};
+  await page.locator('.image-composer input[type=file]').setInputFiles(file);
+  await expect.poll(()=>began).toBe(true);
+  await page.getByRole('button',{name:'关闭会话',exact:true}).click();
+  await page.getByRole('button',{name:'进入 '+app.contact.title+' 的会话',exact:true}).click();
+  await page.getByLabel('给 Codex 发送消息').fill('新的草稿');
+  await page.locator('.image-composer input[type=file]').setInputFiles({...file,name:'second.png'});
+  await expect(page.getByLabel('待发送图片')).toContainText('second.png');
+  release();
+  await expect(page.getByLabel('待发送图片').locator('figure')).toHaveCount(2);
+  await expect(page.getByLabel('给 Codex 发送消息')).toHaveValue('新的草稿');
+  expect(app.requests.filter(item=>item.path === 'messages')).toEqual([]);
+});

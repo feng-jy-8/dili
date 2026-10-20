@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { TerminalReplay } from './terminal-replay.ts';
 import { OwnedProcess } from './owned-process.ts';
-import type { Session, SessionStatus } from '../shared/types.ts';
+import type { Backend, Session, SessionStatus } from '../shared/types.ts';
 
 export interface LaunchCommand { file: string; args: string[]; nativeSessionId?: string; env?: Record<string, string> }
 interface LiveTerminal { process: pty.IPty; owner: OwnedProcess; replay: TerminalReplay; tail: string; paused: boolean; generation: string }
@@ -13,7 +13,10 @@ export function stripTerminal(text: string): string {
 }
 
 /** Keep a pasted absolute path as one token for native TUI path detection. */
-export function terminalPathToken(path: string): string {
+export function terminalPathToken(path: string, backend: Backend = 'codex'): string {
+  // Claude and dsh-tui accept one wholly double-quoted image path.
+  // JSON quoting preserves apostrophes and spaces without shell concatenation.
+  if (backend === 'claude' || backend === 'dsh') return JSON.stringify(path);
   return `'${path.replace(/'/g, `'\\''`)}'`;
 }
 
@@ -87,10 +90,10 @@ export class Terminals extends EventEmitter {
     const clean = text.replace(/[\r\n]+/g, '  ').replace(/[\x00-\x1f\x7f]/g, '');
     this.input(id, `\x1b[200~${clean}\x1b[201~`);
   }
-  stagePath(id: string, path: string, expectedGeneration?: string) {
+  stagePath(id: string, path: string, expectedGeneration?: string, backend: Backend = 'codex') {
     const actual = this.generation(id);
     if (!actual || (expectedGeneration && actual !== expectedGeneration)) throw new Error('原生终端已重启，请重新粘贴图片');
-    this.stage(id, terminalPathToken(path));
+    this.stage(id, terminalPathToken(path, backend));
   }
   resize(id: string, cols: number, rows: number) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 10 || cols > 500 || rows < 3 || rows > 300) return;

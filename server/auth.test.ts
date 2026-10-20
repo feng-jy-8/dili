@@ -19,7 +19,7 @@ import type { AuthStatus, Share } from '../shared/auth.ts';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 test('every registered API route has an explicit access rule', () => {
-  const sources = ['server/index.ts', 'server/chat-api.ts'].map(file => readFileSync(join(root, file), 'utf8')).join('\n');
+  const sources = ['server/index.ts', 'server/chat-api.ts', 'server/attachments.ts'].map(file => readFileSync(join(root, file), 'utf8')).join('\n');
   const routes = [...sources.matchAll(/app\.(get|post|patch|delete)\('(\/api\/[^']+)'/g)].map(match => ({ method: match[1].toUpperCase(), path: match[2] }));
   assert.ok(routes.length > 40, 'route scan found the API');
   for (const route of routes) {
@@ -40,6 +40,13 @@ test('shares are scoped to one session and owner-only routes stay closed', () =>
   assert.equal(authorize(read, true, 'POST', '/api/sessions/mine/chat/connect').allowed, false);
   assert.equal(authorize(write, true, 'POST', '/api/sessions/mine/chat/connect').allowed, true);
   assert.equal(authorize(write, true, 'POST', '/api/sessions/other/chat/connect').allowed, false);
+  for (const path of ['/api/sessions/mine/attachments','/api/sessions/mine/input']) {
+    assert.equal(authorize(read,true,'POST',path).allowed,false);
+    assert.equal(authorize(write,true,'POST',path).allowed,true);
+    assert.equal(authorize(write,true,'POST',path.replace('/mine/','/other/')).allowed,false);
+  }
+  assert.equal(authorize(read,true,'GET','/api/sessions/mine/attachments/opaque-image').allowed,true);
+  assert.equal(authorize(read,true,'GET','/api/sessions/other/attachments/opaque-image').allowed,false);
   assert.equal(authorize(read, true, 'POST', '/api/sessions/mine/start').allowed, false);
   assert.equal(authorize(write, true, 'POST', '/api/sessions/mine/start').allowed, true);
   assert.equal(authorize(write, true, 'POST', '/api/sessions/other/start').allowed, false);

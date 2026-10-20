@@ -34,6 +34,7 @@ for (const trailingSlash of ['', '/']) test(`device-prefixed remote links load t
     if (path.startsWith('/api/')) apiPaths.push(url.pathname);
     if (path.startsWith('/assets/')) assetPaths.push(url.pathname);
     // route.fetch waits for a finite body; SSE is intentionally never finite.
+    if (path === '/api/sessions/' + target.id + '/conversation') return route.fulfill({json:{messages:[{id:'remote-diagram',role:'assistant',text:['~~~mermaid','flowchart LR',' A[Remote] --> B[Ready]','~~~'].join(String.fromCharCode(10))}],truncated:false}});
     if (path === '/api/events') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': relay fixture\n\n' });
     const response = await route.fetch({ url: `${remote}${path}${url.search}` });
     if (path === '/') {
@@ -61,6 +62,9 @@ for (const trailingSlash of ['', '/']) test(`device-prefixed remote links load t
   expect(assetPaths.some(path => /\/terminal-[\w-]+\.css$/.test(path))).toBe(true);
   expect(assetPaths.some(path => /\/LiveMarkdownEditor-[\w-]+\.css$/.test(path))).toBe(true);
   expect(assetPaths.some(path => /\/lute\.min-[\w-]+\.js$/.test(path))).toBe(true);
+  await page.getByRole('button',{name:'对话记录',exact:true}).click();
+  await expect(page.frameLocator('iframe[title="Mermaid 图表"]').locator('svg')).toBeVisible({timeout:15000});
+  expect(assetPaths.some(path=>path.includes('/mermaid.min-'))).toBe(true);
   expect(escapedAssets).toEqual([]);
   expect(errors).toEqual([]);
 });

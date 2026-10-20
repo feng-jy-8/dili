@@ -1,3 +1,5 @@
+import type { AppState, Session } from '../shared/types';
+import { mutationHeaders } from './fixtures';
 import { test } from './fixtures';
 import { expect, type Page } from '@playwright/test';
 
@@ -17,10 +19,14 @@ function observeInput(page: Page) {
   return sent;
 }
 
-test('input-only IME commits send whole phrases and emoji once, with ordinary keys still working', async ({ page }) => {
+for (const backend of ['codex', 'claude', 'dsh'] as const) test(`${backend}: IME commits send whole phrases and emoji once, with ordinary keys still working`, async ({ page }) => {
   const sent = observeInput(page);
-  await page.goto('/');
-  await page.getByRole('button', { name: '进入 Dili · 开发笔记 的会话', exact: true }).click();
+  const seed = await (await page.request.get('/api/state')).json() as AppState;
+  const response = await page.request.post('/api/sessions', {headers:await mutationHeaders(page.request),data:{backend,title:'输入回归 ' + backend,cwd:seed.defaultCwd}});
+  expect(response.ok()).toBe(true);
+  const contact = await response.json() as Session;
+  await page.request.post(`/api/sessions/${contact.id}/start`,{headers:await mutationHeaders(page.request),data:{}});
+  await page.goto(`/#/contacts?session=${contact.id}`);
   await expect(page.locator('.terminal-connection')).toHaveText('已连接');
   const textarea = page.locator('.xterm-helper-textarea');
   await textarea.focus();
@@ -104,4 +110,20 @@ test('on touch devices Chinese goes through the composer and reaches the termina
     await page.getByRole('button', { name: '发送 Esc', exact: true }).click();
     await expect.poll(() => sent.at(-1)).toBe('\x1b');
   } finally { await context.close(); }
+});
+
+
+test('native clipboard paste preserves multiline Unicode once and copy gives feedback', async ({page,context}) => {
+  await context.grantPermissions(['clipboard-read','clipboard-write']);
+  const sent = observeInput(page);
+  await page.goto('/');
+  await page.getByRole('button',{name:'进入 Dili · 开发笔记 的会话',exact:true}).click();
+  await expect(page.locator('.terminal-connection')).toHaveText('已连接');
+  const value = '复制粘贴🙂\n第二行';
+  await page.evaluate(text=>navigator.clipboard.writeText(text),value);
+  await page.getByRole('button',{name:'粘贴到终端',exact:true}).click();
+  await expect.poll(()=>sent.join('')).toContain(value.replace(/\n/g,'\r'));
+  expect(sent.join('').split('复制粘贴🙂').length).toBe(2);
+  await page.getByRole('button',{name:'复制选中的终端内容',exact:true}).click();
+  await expect(page.locator('.terminal-error')).toContainText('先在终端中选中');
 });

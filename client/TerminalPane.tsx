@@ -1,8 +1,10 @@
 import { appUrl } from './urls';
+import { copyToClipboard } from './clipboard';
+import { sendTerminalInput } from './terminal-input';
 import { useEffect, useRef, useState, type ClipboardEvent, type ChangeEvent } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { ArrowDownToLine, Copy, Check, ImagePlus, Keyboard, LoaderCircle, Maximize2, Minimize2, Send, WifiOff, X } from 'lucide-react';
+import { ArrowDownToLine, ClipboardPaste, Copy, Check, ImagePlus, Keyboard, LoaderCircle, Maximize2, Minimize2, Send, WifiOff, X } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import { getToken, uploadTerminalImage } from './api';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES } from '../shared/terminal-images';
@@ -98,8 +100,11 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
   const [fullscreen, setFullscreen] = useState(false);
   // A plain textarea, like the Codex chat composer: every keyboard can type
   // Chinese into it. Default on touch devices; a toolbar toggle elsewhere.
-  const [composerOpen, setComposerOpen] = useState(touchDevice);
-  const [draft, setDraft] = useState('');
+  const [composerOpen, setComposerOpen] = useState(() => { try { return touchDevice || !!sessionStorage.getItem('dili.terminal-draft.' + channel + '.' + sessionId); } catch { return touchDevice; } });
+  const draftKey = 'dili.terminal-draft.' + channel + '.' + sessionId;
+  const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
+  const draftRef = useRef(draft); draftRef.current = draft;
+  useEffect(() => { try { sessionStorage.setItem(draftKey, draft); } catch { /* Input stays in memory if storage is unavailable. */ } }, [draftKey, draft]);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const acceptsInputRef = useRef(false);
@@ -113,6 +118,7 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
   const terminalIdRef = useRef<string | null>(null);
   const uploadAbortRef = useRef<AbortController | null>(null);
   const uploadingRef = useRef(false);
+  const deferredInput = useRef('');
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const previousFullscreenRef = useRef(fullscreen);
   selectionRef.current = onSelection;
@@ -126,7 +132,7 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     let reconnect: ReturnType<typeof setTimeout> | undefined;
     let everConnected = false;
     let attempts = 0;
-    let acceptsInput = running && !readOnlyRequested;
+    let acceptsInput = false;
     acceptsInputRef.current = acceptsInput;
     setConnected(false); setError(''); setCopied(false);
     terminalIdRef.current = null; setTerminalId(null); setImageStatus('');
@@ -155,6 +161,14 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
       // that an IME committed text straight into its textarea (fcitx/ibus on
       // Linux), and blocking it silenced Chinese input entirely.
       if (event.isComposing) return false;
+      const chord = event.ctrlKey || event.metaKey;
+      if (chord && !event.altKey && event.key.toLowerCase() === 'c' && (event.shiftKey || terminal.hasSelection())) {
+        if (event.type === 'keydown') { event.preventDefault(); void copySelection(); }
+        return false;
+      }
+      // Let the browser dispatch its trusted paste event. xterm's keyboard
+      // translation must not turn Ctrl+Shift+V into a native control sequence.
+      if (chord && !event.altKey && event.key.toLowerCase() === 'v') return false;
       return true;
     });
     terminal.textarea?.setAttribute('aria-label', channel === 'shell' ? 'Shell 终端输入' : '原生会话终端输入');
@@ -175,14 +189,24 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(containerRef.current);
     const input = terminal.onData((data) => {
-      if (!acceptsInput || uploadingRef.current || socket?.readyState !== WebSocket.OPEN) return;
-      for (let offset = 0; offset < data.length;) {
-        let end = Math.min(offset + 4096, data.length);
-        if (end < data.length && data.charCodeAt(end - 1) >= 0xd800 && data.charCodeAt(end - 1) <= 0xdbff) end--;
-        socket.send(JSON.stringify({ type: 'input', data: data.slice(offset, end) }));
-        offset = end;
+      if (!acceptsInput || socket?.readyState !== WebSocket.OPEN) {
+        setError('终端尚未就绪，输入未发送。请等待连接恢复后再输入'); return;
       }
+      // Uploads insert an image path into the same native composer. Preserve
+      // concurrent keystrokes in order instead of silently discarding them.
+      if (uploadingRef.current) {
+        if (deferredInput.current.length + data.length <= 65536) deferredInput.current += data;
+        else setError('图片上传期间输入过长，请等待上传完成；超出部分未发送');
+        return;
+      }
+      sendTerminalInput(socket, data);
     });
+    const copy = (event: globalThis.ClipboardEvent) => {
+      const selected = terminal.getSelection();
+      if (!selected || !event.clipboardData) return;
+      event.clipboardData.setData('text/plain', selected); event.preventDefault();
+    };
+    containerRef.current.addEventListener('copy', copy);
     const selection = terminal.onSelectionChange(() => selectionRef.current(terminal.getSelection()));
     const scheduleReconnect = () => {
       if (disposed) return;
@@ -202,8 +226,8 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
           if (everConnected) terminal.reset();
           everConnected = true;
           attempts = 0;
-          terminal.options.disableStdin = !acceptsInput;
-          setConnected(true); setError(''); resize();
+          terminal.options.disableStdin = true;
+          setConnected(false); setError(''); resize();
         };
         socket.onmessage = (event) => {
           if (disposed) return;
@@ -211,16 +235,18 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
             const message = JSON.parse(event.data as string);
             if (message.type === 'data') terminal.write(message.data);
             if (message.type === 'ready') {
+              setConnected(true); setError('');
               terminalIdRef.current = typeof message.terminalId === 'string' ? message.terminalId : null;
               setTerminalId(terminalIdRef.current);
-              if (message.readOnly === true) { acceptsInput = false; terminal.options.disableStdin = true; }
+              acceptsInput = running && !readOnlyRequested && message.readOnly !== true;
               acceptsInputRef.current = acceptsInput;
               setServerReadOnly(message.readOnly === true);
+              terminal.options.disableStdin = !acceptsInput;
               if (channel === 'shell' && typeof message.running === 'boolean') {
-                acceptsInput = message.running;
+                acceptsInput = message.running && !readOnlyRequested && message.readOnly !== true;
                 acceptsInputRef.current = acceptsInput;
                 terminal.options.disableStdin = !acceptsInput;
-                if (!acceptsInput) exitRef.current?.(message.exitCode ?? 0);
+                if (!message.running) exitRef.current?.(message.exitCode ?? 0);
               }
             }
             if (message.type === 'error') setError(message.message || message.error || '终端连接遇到问题');
@@ -234,11 +260,14 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
         socket.onclose = (event) => {
           if (disposed) return;
           terminal.options.disableStdin = true;
+          acceptsInput = false; acceptsInputRef.current = false;
           terminalIdRef.current = null; setTerminalId(null);
-          if (uploadingRef.current) setImageStatus('终端连接中断，图片可能已经填入；请先检查输入中的 [Image #1] 再决定是否重试');
+          const queued = deferredInput.current; deferredInput.current = '';
+          if (queued) { setDraft(value => value + queued); setComposerOpen(true); }
+          if (uploadingRef.current) setImageStatus('终端连接中断，图片可能已经填入；请先检查原生输入中的附件或文件路径再决定是否重试');
           setConnected(false);
           if (channel === 'shell' && event.code === 1000) { setError('Shell 已关闭'); return; }
-          if (everConnected) setError('终端连接已中断，正在自动重连；连接恢复后可继续输入');
+          if (everConnected) setError(queued ? '连接中断，暂存输入已保留在输入栏；重连后请确认再发送' : '终端连接已中断，正在自动重连；连接恢复后可继续输入');
           scheduleReconnect();
         };
         socket.onerror = () => { if (!disposed) setError('终端连接暂时中断，正在重连'); };
@@ -248,7 +277,15 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     }
     void connect();
     return () => {
+      const queued = deferredInput.current; deferredInput.current = '';
+      if (queued) {
+        const preserved = draftRef.current + queued;
+        try { sessionStorage.setItem(draftKey, preserved); } catch { /* Best effort on unmount. */ }
+        setDraft(preserved); setComposerOpen(true);
+      }
+      acceptsInputRef.current = false;
       disposed = true; clearTimeout(reconnect); clearTimeout(copiedTimer.current); uploadAbortRef.current?.abort(); uploadAbortRef.current = null; uploadingRef.current = false; socket?.close(); input.dispose(); selection.dispose();
+      containerRef.current?.removeEventListener('copy', copy); socketRef.current = null;
       detachTheme(); detachTouchScroll?.(); resizeObserver.disconnect(); terminal.dispose(); terminalRef.current = null; fitRef.current = null;
     };
   }, [sessionId, running, channel, readOnlyRequested]);
@@ -279,14 +316,15 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     if (!running || !connected || !generation) { setImageStatus('终端尚未连接完成，请稍后再添加图片'); return; }
     const controller = new AbortController();
     uploadAbortRef.current = controller; uploadingRef.current = true; setUploadingImage(true); setImageStatus('正在把图片填入原生输入…');
-    if (terminalRef.current) terminalRef.current.options.disableStdin = true;
+    let staged = false;
     try {
       await uploadTerminalImage(sessionId, generation, file, controller.signal);
       if (uploadAbortRef.current !== controller) return;
+      staged = true;
       if (terminalIdRef.current !== generation || !connected) {
         setImageStatus('终端已切换，图片结果可能未知；请检查原生输入后再重试');
       } else {
-        setImageStatus('图片已填入原生输入，请确认出现 [Image #1] 后按回车发送');
+        setImageStatus('图片已填入原生输入；请确认附件或文件路径后按回车发送');
       }
     } catch (cause) {
       if (uploadAbortRef.current !== controller) return;
@@ -298,14 +336,26 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
       // `connected` belongs to the render that started the upload and may be
       // stale after a socket close. The terminal generation is the authoritative
       // connection identity, so only re-enable input for that same PTY.
-      if (terminalRef.current && running && terminalIdRef.current === generation) terminalRef.current.options.disableStdin = false;
+      const queued = deferredInput.current; deferredInput.current = '';
+      if (staged && queued && terminalIdRef.current === generation && acceptsInputRef.current && socketRef.current?.readyState === WebSocket.OPEN) sendTerminalInput(socketRef.current, queued);
+      else if (queued) { setDraft(value => value + queued); setComposerOpen(true); setError('暂存输入未发送，已保留在输入栏中'); }
+      terminalRef.current?.focus();
     }
   }
   function onPasteCapture(event: ClipboardEvent<HTMLDivElement>) {
     if (!allowImages) return;
     const image = Array.from(event.clipboardData.items).map(item => item.kind === 'file' ? item.getAsFile() : null).find((item): item is File => !!item && item.type.startsWith('image/'));
     if (!image) return;
-    event.preventDefault(); event.stopPropagation(); void stageImage(image);
+    event.preventDefault(); event.stopPropagation();
+    const text = event.clipboardData.getData('text/plain');
+    void stageImage(image);
+    if (text) {
+      if (event.target instanceof HTMLTextAreaElement && event.target === composerRef.current) {
+        const field = event.target;
+        const next = field.value.slice(0,field.selectionStart) + text + field.value.slice(field.selectionEnd);
+        setDraft(next);
+      } else terminalRef.current?.paste(text);
+    }
   }
   function onImageSelected(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -313,20 +363,44 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     if (file) void stageImage(file);
   }
 
+  async function copySelection() {
+    const selected = terminalRef.current?.getSelection();
+    if (!selected) { setError('先在终端中选中要复制的内容；原生鼠标模式下可按住 Shift 拖选'); return; }
+    try {
+      await copyToClipboard(selected); setCopied(true); setError('');
+      clearTimeout(copiedTimer.current); copiedTimer.current = setTimeout(() => setCopied(false), 1800);
+    } catch { setError('浏览器无法访问剪贴板，请使用系统复制快捷键'); }
+  }
+  async function pasteClipboard() {
+    try {
+      if (!navigator.clipboard) throw new Error('unavailable');
+      // read() includes screenshots; readText() remains a fallback on browsers
+      // which grant text access but do not implement binary clipboard access.
+      if (allowImages && navigator.clipboard.read) {
+        const items = await navigator.clipboard.read().catch(() => []);
+        const item = items.find(item => item.types.some(type => type.startsWith('image/')));
+        const type = item?.types.find(type => type.startsWith('image/'));
+        if (item && type) { await stageImage(new File([await item.getType(type)], 'clipboard-image', { type })); return; }
+      }
+      const text = await navigator.clipboard.readText();
+      if (!acceptsInputRef.current || socketRef.current?.readyState !== WebSocket.OPEN) throw new Error('disconnected');
+      terminalRef.current?.paste(text); terminalRef.current?.focus();
+    } catch { setError('浏览器未允许读取剪贴板。请聚焦终端后按 Ctrl/⌘+V；Linux 也可按 Shift+Insert。图片可使用选择图片按钮'); }
+  }
   const sendRaw = (data: string) => {
     const socket = socketRef.current;
     if (!acceptsInputRef.current || uploadingRef.current || socket?.readyState !== WebSocket.OPEN) return false;
-    socket.send(JSON.stringify({ type: 'input', data }));
+    sendTerminalInput(socket, data);
     return true;
   };
   const sendDraft = () => {
     const text = draft;
-    if (!text.trim() || !terminalRef.current) return;
+    if (!text.trim() || !terminalRef.current || !acceptsInputRef.current || uploadingRef.current || socketRef.current?.readyState !== WebSocket.OPEN) return;
     // paste() honours bracketed paste, so multi-line text lands as one block
     // instead of the first line submitting early; Enter follows separately.
     terminalRef.current.paste(text.replace(/\r?\n$/, ''));
     setDraft('');
-    window.setTimeout(() => sendRaw('\r'), 40);
+    window.setTimeout(() => { if (!sendRaw('\r')) setError('正文已填入，但回车未发送。请确认终端内容后手动按回车'); }, 80);
     composerRef.current?.focus();
   };
   const quickKeys: [string, string, string][] = [['Esc', '\x1b', '发送 Esc'], ['Tab', '\t', '发送 Tab'], ['↑', '\x1b[A', '上一条'], ['↓', '\x1b[B', '下一条'], ['^C', '\x03', '发送 Ctrl+C'], ['⏎', '\r', '发送回车']];
@@ -334,12 +408,8 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
   return <div className={`terminal-pane ${fullscreen ? 'fullscreen' : ''}`} onPasteCapture={onPasteCapture}>
     <div className="terminal-toolbar">{readOnly && <span className="terminal-readonly">只读查看</span>}<span title={connected ? '浏览器已连接终端通道；任务是否执行请查看会话状态' : '正在连接终端通道'} className={`terminal-connection ${connected ? 'connected' : ''}`}><i />{connected ? '已连接' : '连接中'}</span><div>
       {allowImages && <><input ref={fileInputRef} className="terminal-image-input" type="file" accept={TERMINAL_IMAGE_TYPES.join(',')} onChange={onImageSelected} /><button title="选择图片并填入原生输入" aria-label="选择图片并填入原生输入" disabled={!connected || !terminalId || !running || uploadingImage} onClick={() => fileInputRef.current?.click()}>{uploadingImage ? <LoaderCircle className="spin" size={14} /> : <ImagePlus size={14} />}</button></>}
-      <button title="复制选中的终端内容" aria-label="复制选中的终端内容" onClick={async () => {
-        const selected = terminalRef.current?.getSelection();
-        if (!selected) { setError('先在终端中选中要复制的内容'); return; }
-        try { await navigator.clipboard.writeText(selected); setCopied(true); setError(''); clearTimeout(copiedTimer.current); copiedTimer.current = setTimeout(() => setCopied(false), 1800); }
-        catch { setError('浏览器无法访问剪贴板，请使用系统复制快捷键'); }
-      }}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+      <button title="复制选中的终端内容（Ctrl/⌘+Shift+C）" aria-label="复制选中的终端内容" onClick={() => void copySelection()}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+      {!readOnly && <button title="粘贴剪贴板；也可使用 Ctrl/⌘+V" aria-label="粘贴到终端" disabled={!connected || !running || uploadingImage} onClick={() => void pasteClipboard()}><ClipboardPaste size={14} /></button>}
       {channel === 'session' && <button title={composerOpen ? '隐藏输入栏' : '显示输入栏（适合手机和中文输入）'} aria-label={composerOpen ? '隐藏输入栏' : '显示输入栏'} aria-pressed={composerOpen} onClick={() => setComposerOpen(value => !value)}><Keyboard size={14} /></button>}
       <button title="回到终端底部" aria-label="回到终端底部" onClick={() => { terminalRef.current?.scrollToBottom(); terminalRef.current?.focus(); }}><ArrowDownToLine size={14} /></button>
       <button title={`${toggleLabel}（Ctrl / ⌘ + Shift + Enter）`} aria-label={toggleLabel} aria-pressed={fullscreen} onClick={() => setFullscreen((value) => !value)}>{fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
@@ -348,10 +418,10 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     {error && <div className="terminal-error" role="alert"><WifiOff size={14} /><span>{error}</span><button className="terminal-dismiss" aria-label="关闭终端提示" onClick={() => setError('')}><X size={13} /></button></div>}
     <div ref={containerRef} className="terminal-container" />
     {composerOpen && channel === 'session' && !readOnly && <div className="terminal-composer">
-      <div className="terminal-quick-keys" role="group" aria-label="快捷按键">{quickKeys.map(([label, data, title]) => <button key={label} type="button" title={title} aria-label={title} disabled={!connected || !running} onClick={() => { sendRaw(data); composerRef.current?.focus(); }}>{label}</button>)}</div>
+      <div className="terminal-quick-keys" role="group" aria-label="快捷按键">{quickKeys.map(([label, data, title]) => <button key={label} type="button" title={title} aria-label={title} disabled={!connected || !running || uploadingImage} onClick={() => { sendRaw(data); composerRef.current?.focus(); }}>{label}</button>)}</div>
       <div className="terminal-composer-row">
-        <textarea ref={composerRef} aria-label="终端输入栏" placeholder={running ? '输入内容，回车发送；Shift+回车换行' : '启动会话后可以输入'} rows={1} value={draft} disabled={!connected || !running} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); sendDraft(); } }} />
-        <button type="button" className="terminal-send" aria-label="发送到终端" title="发送到终端（回车）" disabled={!connected || !running || !draft.trim()} onClick={sendDraft}><Send size={15} /></button>
+        <textarea ref={composerRef} aria-label="终端输入栏" placeholder={running ? '输入内容，回车发送；Shift+回车换行' : '启动会话后可以输入'} rows={1} value={draft} disabled={!running} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); sendDraft(); } }} />
+        <button type="button" className="terminal-send" aria-label="发送到终端" title="发送到终端（回车）" disabled={!connected || !running || uploadingImage || !draft.trim()} onClick={sendDraft}><Send size={15} /></button>
       </div>
     </div>}
     {!running && <div className="terminal-hint">{channel === 'shell' ? 'Shell 已退出，可以关闭此终端或新建一个。' : '启动会话后，在这里使用原生 CLI。'}</div>}

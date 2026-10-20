@@ -17,7 +17,7 @@ export function nativeChatItem(value: unknown, turnId?: string, done = false): C
   if (!item || typeof item.id !== 'string' || !item.id || item.id.length > 512) return;
   const common = { id: item.id, ...(turnId ? { turnId } : {}), status: status(item.status, done) };
   switch (item.type) {
-    case 'userMessage': return { ...common, type: 'user', text: text(contentText(item.content)), status: 'completed' };
+    case 'userMessage': return { ...common, type: 'user', text: text(contentText(item.content)), imageCount: Array.isArray(item.content) ? item.content.filter((entry: unknown) => ['image', 'localImage'].includes(string(object(entry)?.type))).length : 0, status: 'completed' };
     case 'agentMessage': return { ...common, type: 'assistant', text: text(item.text) };
     case 'plan': return { ...common, type: 'plan', text: text(item.text), title: '执行计划' };
     case 'commandExecution': return { ...common, type: 'command', title: '执行命令', text: text(item.command), ...(typeof item.aggregatedOutput === 'string' ? { output: text(item.aggregatedOutput) } : {}) };

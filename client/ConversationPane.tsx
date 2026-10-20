@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, MessageSquare, RefreshCw, TerminalSquare } from 'lucide-react';
 import type { ConversationTranscript, Session } from '../shared/types';
 import { api } from './api';
+import Markdown from './Markdown';
+import NativeInputComposer from './NativeInputComposer';
 import './conversation.css';
 
 type Snapshot = { identity: string; transcript: ConversationTranscript; syncedAt: Date };
@@ -16,8 +18,8 @@ function messageTime(value?: string) {
 }
 
 /** Reads native structured history. Input and permission decisions remain native. */
-export default function ConversationPane({ session, onTerminal, onSelection }: {
-  session: Session; onTerminal: () => void; onSelection?: (text: string) => void;
+export default function ConversationPane({ session, onTerminal, onSelection, allowInput = false }: {
+  allowInput?: boolean; session: Session; onTerminal: () => void; onSelection?: (text: string) => void;
 }) {
   const identity = `${session.id}:${session.nativeSessionId ?? ''}:${session.forkPending}`;
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -156,8 +158,9 @@ export default function ConversationPane({ session, onTerminal, onSelection }: {
           <button className="button secondary" onClick={onTerminal}><TerminalSquare size={14} />进入原生终端</button></div>
           : <ol className="conversation-messages">{transcript!.messages.map(message => <li key={message.id} data-message-id={message.id} className={`conversation-message from-${message.role}`}>
             <div className="conversation-message-meta"><span>{message.role === 'user' ? '你' : backendName[session.backend]}</span>{messageTime(message.createdAt) && <time dateTime={message.createdAt}>{messageTime(message.createdAt)}</time>}</div>
-            <div className="conversation-text">{message.text}</div>
+            <div className="conversation-text">{message.role === 'assistant' ? <Markdown text={message.text} /> : message.text}</div>
           </li>)}</ol>}
     </div>
+    {allowInput && session.backend !== 'codex' && <NativeInputComposer key={session.id} session={session} onTerminal={onTerminal} />}
   </section>;
 }

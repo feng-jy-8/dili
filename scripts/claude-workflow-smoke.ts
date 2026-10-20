@@ -18,21 +18,25 @@ import { findExecutable } from '../server/adapters.ts';
 const run = promisify(execFile);
 const minimalEnv: NodeJS.ProcessEnv = {};
 for (const key of ['PATH', 'LANG', 'LC_ALL', 'TZ', 'TERM']) if (process.env[key]) minimalEnv[key] = process.env[key];
-if (!process.argv.includes('--isolated-network')) {
+const imageOnly = process.argv.includes('--image-only');
+const loopbackFixture = imageOnly && process.argv.includes('--loopback-fixture');
+if (!process.argv.includes('--isolated-network') && !loopbackFixture) {
   if (process.platform !== 'linux') { console.log(JSON.stringify({ result: 'skipped', reason: 'This optional check requires Linux network namespaces' })); process.exit(0); }
   const namespace = await readlink('/proc/self/ns/net');
-  const child = spawn('unshare', ['--user', '--map-root-user', '--net', process.execPath, '--import', 'tsx', fileURLToPath(import.meta.url), '--isolated-network'], { env: { ...minimalEnv, SESSIONDECK_PARENT_NETWORK_NAMESPACE: namespace }, stdio: 'inherit' });
+  const child = spawn('unshare', ['--user', '--map-root-user', '--net', process.execPath, '--import', 'tsx', fileURLToPath(import.meta.url), '--isolated-network', ...(imageOnly ? ['--image-only'] : [])], { env: { ...minimalEnv, SESSIONDECK_PARENT_NETWORK_NAMESPACE: namespace }, stdio: 'inherit' });
   const exitCode = await new Promise<number>(accept => {
     child.once('error', error => { console.error(`Cannot create isolated network namespace: ${error.message}`); accept(1); });
     child.once('exit', code => accept(code ?? 1));
   });
   process.exit(exitCode);
 }
-assert.ok(process.env.SESSIONDECK_PARENT_NETWORK_NAMESPACE, 'Start this script through its network namespace wrapper');
-assert.notEqual(await readlink('/proc/self/ns/net'), process.env.SESSIONDECK_PARENT_NETWORK_NAMESPACE);
-await run('ip', ['link', 'set', 'lo', 'up'], { env: minimalEnv });
-const networkLinks = JSON.parse((await run('ip', ['-j', 'link', 'show'], { env: minimalEnv })).stdout) as { ifname: string }[];
-assert.deepEqual(networkLinks.map(link => link.ifname), ['lo']);
+if (!loopbackFixture) {
+  assert.ok(process.env.SESSIONDECK_PARENT_NETWORK_NAMESPACE, 'Start this script through its network namespace wrapper');
+  assert.notEqual(await readlink('/proc/self/ns/net'), process.env.SESSIONDECK_PARENT_NETWORK_NAMESPACE);
+  await run('ip', ['link', 'set', 'lo', 'up'], { env: minimalEnv });
+  const networkLinks = JSON.parse((await run('ip', ['-j', 'link', 'show'], { env: minimalEnv })).stdout) as { ifname: string }[];
+  assert.deepEqual(networkLinks.map(link => link.ifname), ['lo']);
+}
 const executable = await findExecutable('claude');
 if (!executable) { console.log(JSON.stringify({ result: 'skipped', reason: 'Claude Code is not installed' })); process.exit(0); }
 
@@ -71,7 +75,7 @@ const provider = createServer(async (request, response) => {
     const input = JSON.parse(body) as { messages: unknown[]; model: string; stream: boolean };
     assert.equal(input.stream, true);
     const text = JSON.stringify(input.messages);
-    const marker = ['SESSIONDECK_SOURCE', 'SESSIONDECK_CHILD', 'SESSIONDECK_CANCEL', 'SESSIONDECK_APPROVAL', 'SESSIONDECK_ACCEPT'].filter(value => text.includes(value)).sort((a, b) => text.lastIndexOf(b) - text.lastIndexOf(a))[0];
+    const marker = ['SESSIONDECK_SOURCE', 'SESSIONDECK_CHILD', 'SESSIONDECK_CANCEL', 'SESSIONDECK_APPROVAL', 'SESSIONDECK_ACCEPT', 'SESSIONDECK_IMAGE'].filter(value => text.includes(value)).sort((a, b) => text.lastIndexOf(b) - text.lastIndexOf(a))[0];
     assert.ok(marker, 'Unexpected local fixture prompt');
     requests.push({ marker, input: text });
     const answer = `${marker}_REPLY`;
@@ -122,7 +126,7 @@ try {
   const hook = [process.execPath, fileURLToPath(new URL('../server/native-hook.cjs', import.meta.url)), `http://127.0.0.1:${address.port}/native-event`, 'fixture-only', 'claude'].map(shellQuote).join(' ');
   const settings = { hooks: Object.fromEntries(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'Notification', 'PermissionRequest'].map(event => [event, [{ hooks: [{ type: 'command', command: hook, timeout: 3 }] }]])) };
   const openTui = async (id: string, source?: string) => {
-    const args = [...(source ? ['--resume', source, '--fork-session'] : []), '--session-id', id, '--name', source ? 'Native fixture child' : 'Native fixture source', '--model', 'claude-sonnet-4-6', '--settings', JSON.stringify(settings), '--setting-sources', '', '--strict-mcp-config', '--no-chrome'];
+    const args = [...(source ? ['--resume', source, '--fork-session'] : []), '--session-id', id, '--name', source ? 'Native fixture child' : 'Native fixture source', '--permission-mode', 'default', '--model', 'claude-sonnet-4-6', '--settings', JSON.stringify(settings), '--setting-sources', '', '--strict-mcp-config', '--no-chrome'];
     const child = pty.spawn(executable, args, { cols: 110, rows: 34, cwd: workspace, env: env as Record<string, string> });
     const terminal = new headless.Terminal({ cols: 110, rows: 34, scrollback: 1000, allowProposedApi: true });
     const view: View = { child, terminal, exited: false, text: () => Array.from({ length: terminal.buffer.active.length }, (_, index) => terminal.buffer.active.getLine(index)?.translateToString(true) ?? '').join('\n') };
@@ -165,6 +169,17 @@ try {
   }, 'Source native history did not finish flushing before Fork');
   const before = await nativeHistory(sourceId);
   assert.ok(before.includes('SESSIONDECK_SOURCE_REPLY'));
+  if (imageOnly) {
+    const imagePath = join(workspace, "native 'quoted' image.png");
+    await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+    sourceTui.child.write('\x1b[200~' + JSON.stringify(imagePath) + '\x1b[201~');
+    sourceTui.child.write('\x1b[200~ SESSIONDECK_IMAGE\x1b[201~');
+    await delay(800); sourceTui.child.write('\r');
+    await waitFor(() => sourceTui.text().includes('SESSIONDECK_IMAGE_REPLY'), 'Native image prompt did not finish');
+    const imageRequest = requests.find(request => request.marker === 'SESSIONDECK_IMAGE');
+    assert.ok(imageRequest && /"type":"image"/.test(imageRequest.input), 'Claude did not encode the staged local image as native image content');
+    console.log(JSON.stringify({ result:'passed', version:(await run(executable,['--version'],{env,cwd:workspace})).stdout.trim(), nativeImage:true, quotedPath:true, adjacentPasteFrames:true, networkNamespace:loopbackFixture ? 'not isolated; disposable credentials and loopback provider' : 'isolated; loopback only', realCredentialsUsed:false, externalModelRequests:0 }));
+  } else {
   const childTui = await openTui(childId, sourceId);
   await submit(childTui, 'SESSIONDECK_CHILD');
   await waitFor(() => hooks.some(event => event.session_id === childId && event.hook_event_name === 'Stop') && childTui.text().includes('SESSIONDECK_CHILD_REPLY'), 'Child turn did not finish');
@@ -177,6 +192,14 @@ try {
   assert.equal(await nativeHistory(sourceId), before, 'Child prompt changed source native history');
   const childRequest = requests.find(request => request.marker === 'SESSIONDECK_CHILD');
   assert.ok(childRequest?.input.includes('SESSIONDECK_SOURCE_REPLY'), 'Fork did not send inherited context to the provider');
+  const imagePath = join(workspace, 'native \'quoted\' image.png');
+  await writeFile(imagePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+  childTui.child.write('\x1b[200~' + JSON.stringify(imagePath) + '\x1b[201~');
+  childTui.child.write('\x1b[200~ SESSIONDECK_IMAGE\x1b[201~');
+  await delay(800); childTui.child.write('\r');
+  await waitFor(() => childTui.text().includes('SESSIONDECK_IMAGE_REPLY'), 'Native image prompt did not finish');
+  const imageRequest = requests.find(request => request.marker === 'SESSIONDECK_IMAGE');
+  assert.ok(imageRequest && /"type":"image"/.test(imageRequest.input), 'Claude did not encode the staged local image as native image content');
   await submit(childTui, 'SESSIONDECK_ACCEPT');
   await waitFor(() => hooks.some(event => event.session_id === childId && event.hook_event_name === 'PermissionRequest') && childTui.text().includes('approved-fixture') && childTui.text().includes('Do you want to proceed?'), 'Claude approval did not appear for the disposable fixture write');
   childTui.child.write('1');
@@ -197,7 +220,8 @@ try {
   await waitFor(() => cancellations === 1, 'Native Escape did not cancel the provider HTTP stream');
   assert.ok(hooks.some(event => event.session_id === sourceId && event.hook_event_name === 'UserPromptSubmit'));
   assert.ok(hooks.some(event => event.session_id === childId && event.hook_event_name === 'UserPromptSubmit'));
-  console.log(JSON.stringify({ result: 'passed', version: (await run(executable, ['--version'], { env, cwd: workspace })).stdout.trim(), provider: 'deterministic local Messages fixture', networkNamespace: 'isolated; loopback only', disposableOnboardingFixture: true, nativeWorkspaceTrustAndApiKeyConfirmation: true, nativeTuiPrompt: true, nativeHooksAndIdentity: true, nativeCompletion: true, nativeFork: true, inheritedContext: true, independentChild: true, nativeApproval: true, approvedToolCompletionHook: true, rejectedCommandNotExecuted: true, nativeCancellation: true, localModelRequests: requests.length, externalModelRequests: 0, realCredentialsUsed: false }, null, 2));
+  console.log(JSON.stringify({ result: 'passed', version: (await run(executable, ['--version'], { env, cwd: workspace })).stdout.trim(), provider: 'deterministic local Messages fixture', networkNamespace: 'isolated; loopback only', disposableOnboardingFixture: true, nativeWorkspaceTrustAndApiKeyConfirmation: true, nativeTuiPrompt: true, nativeHooksAndIdentity: true, nativeCompletion: true, nativeImagePath: true, nativeFork: true, inheritedContext: true, independentChild: true, nativeApproval: true, approvedToolCompletionHook: true, rejectedCommandNotExecuted: true, nativeCancellation: true, localModelRequests: requests.length, externalModelRequests: 0, realCredentialsUsed: false }, null, 2));
+  }
 } finally {
   for (const view of terminals) if (!view.exited) view.child.kill();
   for (const response of held) response.destroy();

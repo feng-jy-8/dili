@@ -1,4 +1,9 @@
 import test from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Attachments } from './attachments.ts';
+import { ChatSubmissions } from './chat-submissions.ts';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -9,6 +14,8 @@ import { CodexChatState, nativeChatAnswer, nativeChatRequest } from './codex-cha
 import { registerCodexChat } from './chat-api.ts';
 import { ConversationReader } from './conversation.ts';
 import { Store } from './store.ts';
+
+function testAttachments(t: test.TestContext, store: Store) { const directory = mkdtempSync(join(tmpdir(), 'dili-chat-images-')); t.after(() => rmSync(directory, {recursive:true,force:true})); return new Attachments(store.db,directory); }
 
 type Message = { id?: string | number; method?: string; params?: Record<string, unknown>; result?: unknown; error?: unknown };
 async function until(check: () => boolean) { for (let i = 0; i < 150; i++) { if (check()) return; await delay(5); } assert.fail('Native chat fixture did not reach expected state'); }
@@ -367,7 +374,7 @@ test('a returning HTTP viewer receives cached messages before the fresh native p
   const store = new Store(':memory:');
   const contact = store.addSession({ backend: 'codex', title: 'cached fixture', cwd: '/tmp', nativeSessionId: threadId });
   const app = express();
-  const api = registerCodexChat(app, { store, bridge, conversations: new ConversationReader(), instanceId: 'http-fixture', demo: false, closing: () => false, supported: () => true, ready: () => false, busy: () => false, sessions: () => store.sessions(), broadcast: () => {}, updatePreview: () => {} });
+  const api = registerCodexChat(app, { attachments: testAttachments(t, store), submissions: new ChatSubmissions(store.db), store, bridge, conversations: new ConversationReader(), instanceId: 'http-fixture', demo: false, closing: () => false, supported: () => true, ready: () => false, busy: () => false, sessions: () => store.sessions(), broadcast: () => {}, updatePreview: () => {} });
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   const address = server.address(); assert.ok(address && typeof address === 'object');
@@ -418,7 +425,7 @@ test('graphical reconnect recovers a lost observer without clearing history or s
   store.updateSession(contact.id, { running: true });
   let busy = false;
   const app = express(); app.use(express.json());
-  const api = registerCodexChat(app, { store, bridge, conversations: new ConversationReader(), instanceId: 'reconnect-fixture', demo: false, closing: () => false, supported: () => true, ready: () => true, busy: () => busy, sessions: () => store.sessions(), broadcast: () => {}, updatePreview: () => {} });
+  const api = registerCodexChat(app, { attachments: testAttachments(t, store), submissions: new ChatSubmissions(store.db), store, bridge, conversations: new ConversationReader(), instanceId: 'reconnect-fixture', demo: false, closing: () => false, supported: () => true, ready: () => true, busy: () => busy, sessions: () => store.sessions(), broadcast: () => {}, updatePreview: () => {} });
   app.use((error: Error & { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => { res.status(error.status ?? 500).json({ error: error.message }); });
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -455,4 +462,16 @@ test('graphical reconnect recovers a lost observer without clearing history or s
   store.updateSession(contact.id, { nativeSessionId: randomUUID() });
   release();
   assert.equal((await pending).status, 409, 'A reconnect cannot claim success after its native identity changes');
+});
+
+test('Codex image-only prompts use native localImage inputs without exposing server paths in chat text', async t => {
+  const f = await fixture(t);
+  await f.bridge.start();
+  await f.bridge.openSession(f.threadId,'/tmp');
+  await f.bridge.sendPrompt(f.threadId,'',undefined,['/private/data/screenshot.png']);
+  assert.deepEqual(f.calls.find(call=>call.message.method==='turn/start')?.message.params?.input,[{type:'localImage',path:'/private/data/screenshot.png'}]);
+  await f.send('item/completed',{turnId:f.turnId,item:{id:'image-user',type:'userMessage',content:[{type:'localImage',path:'/private/data/screenshot.png'}]}});
+  const item=f.bridge.chatSnapshot(f.threadId)!.items.find(item=>item.id==='image-user');
+  assert.equal(item?.imageCount,1);
+  assert.equal(item?.text,'');
 });

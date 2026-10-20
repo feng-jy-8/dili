@@ -1,4 +1,4 @@
-import { Check, Monitor, Moon, Sun, Sunrise } from 'lucide-react';
+import { Check, Contrast, Monitor, Moon, Sparkles, Sun, Sunrise, TerminalSquare } from 'lucide-react';
 import ModalShell from './Modal';
 import { useTheme, type ThemePreference } from './theme';
 
@@ -6,6 +6,9 @@ const themes = [
   { id: 'light', label: '简洁浅色', detail: '清晰、轻盈，熟悉的工作台', icon: Sun },
   { id: 'warm', label: '柔和暖色', detail: '纸张与木色，适合长时间阅读', icon: Sunrise },
   { id: 'dark', label: '沉静深色', detail: '石墨背景，柔和蓝色点缀', icon: Moon },
+  { id: 'midnight', label: '午夜靛蓝', detail: '深海蓝底，青蓝与紫色点缀', icon: Sparkles },
+  { id: 'terminal', label: '终端黑绿', detail: '经典黑底绿字，专注命令与代码', icon: TerminalSquare },
+  { id: 'contrast', label: '高对比度', detail: '纯黑背景、鲜明边界与清晰文字', icon: Contrast },
 ] as const;
 
 export default function AppearanceDialog({ close }: { close: () => void }) {

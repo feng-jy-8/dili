@@ -1,4 +1,4 @@
-import { memo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, memo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -6,6 +6,8 @@ import { Check, Copy } from 'lucide-react';
 import { copyToClipboard } from './clipboard';
 import 'highlight.js/styles/github.css';
 import './markdown.css';
+
+const MermaidDiagram = lazy(() => import('./MermaidDiagram'));
 
 function safeLink(value: string) {
   if (/^https?:\/\//i.test(value) || /^mailto:/i.test(value) || /^#[\w-]+$/.test(value)) return value;
@@ -26,7 +28,14 @@ const Markdown = memo(function Markdown({ text, onToggleTask }: { text: string; 
   return <div className="chat-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false }]]} skipHtml urlTransform={safeLink} components={{
     a: ({ href, children }) => href ? <a href={href} target={href.startsWith('#') ? undefined : '_blank'} rel="noreferrer noopener">{children}</a> : <span>{children}</span>,
     img: ({ alt }) => <span className="markdown-image-label">[图片{alt ? `：${alt}` : ''}]</span>,
-    pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+    pre: ({ children, node }) => {
+      const code = node?.children[0];
+      if (code?.type === 'element' && code.tagName === 'code' && (code.properties.className as string[] | undefined)?.includes('language-mermaid')) {
+        const source = code.children.map(child => child.type === 'text' ? child.value : '').join('');
+        return <Suspense fallback={<CodeBlock>{children}</CodeBlock>}><MermaidDiagram source={source} /></Suspense>;
+      }
+      return <CodeBlock>{children}</CodeBlock>;
+    },
     table: ({ children }) => <div className="markdown-table"><table>{children}</table></div>,
     li: ({ node, children, ...props }) => <li {...props} onChange={onToggleTask ? event => {
       if (!(event.target instanceof HTMLInputElement) || event.target.closest('li') !== event.currentTarget || node?.position?.start.offset === undefined) return;

@@ -27,6 +27,7 @@
     "test:smoke:codex-chat": "tsx scripts/codex-chat-smoke.ts",
     "test:smoke:codex-image": "tsx scripts/codex-image-smoke.ts",
     "test:terminal-load": "tsx scripts/terminal-load.ts",
+    "test:smoke:claude-image": "tsx scripts/claude-workflow-smoke.ts --image-only --loopback-fixture",
     "test:smoke:claude": "tsx scripts/claude-workflow-smoke.ts",
     "test:smoke:workspace": "tsx scripts/workspace-workflow-smoke.ts",
     "backup": "tsx scripts/backup.ts",

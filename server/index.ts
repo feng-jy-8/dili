@@ -37,6 +37,8 @@ import { StatePublisher } from './state.ts';
 import { listDirectories, normalizeDirectoryInput } from './directories.ts';
 import { ConversationReader, conversationPreview, handoffPrompt } from './conversation.ts';
 import { gitDiff, gitStatus, listWorkspace, readWorkspaceFile } from './workspace.ts';
+import { Attachments, registerAttachments, hasImageSignature } from './attachments.ts';
+import { ChatSubmissions } from './chat-submissions.ts';
 import { registerCodexChat } from './chat-api.ts';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES, type TerminalImageType } from '../shared/terminal-images.ts';
 import type { Backend, BackendInfo, Session, AppState, SessionStatus, ConversationTranscript, DiscoveredSession } from '../shared/types.ts';
@@ -52,6 +54,8 @@ const dataDir = resolve(process.env.SESSIONDECK_DATA_DIR || join(homedir(), '.lo
 const instanceLock = await acquireInstanceLock(dataDir);
 const store = new Store(join(dataDir, 'sessiondeck.sqlite'));
 const scratchpad = new ScratchpadStore(store.db);
+const submissions = new ChatSubmissions(store.db);
+const attachments = new Attachments(store.db, join(dataDir, 'chat-images'));
 // Uploaded images live outside every workspace. They intentionally survive a
 // service restart so the native Codex composer can still read a pasted path.
 const terminalImageDir = join(dataDir, 'terminal-images');
@@ -274,6 +278,7 @@ app.use((req, res, next) => {
 // Every action taken through a share is attributed in the session's activity.
 const shareActions: [RegExp, string][] = [
   [/\/start$/, '启动了会话'], [/\/stop$/, '停止了会话'], [/\/chat\/messages$/, '发送了消息'],
+  [/\/attachments$/, '添加了图片附件'], [/\/input$/, '填入了原生输入'],
   [/\/chat\/requests\//, '处理了审批'], [/\/chat\/interrupt$/, '停止了生成'], [/\/terminal\/image$/, '粘贴了图片'],
 ];
 function shareActivity(principal: Extract<Principal, { kind: 'share' }>, path: string) {
@@ -292,12 +297,6 @@ function imageType(value: unknown): TerminalImageType | null {
   const type = typeof value === 'string' ? value.split(';', 1)[0].trim().toLowerCase() : '';
   return (TERMINAL_IMAGE_TYPES as readonly string[]).includes(type) ? type as TerminalImageType : null;
 }
-function hasImageSignature(body: Buffer, type: TerminalImageType): boolean {
-  if (type === 'image/png') return body.length >= 8 && body.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  if (type === 'image/jpeg') return body.length >= 3 && body[0] === 0xff && body[1] === 0xd8 && body[2] === 0xff;
-  if (type === 'image/gif') return body.length >= 6 && (body.subarray(0, 6).toString('ascii') === 'GIF87a' || body.subarray(0, 6).toString('ascii') === 'GIF89a');
-  return body.length >= 12 && body.subarray(0, 4).toString('ascii') === 'RIFF' && body.subarray(8, 12).toString('ascii') === 'WEBP';
-}
 function captureTerminalImage(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (!csrfValid(req, res)) return res.status(403).json({ error: '操作凭证已过期，请刷新页面' });
   const type = imageType(req.headers['content-type']);
@@ -311,8 +310,8 @@ function captureTerminalImage(req: express.Request, res: express.Response, next:
   const suppliedGeneration = req.headers['x-sessiondeck-terminal'];
   if (typeof suppliedGeneration !== 'string' || !generation || suppliedGeneration !== generation)
     return res.status(409).json({ error: '原生终端已重启，请重新连接后粘贴图片' });
-  if (!item || item.backend !== 'codex' || !item.running || item.interactionMode === 'chat')
-    return res.status(409).json({ error: '只有正在运行的 Codex 原生终端可以接收图片' });
+  if (!item || !['codex', 'claude', 'dsh'].includes(item.backend) || !item.running || item.interactionMode === 'chat')
+    return res.status(409).json({ error: '只有正在运行的 Agent 原生终端可以接收图片' });
   if (item.status === 'waiting_approval') return res.status(409).json({ error: '原生会话正在等待审批，请先完成审批后再添加图片' });
   pendingTerminalImages.set(req, { id, generation, type });
   next();
@@ -341,7 +340,7 @@ app.post('/api/sessions/:id/terminal/image', captureTerminalImage,
         fail('原生终端已重启，请重新粘贴图片', 409);
       await rename(temporary, target);
       temporary = null;
-      terminals.stagePath(pending.id, target, pending.generation);
+      terminals.stagePath(pending.id, target, pending.generation, current.backend);
       res.json({ staged: true });
     } catch (error) {
       if (temporary) await unlink(temporary).catch(() => undefined);
@@ -349,6 +348,7 @@ app.post('/api/sessions/:id/terminal/image', captureTerminalImage,
       next(error);
     }
   });
+registerAttachments(app, express.raw, attachments, { csrf: csrfValid, allowed: id => { const item = store.session(id); return !demo && !!item && !item.archived && ['codex', 'claude', 'dsh'].includes(item.backend); } });
 app.use(express.json({ limit: '128kb' }));
 // Login and share redemption run before a device exists; the remote listener
 // already requires a matching Origin for them, and SameSite blocks the cookie.
@@ -518,7 +518,7 @@ app.delete('/api/shells/:id', async (req, res) => {
   res.json({ removed: true });
 });
 const chatApi = registerCodexChat(app, {
-  store, bridge: codexBridge, conversations, instanceId, demo, updatePreview,
+  store, bridge: codexBridge, conversations, instanceId, demo, updatePreview, attachments, submissions,
   closing: () => closing,
   supported: () => !!info('codex').capabilities.nativeControl,
   ready: item => codexRuns.get(item.id)?.nativeId === item.nativeSessionId && codexRuns.get(item.id)?.launchId === launchIds.get(item.id),
@@ -528,6 +528,34 @@ const chatApi = registerCodexChat(app, {
 });
 app.post('/api/directories/list', async (req, res) => {
   res.json(await listDirectories(req.body.path, { showHidden: req.body.showHidden === true }));
+});
+app.get('/api/sessions/:id/input', (req, res) => {
+  const item = session(String(req.params.id));
+  res.json({ generation: terminals.generation(item.id), nativeSessionId: item.nativeSessionId });
+});
+app.post('/api/sessions/:id/input', (req, res) => {
+  const item = session(String(req.params.id));
+  if (demo || item.backend === 'codex' || item.archived || !item.running || item.forkPending || starting.has(item.id) || stopping.has(item.id)) fail('请先启动原生终端后填入内容',409);
+  if (item.status === 'waiting_approval') fail('请先在原生终端中处理审批',409);
+  const generation = terminals.generation(item.id);
+  if (!generation || req.body.generation !== generation) fail('原生终端已变化，请核对后重新填入',409);
+  if (typeof req.body.text !== 'string' || req.body.text.length > 30000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(req.body.text)) fail('内容无效或超过 30000 字符');
+  if (typeof req.body.requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,100}$/.test(req.body.requestId)) fail('发送标识无效');
+  const images = attachments.resolve(item.id, req.body.attachments);
+
+  if (!req.body.text.trim() && !images.length) fail('内容不能为空');
+  const { created, submission } = submissions.begin(item.id,req.body.requestId, generation, JSON.stringify([req.body.text,req.body.attachments ?? []]));
+  if (!created) return res.json({ ...submission, staged:true });
+  try {
+    // Each native image parser expects a paste containing exactly one path.
+    // Keep text in a separate paste, and never send Enter on the user's behalf.
+    for (const image of images) terminals.stagePath(item.id, image, generation, item.backend);
+    if (req.body.text.trim()) terminals.stage(item.id, (images.length ? ' ' : '') + req.body.text);
+    res.json({ ...submissions.finish(item.id,req.body.requestId,{status:'accepted'}), staged:true });
+  } catch (cause) {
+    submissions.finish(item.id,req.body.requestId,{status:'unknown'});
+    throw cause;
+  }
 });
 app.get('/api/sessions/:id/conversation', async (req, res) => {
   const item = session(String(req.params.id));

@@ -5,11 +5,13 @@ import type { Session } from '../shared/types';
 import type { CodexChatAnswer, CodexChatHistoryPage, CodexChatItem, CodexChatPatch, CodexChatRequest, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
 import { api, ApiError } from './api';
 import Markdown from './Markdown';
+import ImageAttachments from './ImageAttachments';
+import type { ChatAttachment } from '../shared/attachments';
 import ConversationOutline from './ConversationOutline';
 import './codex-chat.css';
 
-type Pending = { requestId: string; text: string };
-type Draft = { text: string; pending: Pending | null };
+type Pending = { requestId: string; text: string; attachments?: ChatAttachment[] };
+type Draft = { text: string; pending: Pending | null; attachments: ChatAttachment[] };
 type OlderHistory = { identity: string; items: CodexChatItem[]; cursor: string | null; loading: boolean; error: string; limited?: boolean };
 const draftKey = (id: string) => `sessiondeck.codex-chat-draft.${id}`;
 function readDraft(id: string): Draft {
@@ -17,10 +19,11 @@ function readDraft(id: string): Draft {
     const value = JSON.parse(sessionStorage.getItem(draftKey(id)) ?? 'null');
     if (value && typeof value.text === 'string') return {
       text: value.text.slice(0, 30000),
+      attachments: Array.isArray(value.attachments) ? value.attachments.filter((item: ChatAttachment) => typeof item?.id === 'string' && typeof item.name === 'string').slice(0,8) : [],
       pending: typeof value.pending?.requestId === 'string' && typeof value.pending.text === 'string' ? value.pending : null,
     };
   } catch { /* A missing or invalid draft must not prevent reading the session. */ }
-  return { text: '', pending: null };
+  return { text: '', pending: null, attachments: [] };
 }
 function saveDraft(id: string, value: Draft) {
   try { sessionStorage.setItem(draftKey(id), JSON.stringify(value)); return true; } catch { return false; }
@@ -34,7 +37,7 @@ function requestId() {
 const MessageItem = memo(function MessageItem({ item, highlighted = false }: { item: CodexChatItem; highlighted?: boolean }) {
   if (item.type === 'assistant' || item.type === 'user') return <article className={`codex-message codex-${item.type}${highlighted ? ' codex-message-highlighted' : ''}`} data-chat-item={item.id} tabIndex={item.type === 'user' ? -1 : undefined}>
     <div className="codex-message-heading"><strong>{item.type === 'user' ? '你' : 'Codex'}</strong>{item.status === 'inProgress' && <span><LoaderCircle size={11} className="spin" />正在回复</span>}{item.status === 'failed' && <span>未完成</span>}</div>
-    <div className="codex-message-body">{item.type === 'assistant' ? <Markdown text={item.text || '…'} /> : <p>{item.text}</p>}</div>
+    <div className="codex-message-body">{item.type === 'assistant' ? <Markdown text={item.text || '…'} /> : <><p>{item.text}</p>{!!item.imageCount && <p className="codex-image-count">附带 {item.imageCount} 张图片</p>}</>}</div>
   </article>;
   if (item.type === 'notice') return <p className="codex-inline-notice" data-chat-item={item.id}>{item.text}</p>;
   if (item.type === 'plan') return <article className="codex-plan" data-chat-item={item.id}><strong>{item.title || '执行计划'}</strong><Markdown text={item.text} /></article>;
@@ -91,6 +94,8 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState(() => localStorage.getItem(`sessiondeck.codex-model.${session.id}`) || '');
+  const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkedUnknown, setCheckedUnknown] = useState(false);
   const [checkNotice, setCheckNotice] = useState('');
@@ -305,7 +310,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     // Clear only its own submitted snapshot, preserving the newer editor.
     const current = active.current ? draftRef.current : readDraft(session.id);
     if (current.pending?.requestId !== pending.requestId) return;
-    updateDraft({ text: current.text === pending.text ? '' : current.text, pending: null });
+    updateDraft({ text: current.text === pending.text ? '' : current.text, attachments: current.attachments.filter(item => !pending.attachments?.some(sent => sent.id === item.id)), pending: null });
     if (active.current) { setCheckNotice(''); setCheckedUnknown(false); void readSnapshot.current(); }
   }
   async function checkSubmission() {
@@ -326,17 +331,17 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   async function send(event?: FormEvent) {
     event?.preventDefault();
     const text = draftRef.current.text;
-    if (!text.trim() || busyRef.current || draftRef.current.pending || !transport || session.archived || snapshot?.activeTurnId || snapshot?.requests.length || (session.running && !snapshot?.connected)) return;
+    if ((!text.trim() && !draftRef.current.attachments.length) || uploading || busyRef.current || draftRef.current.pending || !transport || session.archived || snapshot?.activeTurnId || snapshot?.requests.length || (session.running && !snapshot?.connected)) return;
     busyRef.current = true; setBusy(true); setError(''); setCheckNotice('');
     let pending: Pending | undefined;
     try {
       if (!sessionRef.current.running || sessionRef.current.interactionMode !== 'chat') await api(`/sessions/${session.id}/start`, { mode: 'chat' });
       if (!active.current) return;
-      pending = { requestId: requestId(), text };
+      pending = { requestId: requestId(), text, attachments: [...draftRef.current.attachments] };
       const next = { ...draftRef.current, pending };
       if (!saveDraft(session.id, next)) throw new Error('无法保存本次发送状态。请允许此站点使用浏览器存储后重试。');
       updateDraft(next);
-      const result = await api<CodexChatSubmission>(`/sessions/${session.id}/chat/messages`, { text, requestId: pending.requestId, ...(model ? { model } : {}) });
+      const result = await api<CodexChatSubmission>(`/sessions/${session.id}/chat/messages`, { text, attachments: pending.attachments?.map(item => item.id), requestId: pending.requestId, ...(model ? { model } : {}) });
       if (result.status === 'accepted') accepted(pending);
       else if (result.status === 'rejected') { const current = active.current ? draftRef.current : readDraft(session.id); if (current.pending?.requestId === pending.requestId) updateDraft({ ...current, pending: null }); if (active.current) setError(result.error || '消息未被接收，草稿已保留。'); }
       else if (active.current) setCheckNotice(result.status === 'sending' ? '消息正在提交，请查询发送结果。' : '发送结果尚未确认，请查询结果后继续。');
@@ -351,7 +356,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
 
   const hasTurn = !!snapshot?.activeTurnId;
   const nativeAvailable = !session.running || !!snapshot?.connected;
-  const canSend = !!draft.text.trim() && !busy && !draft.pending && transport && nativeAvailable && !hasTurn && !snapshot?.requests.length && !session.archived;
+  const canSend = (!!draft.text.trim() || !!draft.attachments.length) && !uploading && !busy && !draft.pending && transport && nativeAvailable && !hasTurn && !snapshot?.requests.length && !session.archived;
   const olderCurrent = older?.identity === snapshot?.nativeSessionId ? older : null;
   const existingIds = new Set(snapshot?.items.map(item => item.id));
   const visibleItems = [...(olderCurrent?.items.filter(item => !existingIds.has(item.id)) ?? []), ...(snapshot?.items ?? [])];
@@ -382,10 +387,13 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     </div>
     {draft.pending && !busy && <div className="codex-pending" role="status"><strong>发送结果待确认</strong><p>{checkNotice || '这条消息可能已被原生会话接收。查询结果前不会重复发送。'}</p><div><button type="button" className="button secondary small-button" disabled={checking} onClick={() => void checkSubmission()}>{checking ? '正在查询…' : '查询发送结果'}</button>{checkedUnknown && <><button type="button" className="text-button" onClick={() => { if (draftRef.current.pending) accepted(draftRef.current.pending); setError(''); }}>已核对收到，完成发送</button><button type="button" className="text-button" onClick={() => { updateDraft({ ...draftRef.current, pending: null }); setCheckedUnknown(false); setCheckNotice(''); setError(''); }}>已核对未发送，恢复草稿</button></>}</div></div>}
     <form className="codex-composer" onSubmit={event => void send(event)}>
+      <ImageAttachments sessionId={session.id} items={draft.attachments} onChange={update => { const current = active.current ? draftRef.current : readDraft(session.id); updateDraft({ ...current, attachments: update(current.attachments) }); }} onBusy={setUploading} disabled={session.archived || !!draft.pending}>
+      {preview && <div className="composer-preview" aria-label="消息 Markdown 预览"><Markdown text={draft.text || '还没有文字内容'} /></div>}
       <textarea ref={textarea} aria-label="给 Codex 发送消息" placeholder={session.archived ? '恢复联系人后继续对话' : hasTurn ? '可以先写下下一条消息…' : '描述任务，或继续补充你的想法…'} value={draft.text} maxLength={30000} disabled={session.archived} rows={3} onChange={event => updateDraft({ ...draftRef.current, text: event.target.value })} onKeyDown={event => {
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (canSend) void send(); }
       }} />
-      <div className="codex-composer-footer"><span>{busy ? '正在发送…' : draft.pending ? '请先核对上一条消息的发送结果' : !transport ? '正在连接本地服务，草稿已保留' : !nativeAvailable ? '请使用上方的重新连接按钮恢复输入' : 'Enter 发送 · Shift + Enter 换行'}</span><div>{hasTurn && <button type="button" className="button secondary small-button" disabled={!transport || interrupting} onClick={async () => {
+      </ImageAttachments>
+      <div className="codex-composer-footer"><span>{busy ? '正在发送…' : draft.pending ? '请先核对上一条消息的发送结果' : !transport ? '正在连接本地服务，草稿已保留' : !nativeAvailable ? '请使用上方的重新连接按钮恢复输入' : 'Enter 发送 · Shift + Enter 换行'}</span><div><button type="button" className="text-button" aria-pressed={preview} onClick={() => setPreview(value => !value)}>Markdown 预览</button>{hasTurn && <button type="button" className="button secondary small-button" disabled={!transport || interrupting} onClick={async () => {
         setInterrupting(true); setError('');
         try { await api(`/sessions/${session.id}/chat/interrupt`, {}); await readSnapshot.current(); }
         catch (cause) { if (active.current) setError(errorText(cause)); }

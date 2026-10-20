@@ -26,6 +26,9 @@ test('theme picker colors the entire workbench and native terminal live, with pe
   await note.getByRole('button', { name: '预览', exact: true }).click();
   for (const [name, theme, color] of [
     ['沉静深色', 'dark', 'rgb(25, 29, 36)'],
+    ['午夜靛蓝', 'midnight', 'rgb(17, 24, 39)'],
+    ['终端黑绿', 'terminal', 'rgb(11, 16, 13)'],
+    ['高对比度', 'contrast', 'rgb(0, 0, 0)'],
     ['柔和暖色', 'warm', 'rgb(255, 253, 248)'],
     ['简洁浅色', 'light', 'rgb(255, 255, 255)'],
   ]) {

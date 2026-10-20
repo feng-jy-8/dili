@@ -33,21 +33,23 @@ demoTest('demo Codex contacts never expose the native image bridge', async ({ pa
   await expect(page.locator('.terminal-image-input')).toHaveCount(0);
 });
 
-baseTest('real Codex native terminals expose image upload with the active PTY generation', async ({ page }) => {
+for (const backend of ['codex','claude','dsh'] as const) baseTest(`${backend} preserves concurrent typing while staging an image into the active PTY`, async ({ page }) => {
   const seed = await (await page.request.get('/api/state')).json() as AppState;
-  const source = seed.sessions.find(session => session.backend === 'codex');
+  const source = seed.sessions.find(session => session.backend === backend);
   expect(source).toBeTruthy();
   const contact: Session = {
-    ...(source as Session), id: 'codex-image-browser-test', title: 'Codex 图片桥接回归',
+    ...(source as Session), backend, id: 'codex-image-browser-test', title: 'Codex 图片桥接回归',
     running: true, status: 'idle', statusSource: 'process', statusDetail: '可继续',
     interactionMode: 'terminal', nativeSessionId: 'native-image-test', forkPending: false,
   };
   const state: AppState = {
     ...seed, demo: false, sessions: [contact], groups: [], activities: [],
-    backends: seed.backends.map(backend => backend.id === 'codex'
+    backends: seed.backends.map(backend => backend.id === contact.backend
       ? { ...backend, installed: true, capabilities: { ...backend.capabilities, terminal: true, nativeControl: true, graphicalChat: false } }
       : backend),
   };
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => {release = resolve;});
   const upload: { headers: Record<string, string>; body: Buffer | null } = { headers: {}, body: null };
   await page.addInitScript(() => {
     const target = window as unknown as { terminalSockets: unknown[] };
@@ -70,7 +72,7 @@ baseTest('real Codex native terminals expose image upload with the active PTY ge
           this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ type: 'ready', terminalId: 'test-generation' }) }));
         });
       }
-      send(_data: string) {}
+      send(data: string) { const message = JSON.parse(data); if (message.type === 'input') ((window as unknown as {testInput:string[]}).testInput ??= []).push(message.data); }
       close() { this.readyState = FakeSocket.CLOSED; this.onclose?.(new CloseEvent('close')); }
     }
     Object.defineProperty(window, 'WebSocket', { configurable: true, value: FakeSocket });
@@ -84,10 +86,12 @@ baseTest('real Codex native terminals expose image upload with the active PTY ge
   });
   await page.route('**/api/state', route => route.fulfill({ json: state }));
   await page.route('**/api/config', route => route.fulfill({ json: { csrfToken: 'browser-image-token' } }));
+  await page.route('**/api/sessions/'+contact.id+'/conversation',route=>route.fulfill({json:{messages:[],truncated:false}}));
   await page.route(`**/api/sessions/${contact.id}/read`, route => route.fulfill({ json: contact }));
   await page.route(`**/api/sessions/${contact.id}/terminal/image`, async route => {
     upload.headers = route.request().headers();
     upload.body = route.request().postDataBuffer();
+    await pending;
     await route.fulfill({ json: { staged: true } });
   });
   await page.goto(`/#/contacts?session=${contact.id}`);
@@ -95,9 +99,32 @@ baseTest('real Codex native terminals expose image upload with the active PTY ge
   await expect(page.locator('.terminal-connection')).toHaveText('已连接');
   const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
   await page.locator('.terminal-image-input').setInputFiles({ name: 'pixel.png', mimeType: 'image/png', buffer: image });
+  await expect(page.locator('.terminal-image-status')).toContainText('正在把图片填入');
+  await page.locator('.xterm-helper-textarea').focus();
+  await page.keyboard.insertText('上传期间中文🙂');
+  expect(await page.evaluate(() => (window as unknown as {testInput?:string[]}).testInput ?? [])).toEqual([]);
+  release();
   await expect(page.locator('.terminal-image-status')).toContainText('图片已填入原生输入');
+  await expect.poll(() => page.evaluate(() => (window as unknown as {testInput:string[]}).testInput.join(''))).toBe('上传期间中文🙂');
   expect(upload.headers['content-type']).toBe('image/png');
   expect(upload.headers['x-sessiondeck-terminal']).toBe('test-generation');
   expect(upload.headers['x-sessiondeck-token']).toBe('browser-image-token');
   expect(upload.body).toEqual(image);
+  if(backend !== 'codex') {
+    let staged: Record<string,unknown> | undefined;
+    await page.route('**/api/sessions/'+contact.id+'/input',route=> {
+      if(route.request().method() === 'GET') return route.fulfill({json:{generation:'test-generation'}});
+      staged=route.request().postDataJSON(); return route.fulfill({json:{status:'accepted',staged:true}});
+    });
+    await page.getByRole('button',{name:'对话记录',exact:true}).click();
+    await page.getByLabel('原生会话消息草稿').fill('中文任务 **解释**');
+    await page.getByRole('button',{name:'Markdown 预览',exact:true}).click();
+    await expect(page.getByLabel('消息 Markdown 预览').locator('strong')).toHaveText('解释');
+    await page.getByRole('button',{name:'填入原生终端',exact:true}).click();
+    await expect(page.getByRole('button',{name:'原生终端',exact:true})).toHaveAttribute('aria-pressed','true');
+    expect(staged?.text).toBe('中文任务 **解释**'); expect(staged?.generation).toBe('test-generation');
+    expect(staged?.requestId).toBeTruthy();
+    await page.getByRole('button',{name:'对话记录',exact:true}).click();
+    await expect(page.getByLabel('原生会话消息草稿')).toHaveValue('');
+  }
 });

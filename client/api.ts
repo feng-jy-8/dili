@@ -57,6 +57,17 @@ export async function api<T>(path: string, body?: unknown, method?: string): Pro
   return result as T;
 }
 
+export async function uploadChatImage(sessionId: string, image: File): Promise<import('../shared/attachments').ChatAttachment> {
+  const send = async () => request('/api/sessions/' + encodeURIComponent(sessionId) + '/attachments', {
+    method: 'POST', headers: { 'Content-Type': image.type, 'X-SessionDeck-Token': await getToken(), 'X-Dili-Filename': encodeURIComponent(image.name.slice(0,120)) }, body: image,
+  }, 60_000);
+  let response = await send();
+  if (response.status === 403) { await getToken(true); response = await send(); }
+  const result = await response.json();
+  if (!response.ok) throw new ApiError(result.error || '图片上传失败', response.status);
+  return result;
+}
+
 /** Upload a browser image to the native Codex terminal without JSON encoding. */
 export async function uploadTerminalImage(sessionId: string, terminalId: string, image: Blob, signal?: AbortSignal): Promise<{ staged: true }> {
   const controller = new AbortController();

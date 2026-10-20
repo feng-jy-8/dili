@@ -18,3 +18,9 @@
 .markdown-table th, .markdown-table td { padding: 6px 10px; border: 1px solid var(--line-strong); text-align: left; }
 .markdown-table th { background: var(--subtle); font-weight: 600; }.markdown-image-label { color: var(--muted); font-size: 12px; }
 .chat-markdown .contains-task-list { list-style: none; padding-left: 6px; }.chat-markdown .task-list-item input { margin-right: 7px; }
+
+.mermaid-diagram { margin: 12px 0; padding: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.mermaid-diagram iframe { display: block; width: 100%; border: 0; }
+.mermaid-diagram>p { color: var(--muted); font-size: 12px; }
+.mermaid-diagram summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.mermaid-diagram pre { overflow: auto; max-height: 300px; white-space: pre; font-size: 12px; }

@@ -68,7 +68,7 @@ export default function LiveMarkdownEditor({ value, onChange, onBlur, focusReque
     let lastMarkdown = '', lastAccepted = props.current.value;
     const surface = host.current;
     const syncTheme = () => {
-      if (initialized && !disposed) editor?.setTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'classic');
+      if (initialized && !disposed) editor?.setTheme(document.documentElement.dataset.colorScheme === 'dark' ? 'dark' : 'classic');
     };
     const observer = new MutationObserver(syncTheme);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -123,7 +123,7 @@ export default function LiveMarkdownEditor({ value, onChange, onBlur, focusReque
         _lutePath: luteUrl, cache: { enable: false }, height: '100%', minHeight: 0,
         toolbar: [], toolbarConfig: { hide: true }, undoDelay: 100,
         placeholder: '随手记下想法和待办…\n支持 Markdown，边写边呈现',
-        theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'classic',
+        theme: document.documentElement.dataset.colorScheme === 'dark' ? 'dark' : 'classic',
         preview: {
           mode: 'editor', hljs: { enable: false }, actions: [],
           theme: { current: '', path: '' }, render: { media: { enable: false } },

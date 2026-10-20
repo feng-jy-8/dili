@@ -36,11 +36,18 @@ async function launch(t: test.TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'sessiondeck-codex-chat-api-'));
   const executable = join(directory, 'codex.cjs');
   await copyFile(resolve('scripts/fixtures/codex-chat-protocol.cjs'), executable); await chmod(executable, 0o700);
+  const claude = join(directory,'claude.cjs');
+  await writeFile(claude, `#!${process.execPath}
+const fs=require('node:fs'),path=require('node:path');
+if(process.argv.includes('--version')){console.log('fixture');process.exit(0)}
+if(process.argv.includes('--help')){console.log('--resume --fork-session');process.exit(0)}
+process.stdin.setRawMode(true);process.stdin.on('data',data=>fs.appendFileSync(path.join(__dirname,'native-input.log'),data));process.stdout.write('READY');
+`,{mode:0o700});
   const port = await freePort(), base = `http://127.0.0.1:${port}`;
   const env: NodeJS.ProcessEnv = {};
   for (const key of ['PATH', 'LANG', 'LC_ALL', 'TZ']) if (process.env[key]) env[key] = process.env[key];
   const child = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
-    cwd: resolve('.'), env: { ...env, SESSIONDECK_PORT: String(port), SESSIONDECK_DEMO: '0', SESSIONDECK_DATA_DIR: join(directory, 'data'), SESSIONDECK_CODEX_PORT: '0', SESSIONDECK_CODEX_BIN: executable, SESSIONDECK_CLAUDE_BIN: '/missing-claude-fixture', SESSIONDECK_DSH_BIN: '/missing-dsh-fixture', SESSIONDECK_FIXTURE_DIR: directory, SESSIONDECK_FIXTURE_WS: createRequire(import.meta.url).resolve('ws'), CODEX_HOME: join(directory, 'codex-home') },
+    cwd: resolve('.'), env: { ...env, SESSIONDECK_PORT: String(port), SESSIONDECK_DEMO: '0', SESSIONDECK_DATA_DIR: join(directory, 'data'), SESSIONDECK_CODEX_PORT: '0', SESSIONDECK_CODEX_BIN: executable, SESSIONDECK_CLAUDE_BIN: claude, SESSIONDECK_DSH_BIN: '/missing-dsh-fixture', SESSIONDECK_FIXTURE_DIR: directory, SESSIONDECK_FIXTURE_WS: createRequire(import.meta.url).resolve('ws'), CODEX_HOME: join(directory, 'codex-home') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let logs = '';
@@ -68,7 +75,7 @@ async function launch(t: test.TestContext) {
   const create = (title: string) => request<Session>('/api/sessions', 'POST', { backend: 'codex', title, cwd: directory }, 201);
   const snapshot = (id: string) => request<CodexChatSnapshot>(`/api/sessions/${id}/chat`);
   const current = async (id: string) => (await request<AppState>('/api/state')).sessions.find(session => session.id === id)!;
-  return { directory, request, calls, stream, create, snapshot, current };
+  return { directory, request, calls, stream, create, snapshot, current, base, csrfToken };
 }
 
 test('graphical Codex starts without a TUI, streams once per request ID, and attaches the exact native thread', { timeout: 30_000 }, async t => {
@@ -244,4 +251,59 @@ test('HTTP history loads only recent turns, exposes an older cursor and keeps ol
   assert.equal(page.nextCursor, null);
   assert.deepEqual((await fixture.snapshot(source.id)).items, recent.items);
   assert.equal((await fixture.calls()).some(call => call.method === 'thread/read' && (call.params as Record<string, unknown>)?.includeTurns === true), false);
+});
+
+
+test('raw graphical uploads enforce image type and session ownership, then native image-only sends deduplicate', {timeout:30000}, async t => {
+  const f = await launch(t);
+  const source = await f.create('Image source'), other = await f.create('Image isolation');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  const upload = (body: Buffer, type = 'image/png', token = f.csrfToken) => fetch(`${f.base}/api/sessions/${source.id}/attachments`, {method:'POST',headers:{'content-type':type,'x-sessiondeck-token':token,'x-dili-filename':encodeURIComponent('截图.png')},body:new Uint8Array(body)});
+  assert.equal((await upload(png,'image/png','invalid-token')).status,403);
+  assert.equal((await upload(png,'text/plain')).status,415);
+  assert.equal((await upload(Buffer.from('<svg/>'))).status,415);
+  const response = await upload(png); assert.equal(response.status,201);
+  const item = await response.json() as {id:string;name:string};
+  assert.equal(item.name,'截图.png'); assert.equal('path' in item,false);
+  const saved = await fetch(`${f.base}/api/sessions/${source.id}/attachments/${item.id}`);
+  assert.equal(saved.status,200); assert.deepEqual(Buffer.from(await saved.arrayBuffer()),png);
+  assert.equal((await fetch(`${f.base}/api/sessions/${other.id}/attachments/${item.id}`)).status,404);
+  await f.request(`/api/sessions/${other.id}/start`,'POST',{mode:'chat'});
+  await f.request(`/api/sessions/${other.id}/chat/messages`,'POST',{text:'',requestId:randomUUID(),attachments:[item.id]},404);
+  await f.request(`/api/sessions/${source.id}/start`,'POST',{mode:'chat'});
+  const payload = {text:'',requestId:randomUUID(),attachments:[item.id]};
+  await f.request(`/api/sessions/${source.id}/chat/messages`,'POST',payload);
+  await f.request(`/api/sessions/${source.id}/chat/messages`,'POST',payload);
+  const turns = (await f.calls()).filter(call=>call.method === 'turn/start');
+  assert.equal(turns.length,1);
+  const input = turns[0].params?.input as {type:string;path?:string}[];
+  assert.equal(input.length,1); assert.equal(input[0].type,'localImage');
+  assert.ok(input[0].path?.startsWith(join(f.directory,'data','chat-images')));
+  assert.deepEqual(await readFile(input[0].path!),png);
+});
+
+
+test('Claude graphical staging uses separate native image pastes, no Enter, and rejects stale or repeated changes', {timeout:30000}, async t => {
+  const f=await launch(t);
+  const contact=await f.request<Session>('/api/sessions','POST',{backend:'claude',title:'Native staging',cwd:f.directory},201);
+  await f.request('/api/sessions/'+contact.id+'/start','POST',{});
+  await delay(150);
+  const native=await f.request<{generation:string}>('/api/sessions/'+contact.id+'/input');
+  assert.ok(native.generation);
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
+  const response=await fetch(f.base+'/api/sessions/'+contact.id+'/attachments',{method:'POST',headers:{'content-type':'image/png','x-sessiondeck-token':f.csrfToken},body:new Uint8Array(png)});
+  assert.equal(response.status,201); const item=await response.json() as {id:string};
+  const payload={text:'检查图片\n并解释',attachments:[item.id],requestId:randomUUID(),generation:native.generation};
+  await f.request('/api/sessions/'+contact.id+'/input','POST',payload);
+  await f.request('/api/sessions/'+contact.id+'/input','POST',payload);
+  await until(async()=> (await readFile(join(f.directory,'native-input.log'),'utf8').catch(()=>'' )).includes('并解释'), 'Native staging did not reach PTY');
+  const input=await readFile(join(f.directory,'native-input.log'),'utf8');
+  assert.equal(input.split('\x1b[200~').length,3);
+  assert.ok(input.includes(JSON.stringify(join(f.directory,'data','chat-images',item.id+'.png'))));
+  assert.ok(input.endsWith(' 检查图片  并解释\x1b[201~'));
+  assert.ok(!input.includes('\r')&&!input.includes('\n'));
+  await f.request('/api/sessions/'+contact.id+'/input','POST',{...payload,text:'Different'},409);
+  await f.request('/api/sessions/'+contact.id+'/input','POST',{...payload,requestId:randomUUID(),generation:'stale-generation'},409);
+  const terminal=await fetch(f.base+'/api/sessions/'+contact.id+'/terminal/image',{method:'POST',headers:{'content-type':'image/png','x-sessiondeck-token':f.csrfToken,'x-sessiondeck-terminal':native.generation},body:new Uint8Array(png)});
+  assert.equal(terminal.status,200);
 });

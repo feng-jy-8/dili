@@ -37,7 +37,7 @@ test('conversation history is read-only, recovers from failed refresh and switch
   }));
   await openConversation(page, session);
   await expect(page.locator('.conversation-text').first()).toHaveText(history.messages[0].text);
-  await expect(page.locator('.conversation-text').last()).toHaveText(history.messages[1].text);
+  await expect(page.locator('.conversation-text').last().locator('pre')).toHaveText('const text = "<img src=x onerror=alert(1)>";\n');
   await expect(page.locator('.conversation-pane img')).toHaveCount(0);
   await expect(page.locator('.conversation-pane')).toContainText('最近部分，完整上下文请在原生终端中查看');
   await expect(page.locator('.conversation-pane textarea')).toHaveCount(0);
@@ -192,4 +192,31 @@ test('staging a group task overrides the read-only preference and opens the exis
   const state = await (await page.request.get('/api/state')).json() as AppState;
   expect(state.sessions.find(item => item.id === session.id)?.nativeSessionId).toBe(started.nativeSessionId);
   expect(launches).toEqual([]);
+});
+
+test('Claude history renders GFM and sandboxed Mermaid with a readable source fallback', async ({ page }) => {
+  const state = await (await page.request.get('/api/state')).json() as AppState;
+  const session = await mutate<Session>(page.request, '/sessions', { backend: 'claude', title: 'Claude Markdown 图表', cwd: state.defaultCwd });
+  const text = '# 方案\n\n**重点**\n\n- [x] 完成\n\n|项目|状态|\n|---|---|\n|图表|正常|\n\n```ts\nconst safe = true;\n```\n\n```mermaid\nflowchart LR\n A[开始] --> B[完成]\n```';
+  const history: ConversationTranscript = { messages: [{ id: 'assistant-diagram', role: 'assistant', text }], truncated: false };
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route(`**/api/sessions/${session.id}/conversation`, route => route.fulfill({ json: history }));
+  await page.goto(`/#/contacts?session=${session.id}`);
+  await page.getByRole('button', { name: '对话记录', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '方案', exact: true })).toBeVisible();
+  await expect(page.locator('.conversation-text table')).toBeVisible();
+  await expect(page.locator('.conversation-text .hljs-keyword')).toHaveText('const');
+  await expect(page.locator('.conversation-text input[type=checkbox]')).toBeChecked();
+  const frame = page.frameLocator('iframe[title="Mermaid 图表"]');
+  await expect(frame.locator('svg')).toBeVisible({ timeout: 20000 });
+  await expect(frame.locator('svg')).toContainText('开始');
+  await expect(page.locator('iframe[title="Mermaid 图表"]')).toHaveAttribute('sandbox', 'allow-scripts');
+  await page.getByText('图表源码', { exact: true }).click();
+  await expect(page.locator('.mermaid-diagram details pre')).toContainText('flowchart LR');
+  await page.screenshot({ path: 'artifacts/claude-markdown-mermaid.png' });
+  history.messages[0].text = '```mermaid\nthis is not a valid diagram\n```';
+  await page.getByRole('button', { name: '刷新记录', exact: true }).click();
+  await expect(page.locator('.mermaid-diagram')).toContainText('语法有误', { timeout: 20000 });
+  expect(errors).toEqual([]);
 });

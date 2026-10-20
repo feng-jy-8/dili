@@ -4,6 +4,7 @@ export interface CodexChatItem {
   turnId?: string;
   type: 'user' | 'assistant' | 'command' | 'fileChange' | 'tool' | 'plan' | 'notice';
   text: string;
+  imageCount?: number;
   title?: string;
   output?: string;
   status: 'inProgress' | 'completed' | 'failed';

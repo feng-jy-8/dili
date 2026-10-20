@@ -1,15 +1,16 @@
 import { useSyncExternalStore } from 'react';
 import { readLocalPreference, writeLocalPreference } from './ui';
 
-export type ThemePreference = 'light' | 'warm' | 'dark' | 'system';
+export type ThemePreference = 'light' | 'warm' | 'dark' | 'midnight' | 'terminal' | 'contrast' | 'system';
 const key = 'sessiondeck.theme';
-const valid = (value: string | null): ThemePreference => ['light', 'warm', 'dark', 'system'].includes(value ?? '') ? value as ThemePreference : 'system';
+const valid = (value: string | null): ThemePreference => ['light', 'warm', 'dark', 'midnight', 'terminal', 'contrast', 'system'].includes(value ?? '') ? value as ThemePreference : 'system';
 let preference = valid(readLocalPreference(key));
 const listeners = new Set<() => void>();
 const scheme = window.matchMedia('(prefers-color-scheme: dark)');
 function applyTheme() {
   document.documentElement.dataset.theme = preference === 'system' ? scheme.matches ? 'dark' : 'light' : preference;
   document.documentElement.dataset.themePreference = preference;
+  document.documentElement.dataset.colorScheme = ['dark', 'midnight', 'terminal', 'contrast'].includes(document.documentElement.dataset.theme!) ? 'dark' : 'light';
 }
 /** Run before mounting the login gate or workspace to avoid a light-theme flash. */
 export function initializeTheme() {

@@ -30,3 +30,5 @@
   .conversation-message { max-width: 100%; }
   .conversation-text { padding: 10px 12px; font-size: 13px; }
 }
+
+.conversation-text:has(.chat-markdown) { white-space: normal; }

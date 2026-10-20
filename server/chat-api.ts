@@ -3,11 +3,14 @@ import type { ConversationTranscript, Session } from '../shared/types.ts';
 import type { CodexChatPatch, CodexChatSnapshot } from '../shared/chat.ts';
 import type { CodexBridge } from './codex.ts';
 import type { ConversationReader } from './conversation.ts';
-import { ChatSubmissions } from './chat-submissions.ts';
+import type { ChatSubmissions } from './chat-submissions.ts';
+import type { Attachments } from './attachments.ts';
 import type { Store } from './store.ts';
 
 interface Dependencies {
   store: Store;
+  attachments: Attachments;
+  submissions: ChatSubmissions;
   bridge: CodexBridge;
   conversations: ConversationReader;
   instanceId: string;
@@ -26,7 +29,7 @@ interface Viewer { response: express.Response; previous?: CodexChatSnapshot; dev
 
 export function registerCodexChat(app: express.Express, options: Dependencies) {
   const { store, bridge, conversations } = options;
-  const submissions = new ChatSubmissions(store.db);
+  const submissions = options.submissions;
   const viewers = new Map<string, Set<Viewer>>();
   const scheduled = new Map<string, NodeJS.Timeout>();
   const snapshots = new Map<string, CodexChatSnapshot>();
@@ -163,17 +166,19 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
   app.post('/api/sessions/:id/chat/messages', async (req, res) => {
     const item = writable(String(req.params.id));
     const id = requestId(req.body.requestId);
-    if (typeof req.body.text !== 'string' || !req.body.text.trim() || req.body.text.length > 32_000 || /\x00/.test(req.body.text)) fail('消息不能为空，且最多 32000 字符');
+    if (typeof req.body.text !== 'string' || req.body.text.length > 32_000 || /\x00/.test(req.body.text)) fail('消息不能为空，且最多 32000 字符');
     const text = req.body.text.trim();
-    const { created, submission } = submissions.begin(item.id, id, item.nativeSessionId!, text);
+    const images = options.attachments.resolve(item.id, req.body.attachments);
+    if (!text && !images.length) fail('消息不能为空');
+    const { created, submission } = submissions.begin(item.id, id, item.nativeSessionId!, images.length ? JSON.stringify([text, req.body.attachments]) : text);
     if (!created) return res.status(submission.status === 'unknown' || submission.status === 'sending' ? 202 : 200).json(submission);
     const inputAt = new Date().toISOString();
     try {
       const model = typeof req.body.model === 'string' && /^[a-zA-Z0-9._:-]{1,100}$/.test(req.body.model) ? req.body.model : undefined;
-      const result = await bridge.sendPrompt(item.nativeSessionId!, text, model);
+      const result = await bridge.sendPrompt(item.nativeSessionId!, text, model, images);
       if (options.closing()) return;
       const accepted = submissions.finish(item.id, id, { status: 'accepted', turnId: result.turnId });
-      options.updatePreview(item, { messages: [{ id, role: 'user', text, createdAt: inputAt }], truncated: false });
+      options.updatePreview(item, { messages: [{ id, role: 'user', text: text || '[图片]', createdAt: inputAt }], truncated: false });
       res.json(accepted);
     } catch (cause) {
       if (options.closing()) return;
