@@ -5,7 +5,9 @@ import ErrorBoundary from './ErrorBoundary';
 import './styles.css';
 import './themes.css';
 import { initializeTheme } from './theme';
+import { initializeZoom } from './zoom';
 
 initializeTheme();
+initializeZoom();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><ErrorBoundary><AuthGate /></ErrorBoundary></React.StrictMode>);

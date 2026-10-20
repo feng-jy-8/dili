@@ -5,6 +5,7 @@ import { api } from './api';
 import Markdown from './Markdown';
 import DiffView, { DiffStats, type DiffMode } from './DiffView';
 import { readLocalPreference, writeLocalPreference } from './ui';
+import { interfaceScale, viewportWidth } from './zoom';
 
 type Entry = { name: string; path: string; kind: 'file' | 'directory'; size?: number };
 type Tree = { path: string; entries: Entry[]; truncated: boolean };
@@ -52,9 +53,9 @@ function savedWidth(key: string, fallback: number) {
   return Number.isFinite(saved) ? saved : fallback;
 }
 function useViewportWidth() {
-  const [width, setWidth] = useState(() => window.innerWidth);
+  const [width, setWidth] = useState(() => viewportWidth());
   useEffect(() => {
-    const resize = () => setWidth(window.innerWidth);
+    const resize = () => setWidth(viewportWidth());
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
   }, []);
@@ -75,7 +76,7 @@ export function Splitter({ label, value, min, max, onChange, onCommit, direction
   };
   const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag.current) return;
-    const next = clamp(drag.current.width + direction * (event.clientX - drag.current.x));
+    const next = clamp(drag.current.width + direction * (event.clientX - drag.current.x) / interfaceScale());
     drag.current.last = next;
     onChange(next);
   };

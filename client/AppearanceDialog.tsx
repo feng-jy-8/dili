@@ -1,6 +1,7 @@
 import { Check, Contrast, Monitor, Moon, Sparkles, Sun, Sunrise, TerminalSquare } from 'lucide-react';
 import ModalShell from './Modal';
 import { useTheme, type ThemePreference } from './theme';
+import InterfaceZoom from './InterfaceZoom';
 
 const themes = [
   { id: 'light', label: '简洁浅色', detail: '清晰、轻盈，熟悉的工作台', icon: Sun },
@@ -14,6 +15,7 @@ const themes = [
 export default function AppearanceDialog({ close }: { close: () => void }) {
   const [theme, setTheme] = useTheme();
   return <ModalShell title="外观主题" subtitle="为你的工作台挑选配色。选择后立即生效，并在此浏览器中记住。" close={close}>
+    <InterfaceZoom />
     <div className="appearance-options" role="radiogroup" aria-label="工作台主题" onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();

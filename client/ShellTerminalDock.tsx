@@ -3,9 +3,10 @@ import { Columns2, LoaderCircle, Plus, RefreshCw, TerminalSquare, X } from 'luci
 import type { ShellTerminal } from '../shared/shell';
 import { api, ApiError } from './api';
 import TerminalPane from './TerminalPane';
+import { interfaceScale, viewportHeight } from './zoom';
 
 const ignoreSelection = () => {};
-const clampHeight = (height: number) => Math.max(180, Math.min(height, window.innerHeight * .7));
+const clampHeight = (height: number) => Math.max(180, Math.min(height, viewportHeight() * .7));
 
 export default function ShellTerminalDock({ open, sessionId, requestedShellId, onClose, inert = false }: {
   open: boolean; sessionId?: string; requestedShellId?: string; onClose: () => void; inert?: boolean;
@@ -137,8 +138,8 @@ export default function ShellTerminalDock({ open, sessionId, requestedShellId, o
   if (!open) return null;
   const panes = [active, split].filter((shell): shell is ShellTerminal => !!shell);
   return <section className={`terminal-dock ${split ? 'split' : ''}`} style={{ height }} aria-label="底部终端面板" inert={inert}>
-    <div className="terminal-dock-resizer" role="separator" tabIndex={0} aria-label="调整终端面板高度" aria-orientation="horizontal" aria-valuemin={180} aria-valuemax={Math.round(window.innerHeight * .7)} aria-valuenow={Math.round(height)}
-      onPointerDown={pointerDown} onPointerMove={event => { if (dragRef.current) setHeight(clampHeight(dragRef.current.height + dragRef.current.y - event.clientY)); }}
+    <div className="terminal-dock-resizer" role="separator" tabIndex={0} aria-label="调整终端面板高度" aria-orientation="horizontal" aria-valuemin={180} aria-valuemax={Math.round(viewportHeight() * .7)} aria-valuenow={Math.round(height)}
+      onPointerDown={pointerDown} onPointerMove={event => { if (dragRef.current) setHeight(clampHeight(dragRef.current.height + (dragRef.current.y - event.clientY) / interfaceScale())); }}
       onPointerUp={event => { dragRef.current = null; event.currentTarget.releasePointerCapture(event.pointerId); }} onPointerCancel={() => { dragRef.current = null; }}
       onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); setHeight(current => clampHeight(current + (event.key === 'ArrowUp' ? 30 : -30))); } }} />
     <header className="terminal-dock-header">

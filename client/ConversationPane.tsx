@@ -3,6 +3,7 @@ import { ArrowDownToLine, MessageSquare, RefreshCw, TerminalSquare } from 'lucid
 import type { ConversationTranscript, Session } from '../shared/types';
 import { api } from './api';
 import Markdown from './Markdown';
+import { interfaceScale } from './zoom';
 import NativeInputComposer from './NativeInputComposer';
 import NoticeToasts from './NoticeToasts';
 import './conversation.css';
@@ -104,7 +105,7 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
     else if (anchor.current) {
       const { id, offset } = anchor.current;
       const target = Array.from(element.querySelectorAll<HTMLElement>('[data-message-id]')).find(message => message.dataset.messageId === id);
-      if (target) element.scrollTop += target.getBoundingClientRect().top - element.getBoundingClientRect().top - offset;
+      if (target) element.scrollTop += (target.getBoundingClientRect().top - element.getBoundingClientRect().top - offset) / interfaceScale();
     }
     anchor.current = null;
   }, [current]);

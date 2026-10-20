@@ -9,6 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 import { getToken, uploadTerminalImage } from './api';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES } from '../shared/terminal-images';
 import { followTerminalTheme, terminalTheme } from './terminal-theme';
+import { interfaceScale, useInterfaceZoom } from './zoom';
 
 const touchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
 
@@ -26,7 +27,7 @@ function attachTouchScroll(container: HTMLElement, terminal: Terminal) {
   let tracking = false, lastX = 0, lastY = 0, lastTime = 0, velocity = 0, pending = 0, frame = 0;
   const rowHeight = () => {
     const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen');
-    return screen && terminal.rows && screen.clientHeight ? screen.clientHeight / terminal.rows : 18;
+    return screen && terminal.rows && screen.clientHeight ? screen.getBoundingClientRect().height / terminal.rows : 18;
   };
   // dy is finger travel in px; content follows the finger, so finger down
   // means wheel up (negative deltaY). Whole rows keep every mode consistent.
@@ -89,6 +90,7 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
   /** Watch only. The server also discards input from read-only shares. */
   readOnly?: boolean;
 }) {
+  const [zoom] = useInterfaceZoom();
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -140,7 +142,7 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
     selectionRef.current('');
     const surface = containerRef.current.closest<HTMLElement>('.terminal-pane') ?? containerRef.current;
     const terminal = new Terminal({
-      cursorBlink: true, fontSize: 13, lineHeight: 1.25, scrollback: 8000,
+      cursorBlink: true, fontSize: 13 * interfaceScale(), lineHeight: 1.25, scrollback: 8000,
       // Keep xterm's default screenReaderMode: forcing it on drops insertText
       // commits from IMEs that submit a phrase without keyboard events.
       disableStdin: true,
@@ -289,6 +291,20 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
       detachTheme(); detachTouchScroll?.(); resizeObserver.disconnect(); terminal.dispose(); terminalRef.current = null; fitRef.current = null;
     };
   }, [sessionId, running, channel, readOnlyRequested]);
+  useEffect(() => {
+    // xterm mouse coordinates are in unzoomed CSS pixels. Cancel only its
+    // container's CSS zoom and scale the native font instead, preserving
+    // selection, mouse tracking and clipboard coordinates at every UI size.
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    terminal.options.fontSize = 13 * zoom / 100;
+    const frame = requestAnimationFrame(() => {
+      fitRef.current?.fit();
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [zoom]);
   useEffect(() => {
     // Focus follows an explicit activation, never a socket reconnect. Only the
     // requested split pane receives focus when several terminals mount together.

@@ -5,6 +5,7 @@ import type { Session } from '../shared/types';
 import type { CodexChatAnswer, CodexChatHistoryPage, CodexChatItem, CodexChatPatch, CodexChatRequest, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
 import { api, ApiError } from './api';
 import Markdown from './Markdown';
+import { interfaceScale } from './zoom';
 import ImageAttachments from './ImageAttachments';
 import type { ChatAttachment } from '../shared/attachments';
 import ConversationOutline from './ConversationOutline';
@@ -146,7 +147,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     if (!element || !target) return;
     followsBottom.current = false;
     scrollAnchor.current = null;
-    element.scrollTop += target.getBoundingClientRect().top - element.getBoundingClientRect().top - 12;
+    element.scrollTop += (target.getBoundingClientRect().top - element.getBoundingClientRect().top) / interfaceScale() - 12;
     target.focus({ preventScroll: true });
     setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 64);
     setSelectedInput(id); setHighlightedInput(id);
@@ -287,7 +288,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     else if (scrollAnchor.current) {
       const { id, offset } = scrollAnchor.current;
       const target = [...element.querySelectorAll<HTMLElement>('[data-chat-item]')].find(item => item.dataset.chatItem === id);
-      if (target) element.scrollTop += target.getBoundingClientRect().top - element.getBoundingClientRect().top - offset;
+      if (target) element.scrollTop += (target.getBoundingClientRect().top - element.getBoundingClientRect().top - offset) / interfaceScale();
     }
     scrollAnchor.current = null;
   }, [snapshot, older]);

@@ -59,7 +59,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ——— Shell: a single top row; everything else is content ——— */
-.app-shell { height: 100dvh; display: flex; flex-direction: row; overflow: hidden; }
+.app-shell { height: var(--ui-viewport-height, 100dvh); display: flex; flex-direction: row; overflow: hidden; }
 .app-column { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 /* ——— Left rail ——— */
 .rail { position: relative; z-index: 20; display: flex; flex-shrink: 0; flex-direction: column; width: 64px; padding: 10px 8px calc(10px + env(safe-area-inset-bottom)); background: var(--rail-bg); border-right: 1px solid var(--line); transition: width .16s ease; }
@@ -280,7 +280,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .session-info summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 7px; color: var(--muted); cursor: pointer; }
 .session-info summary::-webkit-details-marker { display: none; }
 .session-info summary:hover, .session-info[open] summary { background: var(--hover); color: var(--text); }
-.session-info-content { position: absolute; right: 0; top: 36px; z-index: 15; width: min(340px, calc(100cqw - 72px)); max-height: calc(100dvh - 112px); overflow-y: auto; display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 12px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); font-size: 12.5px; }
+.session-info-content { position: absolute; right: 0; top: 36px; z-index: 15; width: min(340px, calc(100cqw - 72px)); max-height: calc(var(--ui-viewport-height, 100dvh) - 112px); overflow-y: auto; display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 12px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); font-size: 12.5px; }
 .session-info-content>.compact-session-action, .session-info-content>.compact-extra-action { display: none; }
 .session-info-content>.text-button { justify-content: flex-start; color: var(--text); }
 .session-info-content>div { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -308,7 +308,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .terminal-connection { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .terminal-connection>i { width: 6px; height: 6px; border-radius: 50%; background: #c9a24a; }
 .terminal-connection.connected>i { background: #4cc38a; }
-.terminal-container { flex: 1; min-height: 0; padding: 10px 6px 4px 12px; overflow: hidden; }
+.terminal-container { flex: 1; min-height: 0; overflow: hidden; zoom: calc(1 / var(--ui-scale, 1)); padding: calc(10px * var(--ui-scale, 1)) calc(6px * var(--ui-scale, 1)) calc(4px * var(--ui-scale, 1)) calc(12px * var(--ui-scale, 1)); }
 .terminal-container .xterm { height: 100%; }
 .terminal-container .xterm-viewport { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .terminal-hint { padding: 8px 14px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
@@ -443,7 +443,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .terminal-dock.split .terminal-dock-pane + .terminal-dock-pane { border-left: 1px solid var(--line-strong); }
 
 /* ——— Modals ——— */
-.modal { width: 480px; max-width: 100%; max-height: calc(100vh - 48px); overflow: auto; background: var(--bg); border-radius: 14px; box-shadow: 0 24px 64px #0000003d; }
+.modal { width: 480px; max-width: 100%; max-height: calc(var(--ui-viewport-height, 100dvh) - 48px); overflow: auto; background: var(--bg); border-radius: 14px; box-shadow: 0 24px 64px #0000003d; }
 .modal.wide { width: 640px; }
 .modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 20px 20px 16px 24px; }
 .modal-heading h2 { font-size: 16px; font-weight: 600; }
@@ -577,7 +577,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .draft-note { margin-left: 8px; font-size: 12px; }
 
 /* ——— Backends ——— */
-.backend-settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.backend-settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
 .backend-setting-card { display: flex; flex-direction: column; gap: 14px; padding: 18px; background: var(--bg); border-radius: var(--radius); box-shadow: var(--shadow); }
 .backend-setting-title { display: flex; align-items: center; gap: 12px; }
 .backend-setting-title>div { flex: 1; min-width: 0; }
@@ -614,7 +614,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .activity-footnote { font-size: 12px; color: var(--faint); text-align: center; }
 
 /* ——— Toast ——— */
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 150; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 10px 12px 10px 14px; background: #1c1c1ee6; backdrop-filter: blur(12px); color: #fff; border-radius: 12px; font-size: 13px; box-shadow: var(--shadow); }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 150; display: flex; align-items: center; gap: 10px; max-width: calc(var(--ui-viewport-width, 100vw) - 32px); padding: 10px 12px 10px 14px; background: #1c1c1ee6; backdrop-filter: blur(12px); color: #fff; border-radius: 12px; font-size: 13px; box-shadow: var(--shadow); }
 .toast button { display: inline-flex; color: #ffffffa0; }
 .toast button:hover { color: #fff; }
 
@@ -636,7 +636,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 @media (max-width: 720px) {
   /* App-like on a phone: the rail becomes a bottom tab bar, the toolbar
      clears the status bar, and the body never rubber-bands. */
-  .app-shell { flex-direction: column; height: 100dvh; min-height: -webkit-fill-available; }
+  .app-shell { flex-direction: column; height: var(--ui-viewport-height, 100dvh); min-height: 0; }
   .app-column { order: 0; }
   .rail { order: 1; flex-direction: row; align-items: center; width: 100% !important; height: calc(56px + env(safe-area-inset-bottom)); padding: 0 6px env(safe-area-inset-bottom); border-right: 0; border-top: 1px solid var(--line); transition: none; }
   .rail .brand, .rail-groups, .rail-footer .connection-indicator, .rail-toggle { display: none; }
@@ -689,7 +689,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
   .session-drawer>.error-banner, .session-drawer>.session-status-detail, .session-drawer>.session-unread-notice { margin: 8px 8px 0; }
   .modal-overlay { padding: 0; align-items: flex-end; }
   /* Modals rise from the bottom like a sheet and stay clear of the home bar. */
-  .modal { width: 100%; max-height: calc(100dvh - 24px); border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); animation: sheetUp .2s ease; }
+  .modal { width: 100%; max-height: calc(var(--ui-viewport-height, 100dvh) - 24px); border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); animation: sheetUp .2s ease; }
   @keyframes sheetUp { from { transform: translateY(24px); opacity: 0; } }
   .modal-heading { padding: 18px 16px 14px 18px; }
   .modal-fields { padding: 0 18px 18px; }
@@ -736,7 +736,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 }
 
 /* ——— Login, share redemption and the shared-session view ——— */
-.auth-page { display: flex; align-items: center; justify-content: center; min-height: 100dvh; padding: 16px; background: var(--canvas); }
+.auth-page { display: flex; align-items: center; justify-content: center; min-height: var(--ui-viewport-height, 100dvh); padding: 16px; background: var(--canvas); }
 .auth-card { display: flex; flex-direction: column; gap: 10px; width: min(380px, 100%); padding: 28px 24px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .auth-card h1 { font-size: 18px; font-weight: 600; }
 .auth-mark { width: 34px; height: 34px; margin-bottom: 4px; }
