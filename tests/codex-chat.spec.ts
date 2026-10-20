@@ -93,6 +93,63 @@ async function fixture(page: Page) {
   };
 }
 
+test('history notices float without taking reading space, deduplicate and stay dismissed after refresh or reopening', async ({ page }) => {
+  const app = await fixture(page);
+  const notice = '部分原生历史未加载；完整记录可在原生终端查看。';
+  app.current.snapshot = { ...app.current.snapshot, nativeSessionId: 'notice-thread', notice, items: outlineHistory(), historyCursor: 'older-notices', truncated: true };
+  await app.open();
+  const toast = page.locator('.conversation-notice-toast');
+  await expect(toast).toHaveCount(1);
+  await expect(toast).toContainText(notice);
+  await expect(page.locator('.codex-chat-notice')).toHaveCount(0);
+  const scroller = page.getByLabel('Codex 消息记录', { exact: true });
+  await scroller.evaluate(element => { element.scrollTop = 200; element.dispatchEvent(new Event('scroll', { bubbles: true })); });
+  const before = await scroller.evaluate(element => ({ top: element.scrollTop, height: element.clientHeight }));
+  await page.getByRole('button', { name: '关闭此提示', exact: true }).click();
+  await expect(toast).toHaveCount(0);
+  expect(await scroller.evaluate(element => ({ top: element.scrollTop, height: element.clientHeight }))).toEqual(before);
+  await app.patch({ notice });
+  const reads = app.reads();
+  await page.getByRole('button', { name: '刷新对话', exact: true }).click();
+  await expect.poll(() => app.reads()).toBeGreaterThan(reads);
+  await expect(toast).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByLabel('给 Codex 发送消息')).toBeVisible();
+  await expect(toast).toHaveCount(0);
+  // A different native conversation has an independent dismissal scope.
+  await app.patch({ nativeSessionId: 'another-notice-thread', notice });
+  await expect(toast).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('button', { name: '关闭此提示', exact: true })).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'artifacts/history-notice-mobile.png', animations: 'disabled' });
+});
+
+test('informational notices expire, pause for pointer or keyboard reading, and do not restart on live patches', async ({ page }) => {
+  const app = await fixture(page);
+  app.current.snapshot = { ...app.current.snapshot, nativeSessionId: 'timed-notices', truncated: true, historyCursor: 'older-notices' };
+  await app.open();
+  await page.clock.install();
+  const toast = page.locator('.conversation-notice-toast');
+  await expect(toast).toContainText('先展示最近的消息');
+  await toast.hover();
+  await page.clock.runFor(6500);
+  await expect(toast).toBeVisible();
+  await page.getByRole('button', { name: '关闭此提示', exact: true }).focus();
+  await page.mouse.move(0, 0);
+  await page.clock.runFor(6500);
+  await expect(toast).toBeVisible();
+  await page.getByLabel('给 Codex 发送消息').focus();
+  await page.clock.runFor(3500);
+  await app.patch({ revision: app.current.snapshot.revision + 1 });
+  await page.clock.runFor(3000);
+  await expect(toast).toHaveCount(0);
+  await app.patch({ truncated: true });
+  await expect(toast).toHaveCount(0);
+  await app.patch({ notice: '新的独立提示' });
+  await expect(toast).toContainText('新的独立提示');
+});
+
 test('Codex GUI sends to the native thread, streams safe Markdown and handles tools, approval, questions and interruption', async ({ page }) => {
   const app = await fixture(page);
   const errors: string[] = [];
@@ -201,7 +258,7 @@ test('Codex patch gaps reload history and server replacement may reset revisions
   app.current.snapshot = { ...app.current.snapshot, revision: 105, notice: '已补齐遗漏的事件' };
   await emit(page, `/api/sessions/${app.contact.id}/chat/events`, 'patch', { ...app.current.snapshot, baseRevision: 104, items: [], order: app.current.snapshot.items.map(item => item.id) });
   await expect.poll(() => app.reads()).toBeGreaterThan(reads);
-  await expect(page.locator('.codex-chat-notice')).toHaveText('已补齐遗漏的事件');
+  await expect(page.locator('.conversation-notice-toast')).toContainText('已补齐遗漏的事件');
   app.current.snapshot = { ...app.current.snapshot, instanceId: 'replacement-server', revision: 1, notice: '服务重启后的精确会话', items: [{ id: 'restored', type: 'assistant', text: '已恢复正确的原生历史', status: 'completed' }] };
   await emit(page, `/api/sessions/${app.contact.id}/chat/events`, 'state', app.current.snapshot);
   await expect(page.locator('.codex-assistant')).toContainText('已恢复正确的原生历史');

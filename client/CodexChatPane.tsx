@@ -8,11 +8,12 @@ import Markdown from './Markdown';
 import ImageAttachments from './ImageAttachments';
 import type { ChatAttachment } from '../shared/attachments';
 import ConversationOutline from './ConversationOutline';
+import NoticeToasts from './NoticeToasts';
 import './codex-chat.css';
 
 type Pending = { requestId: string; text: string; attachments?: ChatAttachment[] };
 type Draft = { text: string; pending: Pending | null; attachments: ChatAttachment[] };
-type OlderHistory = { identity: string; items: CodexChatItem[]; cursor: string | null; loading: boolean; error: string; limited?: boolean };
+type OlderHistory = { identity: string; items: CodexChatItem[]; cursor: string | null; loading: boolean; error: string; notice?: string; limited?: boolean };
 const draftKey = (id: string) => `sessiondeck.codex-chat-draft.${id}`;
 function readDraft(id: string): Draft {
   try {
@@ -171,8 +172,8 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
         if (previous?.identity !== nativeId || previous.cursor !== cursor) return previous;
         const known = new Set(previous.items.map(item => item.id));
         const items = [...page.items.filter(item => !known.has(item.id)), ...previous.items];
-        if (items.length > 1000 || items.reduce((sum, item) => sum + item.text.length + (item.output?.length ?? 0), 0) > 2_000_000) return { ...previous, loading: false, limited: true, error: '已达到本页历史显示上限。可重新进入会话释放已加载记录，或在原生终端查看完整历史。' };
-        return { identity: nativeId, items, cursor: page.nextCursor, loading: false, error: page.truncated ? '这一页的部分工具输出或超长轮次已省略，完整记录可在原生终端查看。' : '' };
+        if (items.length > 1000 || items.reduce((sum, item) => sum + item.text.length + (item.output?.length ?? 0), 0) > 2_000_000) return { ...previous, loading: false, limited: true, notice: '已达到本页历史显示上限。可重新进入会话释放已加载记录，或在原生终端查看完整历史。' };
+        return { identity: nativeId, items, cursor: page.nextCursor, loading: false, error: '', notice: page.truncated ? '这一页的部分工具输出或超长轮次已省略，完整记录可在原生终端查看。' : '' };
       });
     } catch (cause) {
       if (!active.current) return;
@@ -224,7 +225,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
         let total = items.reduce((sum, item) => sum + item.text.length + (item.output?.length ?? 0), 0);
         let removed = false;
         while (items.length > 1000 || total > 2_000_000) { const item = items.shift()!; total -= item.text.length + (item.output?.length ?? 0); removed = true; }
-        return { ...history, items, ...(removed ? { error: '已加载记录达到显示上限，最早的一部分已收起。完整历史可在原生终端查看。' } : {}) };
+        return { ...history, items, ...(removed ? { notice: '已加载记录达到显示上限，最早的一部分已收起。完整历史可在原生终端查看。' } : {}) };
       });
       snapshotRef.current = next; setSnapshot(next); setLoading(false); setError('');
     }
@@ -369,8 +370,11 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     {!transport && !loading && <div className="codex-chat-banner" role="status">与本地服务的连接已中断，正在重连。草稿已保留。</div>}
     {error && <div className="codex-chat-error" role="alert"><span>{error}</span><button type="button" className="text-button" onClick={() => { setError(''); void readSnapshot.current(); }}>重新读取</button></div>}
     {session.running && snapshot && !snapshot.connected && <div className="codex-chat-banner codex-native-retry" role="status"><span>历史记录可查看，原生输入连接尚未就绪。</span><button type="button" className="text-button" disabled={reconnecting || !transport} onClick={() => void reconnectNative()}>{reconnecting ? '正在重新连接…' : '重新连接原生会话'}</button></div>}
-    {snapshot?.notice && <p className="codex-chat-notice">{snapshot.notice}</p>}
-    {snapshot?.truncated && <p className="codex-chat-notice">{olderCursor ? '先展示最近的消息，可加载更早消息继续查看。' : '超长历史或工具输出可能已省略，完整记录保留在原生会话中。'}</p>}
+    <NoticeToasts scope={'codex.' + session.id + '.' + (snapshot?.nativeSessionId ?? session.nativeSessionId ?? '')} notices={[
+      ...(snapshot?.notice ? [{ id: 'native:' + snapshot.notice, text: snapshot.notice }] : []),
+      ...(snapshot?.truncated && !snapshot.notice ? [{ id: 'history-window', text: olderCursor ? '先展示最近的消息，可加载更早消息继续查看。' : '超长历史或工具输出可能已省略，完整记录保留在原生会话中。' }] : []),
+      ...(olderCurrent?.notice ? [{ id: 'history:' + olderCurrent.notice, text: olderCurrent.notice }] : []),
+    ]} />
     <div className="codex-chat-body"><div className="codex-chat-primary">
     <div className="codex-chat-scroll" ref={scroller} tabIndex={0} aria-label="Codex 消息记录" onScroll={event => {
       const element = event.currentTarget, bottom = element.scrollHeight - element.scrollTop - element.clientHeight < 64;

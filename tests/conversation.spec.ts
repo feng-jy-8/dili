@@ -40,6 +40,9 @@ test('conversation history is read-only, recovers from failed refresh and switch
   await expect(page.locator('.conversation-text').last().locator('pre')).toHaveText('const text = "<img src=x onerror=alert(1)>";\n');
   await expect(page.locator('.conversation-pane img')).toHaveCount(0);
   await expect(page.locator('.conversation-pane')).toContainText('最近部分，完整上下文请在原生终端中查看');
+  await expect(page.locator('.conversation-source')).not.toContainText('最近部分');
+  await page.getByRole('button', { name: '关闭此提示', exact: true }).click();
+  await expect(page.locator('.conversation-notice-toast')).toHaveCount(0);
   await expect(page.locator('.conversation-pane textarea')).toHaveCount(0);
   await page.screenshot({ path: 'artifacts/conversation-desktop.png' });
   fail = true;
@@ -52,6 +55,7 @@ test('conversation history is read-only, recovers from failed refresh and switch
   await page.reload();
   await expect(page.getByRole('button', { name: '对话记录', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.conversation-text')).toHaveCount(2);
+  await expect(page.locator('.conversation-notice-toast')).toHaveCount(0);
   await page.getByRole('button', { name: '进入原生终端', exact: true }).click();
   await expect(page.getByRole('dialog', { name: `${session.title} 的私聊` })).toBeVisible();
   await expect(page.locator('.terminal-connection')).toHaveText('已连接');

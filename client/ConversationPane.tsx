@@ -4,6 +4,7 @@ import type { ConversationTranscript, Session } from '../shared/types';
 import { api } from './api';
 import Markdown from './Markdown';
 import NativeInputComposer from './NativeInputComposer';
+import NoticeToasts from './NoticeToasts';
 import './conversation.css';
 
 type Snapshot = { identity: string; transcript: ConversationTranscript; syncedAt: Date };
@@ -138,7 +139,7 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
         view switch in the session header already names the backend. */}
     <header className="conversation-toolbar">
       <span className="conversation-source" title={transcript?.notice || (transcript?.truncated ? '只显示最近一部分记录，完整上下文请在原生终端中查看' : '只读 · 发送消息、工具详情和审批请使用原生终端')}>
-        <MessageSquare size={13} />{transcript && !empty ? `${transcript.messages.length} 条` : '记录'}{transcript?.truncated && !transcript.notice && <em>（最近部分，完整上下文请在原生终端中查看）</em>}{transcript?.notice && <em>（{transcript.notice}）</em>}{current && <time dateTime={current.syncedAt.toISOString()}>{current.syncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>}
+        <MessageSquare size={13} />{transcript && !empty ? `${transcript.messages.length} 条` : '记录'}{current && <time dateTime={current.syncedAt.toISOString()}>{current.syncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>}
       </span>
       <span className="conversation-actions">
         {!atBottom && !empty && <button className="text-button" onClick={scrollToBottom}><ArrowDownToLine size={13} />回到最新消息</button>}
@@ -146,6 +147,7 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
         <button className="icon-button" aria-label="进入原生终端" title="进入原生终端" onClick={onTerminal}><TerminalSquare size={14} /></button>
       </span>
     </header>
+    <NoticeToasts scope={'conversation.' + identity} notices={transcript?.notice ? [{ id: 'native:' + transcript.notice, text: transcript.notice }] : transcript?.truncated ? [{ id: 'history-window', text: '最近部分，完整上下文请在原生终端中查看' }] : []} />
     {error && <div className="conversation-error" role="alert"><span>{error}</span><button className="text-button" disabled={refreshing} onClick={() => refresh.current(true)}>重试读取</button></div>}
     <div className="conversation-scroller" ref={scroller} tabIndex={0} aria-label="会话消息" onScroll={(event) => {
       const element = event.currentTarget;
