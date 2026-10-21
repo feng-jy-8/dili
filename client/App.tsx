@@ -101,6 +101,14 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const setSelectedId = useCallback((id: string | null) => updateRoute({ selectedId: id }), [updateRoute]);
   const { query, backendFilter, statusFilter, setQuery, setBackendFilter, setStatusFilter, clearFilters } = useContactFilters(view);
   const [contactSort, setContactSort] = useContactSort();
+  const [contactsScrolling, setContactsScrolling] = useState(false);
+  const contactsScrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const revealContactScrollbar = () => {
+    setContactsScrolling(true);
+    clearTimeout(contactsScrollTimer.current);
+    contactsScrollTimer.current = setTimeout(() => setContactsScrolling(false), 1000);
+  };
+  useEffect(() => () => clearTimeout(contactsScrollTimer.current), []);
   const [modal, setModal] = useState<Modal>(null);
   const [selection, setSelection] = useState('');
   const [workspaceOpen, setWorkspaceOpen] = useState(() => readLocalPreference('sessiondeck.explorer-open') === 'on');
@@ -575,8 +583,8 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
     <div className="app-body">
     {workspaceOpen && explorerSession && <WorkspaceExplorer key={explorerSession.id} session={explorerSession} close={() => setWorkspaceOpen(false)} picker={!selected ? <label className="workspace-picker"><span>工作目录</span><select aria-label="资源管理器工作区" value={explorerSession.id} onChange={event => setWorkspaceSessionId(event.target.value)}>{sessions.filter(session => !session.archived || session.id === explorerSession.id).map(session => <option key={session.id} value={session.id}>{session.title} · {shortPath(session.cwd)}</option>)}</select></label> : undefined} />}
     <div className="app-main">
-    <div ref={workspaceAreaRef} className={`workspace-area ${listView ? 'contacts-workspace' : ''} ${selected ? 'session-active' : ''}`} style={{ '--contacts-width': `${effectiveContactWidth}px` } as CSSProperties}>
-    <main className={`main-content ${listView ? 'contacts-pane' : ''}`} aria-label={listView ? '联系人列表' : undefined} inert={!!modal} hidden={!!selected && !listView}>
+    <div ref={workspaceAreaRef} className={`workspace-area ${listView ? 'contacts-workspace' : ''} ${contactsScrolling ? 'contacts-scrolling' : ''} ${selected ? 'session-active' : ''}`} style={{ '--contacts-width': `${effectiveContactWidth}px` } as CSSProperties} onScroll={event => { if (listView && event.target === event.currentTarget) revealContactScrollbar(); }}>
+    <main className={`main-content ${listView ? 'contacts-pane' : ''}`} aria-label={listView ? '联系人列表' : undefined} inert={!!modal} hidden={!!selected && !listView} onScroll={() => { if (listView) revealContactScrollbar(); }}>
       {state && !connected && <div className="connection-banner" role="status"><Radio size={15} /><span>{hasConnected ? '服务连接已中断，正在自动重连。卡片暂时显示上次收到的状态。' : '正在建立实时连接，卡片显示最近获取的状态。'}</span><button className="text-button" onClick={() => void refresh().catch(() => {})}>重新获取</button></div>}
       {connectionError && !selected && <div role="alert" className="error-banner connection-error"><span>{connectionError}</span><button className="text-button" onClick={() => void refresh().catch(() => {})}>重试连接</button></div>}
       {error && !selected && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label="关闭错误提示" onClick={() => setError('')}><X size={15} /></button></div>}

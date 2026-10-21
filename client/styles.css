@@ -244,6 +244,15 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 /* ——— Session workbench: contact list and one conversation ——— */
 .contacts-workspace { flex-direction: row; }
 .contacts-pane { flex: 0 0 var(--contacts-width, 300px); width: var(--contacts-width, 300px); max-width: none; margin: 0; padding: 0; background: var(--contacts-bg); }
+/* Keep the gutter stable: only the thumb changes when interacting with the list.
+   On phones the workspace itself also scrolls when showing group activity. */
+.contacts-workspace, .contacts-pane { scrollbar-width: thin; scrollbar-color: var(--contacts-scrollbar-thumb, transparent) transparent; }
+.contacts-workspace::-webkit-scrollbar, .contacts-pane::-webkit-scrollbar { width: 6px; height: 6px; background: transparent; }
+.contacts-workspace::-webkit-scrollbar-thumb, .contacts-pane::-webkit-scrollbar-thumb { background: var(--contacts-scrollbar-thumb, transparent); border-radius: 999px; }
+.contacts-workspace.contacts-scrolling, .contacts-workspace:has(.contacts-pane :focus-visible) { --contacts-scrollbar-thumb: var(--line-strong); }
+@media (hover: hover) {
+  .contacts-workspace:has(.contacts-pane:hover) { --contacts-scrollbar-thumb: var(--line-strong); }
+}
 .contacts-pane .connection-banner, .contacts-pane .error-banner { margin: 8px; font-size: 12px; flex-wrap: wrap; }
 .contacts-pane .empty-state { padding: 40px 16px; border-radius: 0; box-shadow: none; }
 .contacts-pane .empty-state>div { flex-wrap: wrap; justify-content: center; }
