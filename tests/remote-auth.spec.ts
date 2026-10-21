@@ -64,6 +64,11 @@ for (const trailingSlash of ['', '/']) test(`device-prefixed remote links load t
   expect(assetPaths.some(path => /\/lute\.min-[\w-]+\.js$/.test(path))).toBe(true);
   await page.getByRole('button',{name:'对话记录',exact:true}).click();
   await expect(page.frameLocator('iframe[title="Mermaid 图表"]').locator('svg')).toBeVisible({timeout:15000});
+  await page.getByRole('button', { name: '放大 Mermaid 图表', exact: true }).click();
+  const viewer = page.getByRole('dialog', { name: 'Mermaid 图表预览', exact: true });
+  await expect(viewer).toBeVisible();
+  await expect.poll(() => viewer.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await viewer.getByRole('button', { name: '关闭图表预览' }).click();
   expect(assetPaths.some(path=>path.includes('/mermaid.min-'))).toBe(true);
   expect(escapedAssets).toEqual([]);
   expect(errors).toEqual([]);

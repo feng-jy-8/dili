@@ -1,6 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import mermaidUrl from 'vditor/dist/js/mermaid/mermaid.min.js?url';
 import { useTheme } from './theme';
+import { Maximize2 } from 'lucide-react';
+import ImageViewer from './ImageViewer';
 
 let renderer: Promise<string> | undefined;
 function loadRenderer() {
@@ -19,6 +21,15 @@ export default function MermaidDiagram({ source }: { source: string }) {
   const [scheme, setScheme] = useState(document.documentElement.dataset.colorScheme);
   const [library, setLibrary] = useState('');
   const [height, setHeight] = useState(180);
+  const [image, setImage] = useState<{ svg: string; width: number; height: number } | null>(null);
+  const [imageUrl, setImageUrl] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (!image) { setImageUrl(''); return; }
+    const url = URL.createObjectURL(new Blob([image.svg], { type: 'image/svg+xml' }));
+    setImageUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [image]);
   useEffect(() => { let active = true; void loadRenderer().then(value => { if(active) setLibrary(value); }).catch(() => { if(active) setStatus('图表组件加载失败，可展开源码查看'); }); return () => {active = false;}; }, []);
   const [status, setStatus] = useState('正在绘制图表…');
   useEffect(() => {
@@ -39,6 +50,7 @@ export default function MermaidDiagram({ source }: { source: string }) {
         mermaid.render('diagram', ${scriptValue(settledSource)}).then(result => {
           document.getElementById('chart').innerHTML=result.svg;
           const svg=document.querySelector('svg'); if(svg){svg.style.maxWidth='100%';svg.style.height='auto';}
+          if(svg){const box=svg.viewBox.baseVal;parent.postMessage({type:'dili-diagram',id:${scriptValue(id)},status:'image',svg:new XMLSerializer().serializeToString(svg),width:box.width,height:box.height},'*');}
           const size=()=>report('ready',Math.ceil(document.body.getBoundingClientRect().height)+4);
           new ResizeObserver(size).observe(document.body); size();
         }).catch(()=>{document.body.textContent='图表暂时无法解析，请查看源码';report('error',64);});
@@ -49,12 +61,16 @@ export default function MermaidDiagram({ source }: { source: string }) {
   useEffect(() => {
     if (!library) return;
     setStatus('正在绘制图表…');
+    setImage(null); setExpanded(false);
     const timeout = setTimeout(() => setStatus('图表加载较慢，可展开源码查看'), 15000);
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.data?.type !== 'dili-diagram' || event.data.id !== id) return;
       if (typeof event.data.height === 'number' && Number.isFinite(event.data.height)) setHeight(Math.max(64, Math.min(1400, event.data.height)));
       if (event.data.status === 'ready') { setStatus(''); clearTimeout(timeout); }
       if (event.data.status === 'error') { setStatus('图表尚未完整或语法有误，可展开源码查看'); clearTimeout(timeout); }
+      if (event.data.status === 'image' && typeof event.data.svg === 'string' && event.data.svg.length <= 2_000_000 && Number.isFinite(event.data.width) && event.data.width > 0 && Number.isFinite(event.data.height) && event.data.height > 0) {
+        setImage({ svg: event.data.svg, width: event.data.width, height: event.data.height });
+      }
     };
     window.addEventListener('message', receive);
     return () => { clearTimeout(timeout); window.removeEventListener('message', receive); };
@@ -64,7 +80,11 @@ export default function MermaidDiagram({ source }: { source: string }) {
   if (source.length > 24000) return <div className="mermaid-diagram"><p>图表超过显示上限，请查看源码</p><pre>{source}</pre></div>;
   return <div className="mermaid-diagram">
     {status && <p role="status">{status}</p>}
-    <iframe ref={frame} title="Mermaid 图表" sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={library ? documentSource : undefined} style={{ height }} />
+    <div className="mermaid-preview">
+      <iframe ref={frame} title="Mermaid 图表" sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={library ? documentSource : undefined} style={{ height }} tabIndex={-1} />
+      {imageUrl && <button type="button" className="mermaid-expand" aria-label="放大 Mermaid 图表" title="点击放大图表" onClick={() => setExpanded(true)}><span><Maximize2 size={14} />点击放大</span></button>}
+    </div>
     <details><summary>图表源码</summary><pre>{source}</pre></details>
+    {expanded && imageUrl && image && <ImageViewer src={imageUrl} width={image.width} height={image.height} title="Mermaid 图表预览" close={() => setExpanded(false)} />}
   </div>;
 }
