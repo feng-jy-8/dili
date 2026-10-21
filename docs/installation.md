@@ -45,7 +45,7 @@ DeepSeek Harness 点击「原生配置引导」启动 `dsh web`，按终端提�
 
 ## 自动启动
 
-`dili service status` 检查用户服务；`dili service enable`／`disable` 只改变下次登录后的自动启动，不停止或重启当前实例。网页也提供同样设置。新服务使用当前工作目录、端口、数据目录和 PATH；保留已有兼容服务的自定义设置，拒绝覆盖其他安装或数据目录的服务。只启用下次自动启动：若需要现在接管前台进程，先安排停止前台，再在其他终端运行 `systemctl --user start sessiondeck`，避免中断本工具托管的会话。已有源码服务升级到 npm 安装，应在原安装禁用旧服务并确认会话已停止，再迁移服务文件。
+`dili service status` 检查用户服务；`dili service enable`／`disable` 只改变下次登录后的自动启动，不停止或重启当前实例。网页也提供同样设置。新服务使用当前工作目录、端口、数据目录和 PATH；保留已有兼容服务的自定义设置，拒绝覆盖其他安装或数据目录的服务。只启用下次自动启动：若需要现在接管前台进程，先安排停止前台，再在其他终端运行 `systemctl --user start dili`，避免中断本工具托管的会话。服务单元为 `dili.service`；旧版的 `sessiondeck.service` 在启用时迁移，只停用旧单元，不停止其实例。已有源码服务升级到 npm 安装，应在原安装禁用旧服务并确认会话已停止，再迁移服务文件。
 
 无需登录持续运行另需用户明确执行 `loginctl enable-linger`。用户服务绑定 Node 和 npm 包的绝对路径；更换 Node/npm 安装位置后，需要在停机窗口更新服务路径。
 

@@ -9,9 +9,9 @@ set -euo pipefail
 
 project_dir="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 port="${SESSIONDECK_PORT:-${PORT:-4317}}"
-log="${TMPDIR:-/tmp}/sessiondeck-restart.log"
+log="${TMPDIR:-/tmp}/dili-restart.log"
 
-if ! systemctl --user cat sessiondeck.service >/dev/null 2>&1; then
+if ! systemctl --user cat dili.service >/dev/null 2>&1; then
   echo "尚未安装 systemd 单元，先执行 scripts/install-service.sh" >&2
   exit 1
 fi
@@ -32,13 +32,22 @@ if [[ -n "$pid" ]]; then
     echo "端口 $port 上的进程 $pid 不是本项目的 Dili（$cmd），已放弃。" >&2
     exit 1
   fi
-  unit_pid="$(systemctl --user show sessiondeck -p MainPID --value 2>/dev/null || echo 0)"
+  unit_pid="$(systemctl --user show dili -p MainPID --value 2>/dev/null || echo 0)"
   if [[ "$unit_pid" == "$pid" ]]; then
     echo "$(date '+%F %T') 通过 systemd 重启"
-    exec systemctl --user restart sessiondeck
+    exec systemctl --user restart dili
   fi
-  echo "$(date '+%F %T') 停止旧实例 $pid（$cmd）"
-  kill -TERM "$pid"
+  # Instance started by the pre-rename unit: stop it there, then start dili.
+  legacy_pid="$(systemctl --user show sessiondeck -p MainPID --value 2>/dev/null || echo 0)"
+  if [[ "$legacy_pid" == "$pid" ]]; then
+    echo "$(date '+%F %T') 停止旧的 sessiondeck.service"
+    systemctl --user stop sessiondeck
+    systemctl --user disable sessiondeck 2>/dev/null || true
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "$(date '+%F %T') 停止旧实例 $pid（$cmd）"
+    kill -TERM "$pid"
+  fi
   for _ in $(seq 1 60); do
     kill -0 "$pid" 2>/dev/null || break
     sleep 1
@@ -50,6 +59,6 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 echo "$(date '+%F %T') 启动 systemd 服务"
-systemctl --user enable --now sessiondeck
+systemctl --user enable --now dili
 sleep 2
-systemctl --user --no-pager --lines=5 status sessiondeck || true
+systemctl --user --no-pager --lines=5 status dili || true

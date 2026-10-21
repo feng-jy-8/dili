@@ -24,5 +24,7 @@ export interface StartupStatus {
   linger: boolean;
   unitPath: string;
   conflict: boolean;
+  /** Auto-start still runs through the pre-rename sessiondeck.service. */
+  legacy: boolean;
   note: string;
 }

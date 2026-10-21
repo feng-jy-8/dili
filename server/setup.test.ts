@@ -105,8 +105,8 @@ test('systemd future startup toggles without stopping/restarting active services
   try {
     const service = new StartupService({ root: '/npm prefix/dili', configDir: f.home, dataDir: join(f.home, 'data'), cwd: '/my project', port: 4567, platform: 'linux', wsl: false, runner });
     assert.equal((await service.change(true)).enabled, true);
-    const path = join(f.home, 'systemd/user/sessiondeck.service'), unit = await readFile(path, 'utf8');
-    assert.match(unit, /WorkingDirectory="\/my project"/); assert.match(unit, /SESSIONDECK_PORT=4567/); assert.match(unit, /bin\/dili.mjs/);
+    const path = join(f.home, 'systemd/user/dili.service'), unit = await readFile(path, 'utf8');
+    assert.match(unit, /^WorkingDirectory=\/my project$/m); assert.match(unit, /SESSIONDECK_PORT=4567/); assert.match(unit, /bin\/dili.mjs/);
     assert.doesNotMatch(unit, /API_KEY|AUTH_TOKEN|npm start|start.sh/);
     assert.equal((await service.change(false)).active, true); assert.equal(enabled, false);
     assert.equal(await readFile(path, 'utf8'), unit);
@@ -117,11 +117,48 @@ test('systemd future startup toggles without stopping/restarting active services
   } finally { await f.clean(); }
 });
 
+test('legacy sessiondeck.service migrates to dili.service by disabling it, never stopping it', async () => {
+  const f = await fixture();
+  const enabled = new Set(['sessiondeck.service']);
+  const calls: string[][] = [];
+  const runner = async (file: string, args: string[]) => {
+    calls.push([file, ...args]);
+    const name = args.at(-1)!;
+    if (args.includes('is-enabled')) return enabled.has(name) ? { stdout: 'enabled\n', code: 0 } : { stdout: 'disabled\n', code: 1 };
+    if (args.includes('is-active')) return name === 'sessiondeck.service' ? { stdout: 'active\n', code: 0 } : { stdout: 'inactive\n', code: 3 };
+    if (file === 'loginctl') return { stdout: 'no\n', code: 0 };
+    if (args.includes('enable')) enabled.add(name);
+    if (args.includes('disable')) enabled.delete(name);
+    return { stdout: '', code: 0 };
+  };
+  try {
+    const legacyPath = join(f.home, 'systemd/user/sessiondeck.service'); await mkdir(join(legacyPath, '..'), { recursive: true });
+    const legacyUnit = `[Service]\nWorkingDirectory="/my project"\nEnvironment="SESSIONDECK_DATA_DIR=${join(f.home, 'data')}"\nEnvironment="SESSIONDECK_PORT=4567"\nExecStart="/usr/bin/node" ${unitQuote('/npm prefix/dili/bin/dili.mjs', true)}\n`;
+    await writeFile(legacyPath, legacyUnit);
+    const service = new StartupService({ root: '/npm prefix/dili', configDir: f.home, dataDir: join(f.home, 'data'), cwd: '/my project', port: 4567, platform: 'linux', wsl: false, runner });
+    const before = await service.status();
+    assert.deepEqual([before.legacy, before.enabled, before.active, before.conflict], [true, true, true, false]);
+    assert.match(before.note, /dili\.service/);
+    const after = await service.change(true);
+    assert.deepEqual([after.legacy, after.enabled], [false, true]);
+    assert.deepEqual([...enabled], ['dili.service']);
+    assert.match(await readFile(join(f.home, 'systemd/user/dili.service'), 'utf8'), /^WorkingDirectory=\/my project$/m);
+    assert.equal(await readFile(legacyPath, 'utf8'), legacyUnit);
+    assert.ok(!calls.some(call => call.some(arg => ['stop', 'restart', 'start', '--now'].includes(arg))));
+    // Turning auto-start off with only the legacy unit enabled disables it as well.
+    enabled.clear(); enabled.add('sessiondeck.service');
+    await rm(join(f.home, 'systemd/user/dili.service'));
+    assert.equal((await service.change(false)).enabled, false);
+    assert.equal(enabled.size, 0);
+  } finally { await f.clean(); }
+});
+
 test('startup refuses another installation and reports WSL without systemd accurately', async () => {
   const f = await fixture(); let changes = 0;
   try {
     const path = join(f.home, 'systemd/user/sessiondeck.service'); await mkdir(join(path, '..'), { recursive: true });
     const unit = '[Service]\nExecStart=/some/other/start.sh\n'; await writeFile(path, unit);
+    // A pre-rename unit of another installation blocks creating dili.service too.
     const service = new StartupService({ root: '/new/install', configDir: f.home, platform: 'linux', runner: async (_file, args) => { if (args.includes('enable') || args.includes('disable')) changes++; return { stdout: '', code: 0 }; } });
     assert.equal((await service.status()).conflict, true); await assert.rejects(service.change(true), /其他安装/);
     assert.equal(changes, 0); assert.equal(await readFile(path, 'utf8'), unit);
