@@ -1293,4 +1293,3 @@ function shutdown(exitCode = 0) {
   })().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); });
 }
 process.on('SIGTERM', () => shutdown()); process.on('SIGINT', () => shutdown());
-/* diag no-op */
