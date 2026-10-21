@@ -69,7 +69,9 @@ export function StartupSettings({ local }: { local: boolean }) {
     <p className="backend-note">{status?.note ?? '正在读取本机启动设置…'}</p>
     {status?.supported && <><div className="setup-actions"><button className="button secondary small-button" role="switch" aria-checked={status.enabled} disabled={busy || !local || status.conflict} onClick={() => void change(!status.enabled)}>{busy ? <LoaderCircle size={14} className="spin" /> : <Power size={14} />}{status.enabled ? '自动启动已开启' : '开启自动启动'}</button>{status.legacy && <button className="button secondary small-button" disabled={busy || !local} onClick={() => void change(true)}>迁移到 dili.service</button>}<span className="muted">{status.active ? '用户服务正在运行' : '用户服务未运行'}</span></div>
       {!status.wsl && !status.linger && <p className="backend-note">如需在登录前运行，可在本机终端执行 <code>loginctl enable-linger</code>。此操作可能需要系统授权。</p>}
-      <details><summary>服务位置</summary><code>{status.unitPath}</code><small className="muted">开关不会停止或重启当前服务。</small></details></>}
+      <details><summary>服务位置</summary><code>{status.unitPath}</code><small className="muted">开关不会停止或重启当前服务。</small>
+        <p className="backend-note">在本机终端手动重启：<code>scripts/restart-service.sh</code>。它只停止本项目、监听配置端口的 Dili 进程，不会按端口误杀其他程序；必要时先重新构建前端，再重启服务。</p>
+      </details></>}
     {!local && <p className="backend-note">请在本机更改自动启动设置。</p>}
     {error && <p role="alert" className="setup-message">{error}</p>}
     <button className="text-button" disabled={busy} onClick={() => void load()}><RefreshCw size={13} />重新检测</button>
