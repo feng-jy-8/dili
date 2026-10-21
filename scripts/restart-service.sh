@@ -23,12 +23,19 @@ if [[ "${1:-}" != --detached ]]; then
   exit 0
 fi
 
+# Build before touching the running instance: a failed build then just aborts
+# the restart, and the atomic publish never empties assets it is still serving.
+if [[ "$(cd "$project_dir" && npx tsx scripts/needs-build.ts)" == yes ]]; then
+  echo "$(date '+%F %T') 前端代码已变化，重新构建"
+  (cd "$project_dir" && npm run build)
+fi
+
 # Only stop a listener that is provably this project's server, never by port alone.
 pid="$(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
 if [[ -n "$pid" ]]; then
   cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
   cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
-  if [[ "$cmd" != *server/index.ts* || "$cwd" != "$project_dir" ]]; then
+  if [[ ("$cmd" != *server/index.ts* && "$cmd" != *bin/dili.mjs*) || "$cwd" != "$project_dir" ]]; then
     echo "端口 $port 上的进程 $pid 不是本项目的 Dili（$cmd），已放弃。" >&2
     exit 1
   fi
