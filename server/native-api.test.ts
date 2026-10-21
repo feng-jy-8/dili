@@ -76,12 +76,33 @@ setInterval(() => {}, 1000);
     assert.equal(response.status, 200);
   };
   const readHandshake = () => readFile(handshakePath, 'utf8').then(value => JSON.parse(value) as Handshake);
-  await request(`/api/sessions/${item.id}/start`, 'POST');
+  await request(`/api/sessions/${item.id}/start`, 'POST', { mode: 'chat' });
   await until(async () => { try { return !!(await readHandshake()).url; } catch { return false; } }, 'PTY fixture did not receive hook configuration');
   const first = await readHandshake();
   await hook(first, 'SessionStart');
   assert.equal((await state()).nativeSessionId, first.nativeId);
   await hook(first, 'UserPromptSubmit');
+  await t.test('running and approving Claude switches views without replacing the native PTY or state', async () => {
+    const path = `/api/sessions/${item.id}`;
+    const initial = await request<{ generation: string }>(path + '/input');
+    assert.ok(initial.generation);
+    for (const event of ['UserPromptSubmit', 'PermissionRequest'] as const) {
+      await hook(first, event);
+      const before = await state();
+      for (const mode of ['terminal', 'chat', 'terminal', 'chat']) {
+        const changed = await request<Session>(path + '/start', 'POST', { mode });
+        assert.equal(changed.interactionMode, mode);
+        assert.equal(changed.nativeSessionId, first.nativeId);
+        assert.equal(changed.status, before.status);
+        assert.equal(changed.statusSource, before.statusSource);
+        assert.equal(changed.unread, before.unread);
+        assert.equal(changed.running, true);
+        assert.equal((await request<{ generation: string }>(path + '/input')).generation, initial.generation);
+        assert.deepEqual(await readHandshake(), first);
+      }
+    }
+  });
+  await request(`/api/sessions/${item.id}/read`, 'POST');
   await hook(first, 'Stop');
   const completed = await state();
   assert.equal(completed.status, 'waiting_input');

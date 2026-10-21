@@ -176,6 +176,10 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
   const transcript = current?.transcript;
   const empty = !transcript?.messages.length;
   const isLoading = loading && !current;
+  const hasNativeQuestion = transcript?.messages.some(message => message.role === 'assistant' && message.text.includes('**需要你回答的问题**')) ?? false;
+  const nativeQuestionPending = ['claude', 'dsh'].includes(session.backend)
+    && session.status === 'waiting_input'
+    && hasNativeQuestion;
   const scrollToBottom = () => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
     followBottom.current = true; setAtBottom(true);
@@ -193,6 +197,8 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
     </SessionToolbar>
     <NoticeToasts scope={'conversation.' + identity} notices={transcript?.notice ? [{ id: 'native:' + transcript.notice, text: transcript.notice }] : transcript?.truncated ? [{ id: 'history-window', text: '最近部分，完整上下文请在原生终端中查看' }] : []} />
     {error && <div className="conversation-error" role="alert"><span>{error}</span><button className="text-button" disabled={refreshing} onClick={() => refresh.current(true)}>重试读取</button></div>}
+    {nativeQuestionPending && <div className="conversation-question-notice" role="status"><span>{session.backend === 'claude' ? 'Claude 正在等待原生终端中的输入。' : 'DeepSeek Harness 正在等待原生界面中的问题回答。'}</span><button className="text-button" onClick={onTerminal}>{session.backend === 'dsh' ? '前往原生界面处理' : '前往原生终端处理'}</button></div>}
+    {allowInput && session.running && session.status === 'waiting_approval' && <div className="conversation-error" role="status"><span>原生会话正在等待审批</span><button className="text-button" onClick={onTerminal}>前往原生终端处理</button></div>}
     <div className="conversation-body"><div className="conversation-primary"><div className="chat-scroll conversation-scroller" ref={scroller} tabIndex={0} aria-label="会话消息" onScroll={(event) => {
       const element = event.currentTarget;
       const next = element.scrollHeight - element.scrollTop - element.clientHeight < 64;

@@ -1,6 +1,6 @@
 # 会话交互整体 Review（2026-10-21）
 
-后续更新：Claude 已接入原生 `stream-json` 的正文增量、工具卡片和图形审批，以下关于 Claude 尚未流式化的说明记录的是此前状态。最新行为和验收见 [Claude 流式对话](claude-streaming.md)；dsh-tui 仍沿用原生终端输入和日志读取路径。
+后续更新：Claude 的图形页与原生终端现共用一个交互式 CLI 进程，输入经 PTY 提交，正文从原生历史读取；不再使用第二个 `stream-json` 执行器。实现和当前边界见 [Claude 原生会话](claude-streaming.md)。
 
 ## 结论
 

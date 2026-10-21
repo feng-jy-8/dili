@@ -177,6 +177,44 @@ test('Codex history read reconciles live deltas without overwriting completed ou
   assert.equal(bridge.chatSnapshot(threadId)!.items[0].text, 'final answer');
 });
 
+test('Codex history reconciliation folds one live prompt and its differently identified history copy', () => {
+  const state = new CodexChatState(), id = randomUUID(), turnId = randomUUID();
+  state.connected(id, true);
+  const basis = state.get(id)!.revision;
+  state.event(id, 'item/started', { turnId, item: { id: 'live-user', type: 'userMessage', content: [{ type: 'text', text: 'extends 默认填写列表怎么理解？有点容易让人困惑' }] } });
+  const snapshot = state.reconcile(id, { id, turns: [{ id: turnId, status: 'inProgress', items: [{ id: 'history-user', type: 'userMessage', content: [{ type: 'text', text: 'extends 默认填写列表怎么理解？有点容易让人困惑' }] }] }] }, basis, true);
+  assert.equal(snapshot.items.filter(item => item.type === 'user').length, 1);
+  assert.equal(snapshot.items[0].id, 'live-user', 'the live item identity remains available for later patches');
+});
+
+test('Codex keeps a live prompt identity when history resolves before item/completed', () => {
+  const state = new CodexChatState(), id = randomUUID(), turnId = randomUUID();
+  const text = '发送后触发了历史刷新';
+
+  state.event(id, 'item/started', { turnId, item: { id: 'live-user', type: 'userMessage', content: [{ type: 'text', text }] } });
+  const basis = state.get(id)!.revision;
+  const duringRead = state.reconcile(id, { id, turns: [{ id: turnId, status: 'inProgress', items: [
+    { id: 'history-user', type: 'userMessage', content: [{ type: 'text', text }] },
+  ] }] }, basis, true);
+  assert.deepEqual(duringRead.items.filter(item => item.type === 'user').map(item => item.id), ['live-user']);
+
+  state.event(id, 'item/completed', { turnId, item: { id: 'live-user', type: 'userMessage', content: [{ type: 'text', text }] } });
+  assert.deepEqual(state.get(id)!.items.filter(item => item.type === 'user').map(item => item.id), ['live-user']);
+});
+
+test('Codex history reconciliation preserves a deliberate repeated prompt already present before the read', () => {
+  const state = new CodexChatState(), id = randomUUID(), turnId = randomUUID();
+  const text = 'repeat this prompt';
+  state.reconcile(id, { id, turns: [{ id: turnId, status: 'inProgress', items: [{ id: 'first-user', type: 'userMessage', content: [{ type: 'text', text }] }] }] }, 0, true);
+  const basis = state.get(id)!.revision;
+  state.event(id, 'item/started', { turnId, item: { id: 'second-live-user', type: 'userMessage', content: [{ type: 'text', text }] } });
+  const snapshot = state.reconcile(id, { id, turns: [{ id: turnId, status: 'inProgress', items: [
+    { id: 'first-user', type: 'userMessage', content: [{ type: 'text', text }] },
+    { id: 'second-history-user', type: 'userMessage', content: [{ type: 'text', text }] },
+  ] }] }, basis, true);
+  assert.deepEqual(snapshot.items.filter(item => item.type === 'user').map(item => item.id), ['first-user', 'second-live-user']);
+});
+
 test('Codex replays approval during resume and does not resurrect turns completed before send acknowledgment', async t => {
   const f = await fixture(t), { bridge, threadId, turnId } = f;
   f.intercept((socket, message) => {

@@ -15,13 +15,29 @@ type Draft = { text: string; attachments: ChatAttachment[]; pending?: string; pe
 type NativeInputState = { generation: string | null; directSubmit?: boolean; submission?: { status: string; error?: string } | null };
 const key = (id: string) => 'dili.native-input-draft.' + id;
 const messageId = () => typeof crypto.randomUUID==='function' ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)),value=>value.toString(16).padStart(2,'0')).join('');
-function read(id: string): Draft {
+function read(id: string, backend?: string): Draft {
+  // Claude previously used the stream-json composer. Preserve its latest draft,
+  // uploads and uncertain receipt, but pause queues bound to the old process.
+  try {
+    const legacyKey = 'sessiondeck.codex-chat-draft.' + id;
+    const legacy = backend === 'claude' ? JSON.parse(sessionStorage.getItem(legacyKey) || 'null') : null;
+    if (legacy && typeof legacy.text === 'string') {
+      const attachments: ChatAttachment[] = Array.isArray(legacy.attachments) ? legacy.attachments.filter((item: ChatAttachment) => typeof item?.id === 'string' && typeof item.name === 'string').slice(0,8) : [];
+      const pending = legacy.pending;
+      const migrated: Draft = { text: legacy.text.slice(0,30000), attachments, queue: readQueue(legacy.queue).map(item => ({ ...item, paused: true })),
+        ...(typeof pending?.requestId === 'string' && typeof pending.text === 'string' ? { pending: pending.requestId, pendingMessage: { text: pending.text, attachments: Array.isArray(pending.attachments) ? pending.attachments.filter((item: ChatAttachment) => typeof item?.id === 'string').map((item: ChatAttachment) => item.id) : [], queueId: pending.queueId } } : {}),
+      };
+      sessionStorage.setItem(key(id), JSON.stringify(migrated));
+      sessionStorage.removeItem(legacyKey);
+      return migrated;
+    }
+  } catch { /* Keep the original draft if migration cannot be saved. */ }
   try { const value = JSON.parse(sessionStorage.getItem(key(id)) || 'null'); if (value && typeof value.text === 'string') return { text:value.text.slice(0,30000), attachments:Array.isArray(value.attachments) ? value.attachments.filter((item: ChatAttachment)=>item && typeof item.id === 'string' && typeof item.name === 'string').slice(0,8) : [], queue:readQueue(value.queue), ...(typeof value.pending === 'string' ? {pending:value.pending} : {}), ...(value.pendingMessage && typeof value.pendingMessage.text === 'string' && Array.isArray(value.pendingMessage.attachments) ? {pendingMessage:value.pendingMessage} : {}) }; } catch { /* invalid drafts are ignored */ }
   return {text:'',attachments:[]};
 }
 export default function NativeInputComposer({session,onTerminal,onSent,onActivityChange}: {session:Session;onTerminal():void;onSent?():void;onActivityChange?(phase:'sending'|'accepted'|null):void}) {
   const [voiceActive,setVoiceActive] = useState(false);
-  const [draft,setDraft] = useState(() => read(session.id));
+  const [draft,setDraft] = useState(() => read(session.id, session.backend));
   const [busy,setBusy] = useState(false), [uploading,setUploading] = useState(false), [preview,setPreview] = useState(false), [error,setError] = useState('');
   const latest = useRef(draft); latest.current = draft;
   const active = useRef(true);

@@ -4,6 +4,7 @@ if (process.argv.includes('--version')) { console.log('fixture-stream'); process
 if (process.argv.includes('--help')) { console.log('--resume --fork-session --input-format --include-partial-messages'); process.exit(0); }
 const root = process.env.SESSIONDECK_FIXTURE_DIR;
 if (!process.argv.includes('--print')) {
+  fs.appendFileSync(path.join(root, 'claude-launches.jsonl'), JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }) + '\n');
   process.stdin.setRawMode(true);
   process.stdin.on('data', data => fs.appendFileSync(path.join(root, 'native-input.log'), data));
   process.stdout.write('READY');

@@ -51,7 +51,7 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
   // Pick a sensible first view per backend; a read-only viewer cannot type into chat.
   useEffect(() => {
     if (!session) return;
-    setView(current => current !== 'terminal' ? current : chatAvailable && writable && session.interactionMode === 'chat' ? 'chat' : 'terminal');
+    setView(current => current !== 'terminal' ? current : chatAvailable && writable && session.interactionMode === 'chat' ? session.backend === 'claude' ? 'conversation' : 'chat' : 'terminal');
   }, [session?.id, chatAvailable, writable]);
   useEffect(() => { document.title = `${session?.title ?? '共享会话'} · Dili`; }, [session?.title]);
 
@@ -59,7 +59,8 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
     if (!session || busy) return;
     setBusy(true); setError('');
     try {
-      if (writable && chatAvailable && session.running && mode !== 'conversation' && session.interactionMode !== mode) await api(`/sessions/${session.id}/start`, { mode });
+      const executionMode = session.backend === 'claude' && chatAvailable && mode === 'conversation' ? 'chat' : mode;
+      if (writable && chatAvailable && session.running && executionMode !== 'conversation' && session.interactionMode !== executionMode) await api(`/sessions/${session.id}/start`, { mode: executionMode });
       setView(mode);
     } catch (cause) { setError(cause instanceof Error ? cause.message : '切换失败'); }
     finally { setBusy(false); }
@@ -67,7 +68,7 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
   const act = async (path: 'start' | 'stop') => {
     if (!session) return;
     setBusy(true); setError('');
-    try { await api(`/sessions/${session.id}/${path}`, path === 'start' ? { mode: view === 'chat' ? 'chat' : 'terminal' } : {}); }
+    try { await api(`/sessions/${session.id}/${path}`, path === 'start' ? { mode: view === 'chat' || session.backend === 'claude' && view === 'conversation' ? 'chat' : 'terminal' } : {}); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '操作失败'); }
     finally { setBusy(false); }
   };
@@ -91,7 +92,7 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
       {explorer && <WorkspaceExplorer session={session} close={() => setExplorer(false)} />}
       <div className="app-main"><section className="session-drawer" aria-label={`${session.title} 的共享会话`}>
         <header className="drawer-header">
-          {!dshWebOnly && <div className="private-view-switch" role="group" aria-label="会话显示方式"><button aria-pressed={view !== 'terminal'} onClick={() => void switchView(chatAvailable && writable ? 'chat' : 'conversation')}><MessageSquare size={13} />{conversationLabel}</button><button aria-pressed={view === 'terminal'} onClick={() => void switchView('terminal')}><TerminalSquare size={13} />原生终端</button></div>}
+          {!dshWebOnly && <div className="private-view-switch" role="group" aria-label="会话显示方式"><button aria-pressed={view !== 'terminal'} onClick={() => void switchView(chatAvailable && writable ? session.backend === 'claude' ? 'conversation' : 'chat' : 'conversation')}><MessageSquare size={13} />{conversationLabel}</button><button aria-pressed={view === 'terminal'} onClick={() => void switchView('terminal')}><TerminalSquare size={13} />原生终端</button></div>}
           <span className="share-spacer" />
           {writable && (session.running ? <button className="button secondary small-button" disabled={busy} onClick={() => void act('stop')}><Square size={11} />停止</button>
             : <button className="button primary small-button" disabled={busy || session.archived || !backend?.installed} onClick={() => void act('start')}>{busy ? <LoaderCircle size={13} className="spin" /> : <Play size={13} />}{session.nativeSessionId ? '恢复会话' : '启动会话'}</button>)}
@@ -99,9 +100,9 @@ export default function ShareApp({ status }: { status: ShareStatus }) {
         {error && <div role="alert" className="error-banner"><span>{error}</span></div>}
         <div className="session-conversation">
           {dshWebOnly ? <div className="terminal-empty"><h3>DeepSeek Harness 暂不支持远程查看</h3><p>它的原生界面只在分享者的电脑上可用。</p></div>
-            : view === 'chat' ? <Suspense fallback={<div className="loading-state"><LoaderCircle size={22} className="spin" /></div>}><CodexChatPane key={session.id} session={session} onTerminal={() => void switchView('terminal')} onSelection={ignoreSelection} /></Suspense>
+            : view === 'chat' && session.backend === 'codex' ? <Suspense fallback={<div className="loading-state"><LoaderCircle size={22} className="spin" /></div>}><CodexChatPane key={session.id} session={session} onTerminal={() => void switchView('terminal')} onSelection={ignoreSelection} /></Suspense>
             : view === 'conversation' ? <ConversationPane key={session.id} session={session} allowInput={writable && !state.demo} onTerminal={() => void switchView('terminal')} onSelection={ignoreSelection} />
-            : chatAvailable && session.running && session.interactionMode === 'chat' ? <div className="terminal-empty"><h3>会话正在图形对话中运行</h3><p>{writable ? '切换到图形对话继续。' : '切换到对话记录查看进展。'}</p></div>
+            : session.backend === 'codex' && chatAvailable && session.running && session.interactionMode === 'chat' ? <div className="terminal-empty"><h3>会话正在图形对话中运行</h3><p>{writable ? '切换到图形对话继续。' : '切换到对话记录查看进展。'}</p></div>
             : <TerminalPane key={session.id} sessionId={session.id} running={session.running} status={session.status} allowImages={writable && ['codex','claude','dsh'].includes(session.backend) && !state.demo} readOnly={!writable} onSelection={ignoreSelection} />}
         </div>
       </section></div>

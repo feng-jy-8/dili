@@ -30,7 +30,6 @@ test('Codex shows activity before the first token and follows tools, replies, ap
   await expect(activity).toHaveCount(0);
   await page.screenshot({ path: 'artifacts/chat-activity-completed.png' });
 });
-
 test('Codex chat shares message presentation and a single title row with the other platforms', async ({ page }) => {
   const app = await fixture(page); await app.open();
   await app.patch({ items: [{ id: 'layout-user', type: 'user', status: 'completed', text: '检查布局' }, { id: 'layout-assistant', type: 'assistant', status: 'completed', text: '## 检查结果\n\n排版一致。' }] });
@@ -334,6 +333,10 @@ test('Codex GUI sends to the native thread, streams safe Markdown and handles to
   expect(app.requests.filter(item => item.path === 'messages')).toHaveLength(1);
   const markdown = '# 修复方案\n\n**已确认**登录入口。\n\n- [x] 检查焦点\n- [ ] 添加测试\n\n| 项目 | 状态 |\n| --- | --- |\n| 键盘 | 正常 |\n\n```js\nconst safe = true;\n```\n\n[官方文档](https://developers.openai.com/codex/) [危险链接](javascript:alert(1))\n\n<img src="https://invalid.example/tracker" onerror="alert(1)">';
   await app.patch({ items: [app.current.snapshot.items[0], { id: 'answer-1', turnId: 'turn-1', type: 'assistant', text: markdown, status: 'inProgress' }, { id: 'command-1', type: 'command', title: '检查 git diff', text: 'git diff --stat', output: '2 files changed', status: 'completed' }], requests: [{ id: 'approval-1', kind: 'approval', title: '允许修改登录组件？', details: 'src/login.tsx', options: [{ id: 'opaque-allow', label: '允许这次操作' }, { id: 'opaque-deny', label: '拒绝' }] }] });
+  await page.locator('.codex-chat-scroll').evaluate(element => { element.scrollTop = 0; element.dispatchEvent(new Event('scroll')); });
+  await expect(page.getByRole('alert')).toContainText('允许修改登录组件？');
+  await page.getByRole('button', { name: '定位到请求' }).click();
+  await expect(page.locator('.codex-request')).toBeInViewport();
   await expect(page.locator('.codex-chat-toolbar')).toContainText('需要你回复');
   await expect(page.locator('.codex-request pre')).toHaveText('src/login.tsx');
   await expect(page.getByRole('heading', { name: '修复方案', exact: true })).toBeVisible();
@@ -801,39 +804,4 @@ test('a late image upload merges into a reopened draft without replacing new att
   await expect(page.getByLabel('待发送图片').locator('figure')).toHaveCount(2);
   await expect(page.getByLabel('给 Codex 发送消息')).toHaveValue('新的草稿');
   expect(app.requests.filter(item=>item.path === 'messages')).toEqual([]);
-});
-
-
-test('Claude streams Markdown in the shared graphical UI and queues input until native completion', async ({ page }) => {
-  const app = await fixture(page, 'claude'); await app.open();
-  const input = page.getByLabel('给 Claude 发送消息');
-  await input.fill('开始任务'); await input.press('Enter'); await expect(input).toHaveValue('');
-  await app.patch({ items: [app.current.snapshot.items[0], { id: 'answer-1', turnId: 'turn-1', type: 'assistant', text: '## 增量回复\n\n第一段', status: 'inProgress' }] });
-  await expect(page.getByRole('heading', { name: '增量回复' })).toBeVisible();
-  await expect(page.locator('.codex-assistant')).toContainText('第一段');
-  await expect(page.getByRole('status', { name: '会话响应状态' })).toHaveText('正在回复…');
-  await input.fill('下一项工作'); await input.press('Enter');
-  await expect(page.getByRole('region', { name: '待发送消息' })).toContainText('下一项工作');
-  expect(app.requests.filter(item => item.path === 'messages')).toHaveLength(1);
-  await app.patch({ items: [app.current.snapshot.items[0], { id: 'answer-1', turnId: 'turn-1', type: 'assistant', text: '## 增量回复\n\n第一段 **第二段**', status: 'inProgress' }] });
-  await expect(page.locator('.codex-assistant strong').last()).toHaveText('第二段');
-  await expect(page.locator('.codex-assistant')).toHaveCount(1);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(input).toBeInViewport();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.screenshot({ path: 'artifacts/claude-streaming-mobile.png' });
-  await app.patch({ activeTurnId: null, items: app.current.snapshot.items.map(item => ({ ...item, status: 'completed' })) });
-  await expect.poll(() => app.requests.filter(item => item.path === 'messages').length).toBe(2);
-  expect(app.requests.filter(item => item.path === 'messages').at(-1)?.body).toMatchObject({ text: '下一项工作' });
-  expect(app.requests.filter(item => item.path === 'messages').at(-1)?.body).not.toHaveProperty('expectedTurnId');
-  expect(app.requests.filter(item => item.path === 'interrupt')).toHaveLength(0);
-});
-
-test('Claude migrates old graphical drafts without automatically releasing old queued work', async ({ page }) => {
-  const app = await fixture(page, 'claude');
-  await page.addInitScript(id => sessionStorage.setItem('dili.native-input-draft.' + id, JSON.stringify({ text: '原来的草稿', attachments: [], queue: [{ id: 'old-queue', text: '原来的排队消息', attachments: [], identity: 'old-generation' }] })), app.contact.id);
-  await app.open();
-  await expect(page.getByLabel('给 Claude 发送消息')).toHaveValue('原来的草稿');
-  await expect(page.getByRole('region', { name: '待发送消息' })).toContainText('已暂停');
-  expect(app.requests).toHaveLength(0);
 });

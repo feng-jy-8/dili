@@ -42,6 +42,28 @@ function textContent(value: unknown): string {
     return part && ['text', 'input_text', 'output_text'].includes(String(part.type)) && typeof part.text === 'string' ? [part.text] : [];
   }).join('\n');
 }
+function questionContent(value: unknown): string {
+  let questions = value;
+  if (typeof questions === 'string') {
+    try { questions = JSON.parse(questions); } catch { return ''; }
+  }
+  questions = record(questions)?.questions ?? questions;
+  if (!Array.isArray(questions)) return '';
+  const rendered = questions.flatMap((candidate, index) => {
+    const item = record(candidate);
+    if (!item || typeof item.question !== 'string' || !item.question.trim()) return [];
+    const lines = [`${index + 1}. ${item.header ? `**${String(item.header)}**\n\n` : ''}${item.question.trim()}`];
+    if (typeof item.detail === 'string' && item.detail.trim()) lines.push(`   ${item.detail.trim()}`);
+    if (Array.isArray(item.options)) for (const optionValue of item.options) {
+      const option = record(optionValue);
+      if (!option || typeof option.label !== 'string') continue;
+      lines.push(`   - ${option.label}${typeof option.description === 'string' && option.description.trim() ? ` — ${option.description.trim()}` : ''}`);
+    }
+    if (item.multiSelect === true) lines.push('   - 可多选');
+    return [lines.join('\n')];
+  });
+  return rendered.length ? `**需要你回答的问题**\n\n${rendered.join('\n\n')}` : '';
+}
 function lines(text: string, offset = 0): Line[] {
   const result: Line[] = [];
   for (const line of text.split('\n')) {
@@ -68,7 +90,17 @@ function claudeMessages(rows: Line[], nativeId: string): ConversationMessage[] {
     const body = record(row.message);
     if (!body || (body.role !== undefined && body.role !== row.type)) continue;
     if (row.type === 'user' && Array.isArray(body.content) && body.content.some(block => record(block)?.type === 'tool_result')) continue;
-    const text = textContent(body.content);
+    const content = Array.isArray(body.content) ? body.content : [];
+    const text = typeof body.content === 'string' ? body.content : content.flatMap(blockValue => {
+      const block = record(blockValue);
+      if (!block) return [];
+      if (block.type === 'text' && typeof block.text === 'string') return [block.text];
+      if (row.type === 'assistant' && block.type === 'tool_use' && block.name === 'AskUserQuestion') {
+        const questions = questionContent(record(block.input)?.questions);
+        return questions ? [questions] : [];
+      }
+      return [];
+    }).join('\n\n');
     if (row.type === 'user' && /^(?:<local-command-|<command-name>|<system-reminder>|\[Request interrupted by user)/.test(text.trimStart())) continue;
     const item = message(`claude:${nativeId}:${typeof row.uuid === 'string' ? row.uuid : offset}`, row.type, text, row.timestamp);
     if (item) output.push(item);
@@ -103,7 +135,17 @@ function dshMessages(events: unknown[], nativeId: string): ConversationMessage[]
   const output: ConversationMessage[] = [];
   for (const value of events) {
     const event = record(value), data = record(event?.data);
-    if (!event || !data || event.surfaceOp !== 'append') continue;
+    if (!event || !data) continue;
+    if (event.type === 'tool/call' || event.type === 'tool/ptc-dispatch') {
+      const call = record(data);
+      if (call?.name === 'ask_user_question') {
+        const text = questionContent(call.arguments);
+        const item = message(`dsh:${nativeId}:${String(event.seq)}`, 'assistant', text, event.time);
+        if (item) output.push(item);
+      }
+      continue;
+    }
+    if (event.surfaceOp !== 'append') continue;
     const role = event.type === 'user/message' ? 'user' : event.type === 'assistant/message' ? 'assistant' : undefined;
     const body = role === 'user' ? data : record(data.message);
     if (!role || !body || body.role !== role) continue;

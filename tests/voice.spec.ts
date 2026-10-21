@@ -50,7 +50,7 @@ async function fixture(page: Page, backend: 'codex' | 'claude' | 'dsh', options:
   let sends = 0;
   await page.route(/\/api\/sessions\/[^/]+\/(input|chat\/messages)$/, route => { if (route.request().method() === 'POST') sends++; return route.fulfill({ json: { generation: 'voice-generation', directSubmit: true, status: 'accepted', submitted: true } }); });
   await page.goto('/#/contacts?session=' + contact.id);
-  const input = page.getByLabel(backend === 'dsh' ? '原生会话消息草稿' : `给 ${backend === 'claude' ? 'Claude' : 'Codex'} 发送消息`);
+  const input = page.getByLabel(backend === 'dsh' || backend === 'claude' ? '原生会话消息草稿' : '给 Codex 发送消息');
   await expect(input).toBeVisible();
   return { input, traffic, sends: () => sends, stats: () => page.evaluate(() => (window as unknown as { voiceStats: { opened: number; stopped: number } }).voiceStats) };
 }

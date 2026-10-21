@@ -8,6 +8,7 @@
 .conversation-actions .icon-button { width: 28px; height: 28px; }
 .conversation-actions .text-button { margin-right: 6px; }
 .conversation-error { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--error-bg); color: var(--error-text); font-size: 12px; }
+.conversation-question-notice { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 14px; border-bottom:1px solid var(--warning-line); background:var(--warning-bg); color:var(--warning-text); font-size:12px; }.conversation-question-notice>span { min-width:0; overflow-wrap:anywhere; }
 .conversation-error>span { flex: 1; overflow-wrap: anywhere; }
 .conversation-scroller { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable;  }
 .conversation-scroller:focus-visible { outline-offset: -3px; }

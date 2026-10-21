@@ -102,6 +102,32 @@ export class CodexChatState {
       if (items.length > 400) { items = items.slice(-200); truncated = true; }
     }
     const live = view.snapshot.items.filter(item => (view.versions.get(item.id) ?? 0) > basis);
+    // History can give a live prompt a different ID, even when item/started
+    // arrived BEFORE this read began. Keep established identities so a later
+    // item/completed still updates the same bubble (and client history caches
+    // do not retain the replaced ID). Pair unmatched occurrences, never merge
+    // two live inputs merely because their text is equal.
+    const promptKey = (item: CodexChatItem) => item.type === 'user' && item.turnId && item.text && !item.imageCount
+      ? `${item.turnId}\0${item.text}` : undefined;
+    const historyIds = new Set(items.map(item => item.id));
+    const existingIds = new Set(view.snapshot.items.map(item => item.id));
+    const existingPrompts = new Map<string, CodexChatItem[]>();
+    const historyPrompts = new Map<string, CodexChatItem[]>();
+    for (const item of view.snapshot.items) {
+      const key = promptKey(item);
+      if (key && !historyIds.has(item.id)) existingPrompts.set(key, [...(existingPrompts.get(key) ?? []), item]);
+    }
+    for (const item of items) {
+      const key = promptKey(item);
+      if (key && !existingIds.has(item.id)) historyPrompts.set(key, [...(historyPrompts.get(key) ?? []), item]);
+    }
+    const stableIds = new Map<string, string>();
+    for (const [key, previous] of existingPrompts) {
+      const historical = historyPrompts.get(key) ?? [];
+      if (historical.length !== previous.length) continue;
+      historical.forEach((item, index) => stableIds.set(item.id, previous[index].id));
+    }
+    items = items.map(item => stableIds.has(item.id) ? { ...item, id: stableIds.get(item.id)! } : item);
     const newer = new Map(live.map(item => [item.id, item]));
     items = items.map(item => { const current = newer.get(item.id); newer.delete(item.id); return current ?? item; });
     items.push(...newer.values());

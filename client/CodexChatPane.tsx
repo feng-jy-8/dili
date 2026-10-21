@@ -169,6 +169,16 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 64);
     setSelectedInput(id); setHighlightedInput(id);
   }
+  function jumpToRequest(id: string) {
+    const element = scroller.current;
+    const target = [...(element?.querySelectorAll<HTMLElement>('[data-chat-request]') ?? [])].find(item => item.dataset.chatRequest === id);
+    if (!element || !target) return;
+    followsBottom.current = false;
+    scrollAnchor.current = null;
+    element.scrollTop += (target.getBoundingClientRect().top - element.getBoundingClientRect().top) / interfaceScale() - 12;
+    setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 64);
+    target.querySelector<HTMLElement>('button, input')?.focus({ preventScroll: true });
+  }
   async function loadOlder() {
     const nativeId = snapshot?.nativeSessionId;
     const cursor = older && older.identity === nativeId ? older.cursor : snapshot?.historyCursor;
@@ -417,6 +427,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     if (outlineOpen && event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); closeOutline(); }
   }}>
     <SessionToolbar className="codex-chat-toolbar"><span className="pane-connection" title="图形会话连接状态"><i className={transport && nativeAvailable ? 'online' : ''} /><span className="pane-connection-label">{!transport ? '连接中' : snapshot?.requests.length ? '需要你回复' : hasTurn ? '正在处理' : session.running ? nativeAvailable ? '已连接' : '原生未连接' : '尚未启动'}</span></span><div><button ref={outlineButton} className="icon-button" type="button" aria-label="对话目录" title="对话目录" aria-expanded={outlineOpen} aria-controls={outlineOpen ? outlineId : undefined} onClick={() => outlineOpen ? closeOutline() : setOutlineOpen(true)}><List size={15} /></button><PaneToolOverflow><button className="icon-button" type="button" aria-label="刷新对话" title="刷新对话" onClick={() => void readSnapshot.current()}><RefreshCw size={14} /><span>刷新对话</span></button>{!chrome && <button type="button" className="icon-button" aria-label="原生终端" title="原生终端" onClick={onTerminal}><TerminalSquare size={14} /><span>原生终端</span></button>}</PaneToolOverflow></div></SessionToolbar>
+    {!!snapshot?.requests.length && <div className="codex-request-alert" role="alert"><CircleAlert size={15} /><span>{snapshot.requests.length === 1 ? snapshot.requests[0].title : `${snapshot.requests.length} 项请求需要处理`}</span><button type="button" className="text-button" onClick={() => jumpToRequest(snapshot.requests[0].id)}>定位到请求</button></div>}
     {!transport && !loading && <div className="codex-chat-banner" role="status">与本地服务的连接已中断，正在重连。草稿已保留。</div>}
     {error && <div className="codex-chat-error" role="alert"><span>{error}</span><button type="button" className="text-button" onClick={() => { setError(''); void readSnapshot.current(); }}>重新读取</button></div>}
     {session.running && snapshot && !snapshot.connected && <div className="codex-chat-banner codex-native-retry" role="status"><span>{session.backend === 'claude' && session.interactionMode !== 'chat' ? '当前由原生终端运行；本轮结束后可切换到流式图形对话。' : '历史记录可查看，原生输入连接尚未就绪。'}</span><button type="button" className="text-button" disabled={reconnecting || !transport} onClick={() => void reconnectNative()}>{reconnecting ? '正在重新连接…' : session.backend === 'claude' && session.interactionMode !== 'chat' ? '切换到流式对话' : '重新连接原生会话'}</button></div>}
@@ -433,7 +444,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
       {!!olderCursor && <button type="button" className="codex-older" disabled={olderCurrent?.loading || olderCurrent?.limited} onClick={() => void loadOlder()}>{olderCurrent?.loading ? <LoaderCircle size={13} className="spin" /> : <ArrowDownToLine size={13} className="codex-older-arrow" />}{olderCurrent?.loading ? '正在读取旧消息…' : '加载更早消息'}</button>}
       {olderCurrent?.error && <p className="codex-chat-notice" role="alert">{olderCurrent.error}</p>}
       {loading && !snapshot ? <div className="codex-chat-empty" role="status"><LoaderCircle className="spin" size={25} /><p>正在读取对话…</p></div> : !visibleItems.length ? <div className="codex-chat-empty"><MessageSquare size={30} /><h3>在这里继续你的工作</h3><p>发送消息后，{agentName} 会在当前工作目录中处理任务。操作审批和需要补充的问题会显示在对话里。</p></div> : <div className="chat-messages codex-chat-items">{visibleItems.map(item => <MessageItem agentName={agentName} key={item.id} item={item} highlighted={item.id === highlightedInput} />)}</div>}
-      {!!snapshot?.requests.length && <div className="codex-chat-requests">{snapshot.requests.map(request => <NativeRequest agentName={agentName} key={request.id} request={request} disabled={!transport || !snapshot.connected} answer={async (id, answer) => { await api(`/sessions/${session.id}/chat/requests/${encodeURIComponent(id)}`, answer); await readSnapshot.current(); }} />)}</div>}
+      {!!snapshot?.requests.length && <div className="codex-chat-requests">{snapshot.requests.map(request => <div key={request.id} data-chat-request={request.id}><NativeRequest agentName={agentName} request={request} disabled={!transport || !snapshot.connected} answer={async (id, answer) => { await api(`/sessions/${session.id}/chat/requests/${encodeURIComponent(id)}`, answer); await readSnapshot.current(); }} /></div>)}</div>}
     </div>
     {!atBottom && <button type="button" className="codex-latest" onClick={() => { if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight; followsBottom.current = true; setAtBottom(true); }}><ArrowDownToLine size={13} />回到最新消息</button>}
     </div>

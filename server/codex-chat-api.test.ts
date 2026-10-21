@@ -291,7 +291,7 @@ test('raw graphical uploads enforce image type and session ownership, then nativ
 test('Claude graphical staging uses separate native image pastes, no Enter, and rejects stale or repeated changes', {timeout:30000}, async t => {
   const f=await launch(t);
   const contact=await f.request<Session>('/api/sessions','POST',{backend:'claude',title:'Native staging',cwd:f.directory},201);
-  await f.request('/api/sessions/'+contact.id+'/start','POST',{});
+  await f.request('/api/sessions/'+contact.id+'/start','POST',{mode:'chat'});
   await delay(150);
   const native=await f.request<{generation:string}>('/api/sessions/'+contact.id+'/input');
   assert.ok(native.generation);
@@ -316,7 +316,7 @@ test('Claude graphical staging uses separate native image pastes, no Enter, and 
 test('Claude graphical send submits multiline text and images once, exposes recovery, and leaves approvals native', {timeout:30000}, async t => {
   const f=await launch(t);
   const contact=await f.request<Session>('/api/sessions','POST',{backend:'claude',title:'Direct graphical send',cwd:f.directory},201);
-  await f.request('/api/sessions/'+contact.id+'/start','POST',{}); await delay(150);
+  await f.request('/api/sessions/'+contact.id+'/start','POST',{mode:'chat'}); await delay(150);
   const native=await f.request<{generation:string;directSubmit:boolean}>('/api/sessions/'+contact.id+'/input');
   assert.equal(native.directSubmit,true);
   const path='/api/sessions/'+contact.id+'/input';
@@ -344,81 +344,52 @@ test('Claude graphical send submits multiline text and images once, exposes reco
 });
 
 
-test('Claude graphical chat streams partial Markdown before completion and resumes the same native identity', { timeout: 30_000 }, async t => {
-  const f = await launch(t), { request, snapshot } = f;
-  const source = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Claude stream', cwd: f.directory }, 201);
-  assert.equal((await snapshot(source.id)).connected, false, 'Reading must not start Claude');
-  const events = await f.stream(source.id);
-  const blank = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'chat' });
-  assert.deepEqual(blank.claudeUnwritten, { sourceId: null });
-  await request(`/api/sessions/${source.id}/stop`, 'POST', {});
+test('Claude views keep one TUI and permission state, and legacy stream endpoints cannot start another writer', { timeout: 30_000 }, async t => {
+  const f = await launch(t), { request } = f;
+  const source = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'One Claude instance', cwd: f.directory }, 201);
   const started = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'chat' });
-  assert.equal(started.nativeSessionId, blank.nativeSessionId);
-  assert.equal(started.interactionMode, 'chat'); assert.ok(started.nativeSessionId);
-  const body = { requestId: randomUUID(), text: 'STREAM' };
-  const receipt = await request<CodexChatSubmission>(`/api/sessions/${source.id}/chat/messages`, 'POST', body);
-  assert.equal(receipt.status, 'accepted');
-  await until(async () => { const s = await snapshot(source.id); return !!s.activeTurnId && s.items.some(item => item.text === '第一段 **' && item.status === 'inProgress'); }, 'Partial text was not visible before completion');
-  await request(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' }, 409);
-  await request(`/api/sessions/${source.id}/chat/messages`, 'POST', body);
-  await until(async () => events.text.includes('第一段 **'), 'Partial text did not reach SSE');
-  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Claude did not finish');
-  const completed = await snapshot(source.id);
-  await until(async () => events.text.includes('第一段 **完成**'), 'Final text did not reach SSE');
-  assert.deepEqual(completed.items.filter(item => item.type === 'assistant').map(item => item.text), ['第一段 **完成**']);
-  assert.equal(completed.items.some(item => item.text.includes('hidden child')), false);
-  const calls = async () => (await readFile(join(f.directory, 'claude-calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-  assert.equal((await calls()).filter(row => row.type === 'user').length, 1, 'A retry must not send twice');
-  await request(`/api/sessions/${source.id}/stop`, 'POST', {});
-  const resumed = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'chat' });
-  assert.equal(resumed.nativeSessionId, started.nativeSessionId);
-  assert.ok((await snapshot(source.id)).items.some(item => item.text === body.text));
-  const fork = await request<Session>(`/api/sessions/${source.id}/fork`, 'POST', { title: 'Claude fork' }, 201);
-  const forked = await request<Session>(`/api/sessions/${fork.id}/start`, 'POST', { mode: 'chat' });
-  assert.notEqual(forked.nativeSessionId, started.nativeSessionId);
-  assert.ok((await snapshot(fork.id)).items.some(item => item.text === body.text), 'Fork must show source context immediately');
-  assert.deepEqual(forked.claudeUnwritten, { sourceId: started.nativeSessionId });
-  await request(`/api/sessions/${fork.id}/stop`, 'POST', {});
-  const reopenedFork = await request<Session>(`/api/sessions/${fork.id}/start`, 'POST', { mode: 'chat' });
-  assert.equal(reopenedFork.nativeSessionId, forked.nativeSessionId);
-  const terminal = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' });
-  assert.equal(terminal.nativeSessionId, started.nativeSessionId); assert.equal(terminal.interactionMode, 'terminal');
-  assert.equal((await snapshot(source.id)).connected, false);
+  assert.ok(started.nativeSessionId);
+  const path = `/api/sessions/${source.id}`;
+  const native = await request<{ generation: string }>(path + '/input');
+  assert.ok(native.generation);
+  await until(async () => !!(await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8').catch(() => '')), 'TUI did not start');
+  for (const status of ['idle', 'waiting_approval', 'waiting_input', 'unknown']) {
+    await request(path, 'PATCH', { status });
+    const before = await f.current(source.id);
+    for (const mode of ['terminal', 'chat', 'chat', 'terminal']) {
+      const changed = await request<Session>(path + '/start', 'POST', { mode });
+      assert.equal(changed.interactionMode, mode);
+      for (const key of ['running', 'nativeSessionId', 'executionMode', 'status', 'statusSource', 'unread', 'lastAttentionKey'] as const) assert.equal(changed[key], before[key], `Switching changed ${key}`);
+      assert.equal((await request<{ generation: string }>(path + '/input')).generation, native.generation);
+    }
+  }
+  await request(path + '/chat/messages', 'POST', { requestId: randomUUID(), text: 'Do not start stream-json' }, 400);
+  const launches = (await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].args.includes('--print'), false);
 });
 
-test('Claude graphical approvals, questions and interruption use native control messages', { timeout: 30_000 }, async t => {
-  const f = await launch(t), { request, snapshot } = f;
-  const source = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Claude controls', cwd: f.directory }, 201);
-  const other = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Other Claude', cwd: f.directory }, 201);
-  for (const item of [source, other]) await request(`/api/sessions/${item.id}/start`, 'POST', { mode: 'chat' });
-  const prompt = (text: string) => request(`/api/sessions/${source.id}/chat/messages`, 'POST', { requestId: randomUUID(), text });
-  await prompt('APPROVAL');
-  await until(async () => (await snapshot(source.id)).requests.length === 1, 'Approval missing');
-  const approval = (await snapshot(source.id)).requests[0];
-  assert.equal((await snapshot(other.id)).requests.length, 0);
-  await request(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' }, 409);
-  await request(`/api/sessions/${source.id}/chat/requests/${approval.id}`, 'POST', { decision: 'invented' }, 409);
-  await request(`/api/sessions/${other.id}/chat/requests/${approval.id}`, 'POST', { decision: 'allow' }, 409);
-  await request(`/api/sessions/${source.id}/chat/requests/${approval.id}`, 'POST', { decision: 'deny' });
-  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Approval did not finish');
-  await request(`/api/sessions/${source.id}/chat/requests/${approval.id}`, 'POST', { decision: 'allow' }, 409);
-  await prompt('QUESTION');
-  await until(async () => (await snapshot(source.id)).requests.some(item => item.kind === 'question'), 'Question missing');
-  const question = (await snapshot(source.id)).requests[0];
-  await request(`/api/sessions/${source.id}/chat/requests/${question.id}`, 'POST', { answers: { wrong: ['一'] } }, 409);
-  await request(`/api/sessions/${source.id}/chat/requests/${question.id}`, 'POST', { answers: { '0': ['二'] } });
-  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Question did not finish');
-  await prompt('HOLD');
-  await until(async () => (await snapshot(source.id)).items.some(item => item.status === 'inProgress'), 'Held stream missing');
-  await request(`/api/sessions/${source.id}/chat/interrupt`, 'POST', {});
-  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Interrupt did not finish');
-  assert.equal((await f.current(source.id)).running, true);
-  assert.ok((await snapshot(source.id)).items.some(item => item.status === 'failed'));
-  await prompt('STREAM');
-  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Could not continue after interruption');
-  await prompt('EXIT');
-  await until(async () => !(await f.current(source.id)).running, 'Unexpected native exit left the contact running');
-  await request(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' });
-  await request(`/api/sessions/${source.id}/stop`, 'POST', {});
-  assert.equal((await request<{ generation: string | null }>(`/api/sessions/${source.id}/input`)).generation, null, 'Stale graphical ownership must not orphan a replacement terminal');
+test('Claude graphical starts preserve empty-session and fork identities across real stop/resume', { timeout: 30_000 }, async t => {
+  const f = await launch(t), { request } = f;
+  const source = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Empty Claude', cwd: f.directory }, 201);
+  const start = (id: string) => request<Session>(`/api/sessions/${id}/start`, 'POST', { mode: 'chat' });
+  const stop = (id: string) => request(`/api/sessions/${id}/stop`, 'POST', {});
+  const blank = await start(source.id);
+  assert.deepEqual(blank.claudeUnwritten, { sourceId: null });
+  await stop(source.id);
+  const resumed = await start(source.id);
+  assert.equal(resumed.nativeSessionId, blank.nativeSessionId);
+  assert.deepEqual(resumed.claudeUnwritten, blank.claudeUnwritten);
+  const fork = await request<Session>(`/api/sessions/${source.id}/fork`, 'POST', { title: 'Claude child' }, 201);
+  const child = await start(fork.id);
+  assert.notEqual(child.nativeSessionId, blank.nativeSessionId);
+  assert.equal(child.forkPending, false);
+  assert.deepEqual(child.claudeUnwritten, { sourceId: blank.nativeSessionId });
+  await stop(fork.id);
+  const reopened = await start(fork.id);
+  assert.equal(reopened.nativeSessionId, child.nativeSessionId);
+  assert.deepEqual(reopened.claudeUnwritten, child.claudeUnwritten);
+  const native = await request<{ generation: string }>(`/api/sessions/${source.id}/input`);
+  await request(`/api/sessions/${source.id}/input`, 'POST', { text: 'Continue the original', requestId: randomUUID(), generation: native.generation, submit: true });
+  assert.equal((await request<{ generation: string }>(`/api/sessions/${source.id}/input`)).generation, native.generation);
 });

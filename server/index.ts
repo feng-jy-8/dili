@@ -34,7 +34,6 @@ import { NativeStatusWatcher } from './native-status.ts';
 import { nativeHookPatch } from './native-events.ts';
 import { acquireInstanceLock } from './instance-lock.ts';
 import { CodexBridge } from './codex.ts';
-import { ClaudeChatBridge } from './claude-chat.ts';
 import { DeliveryNotAcceptedError, sendDelivery } from './delivery.ts';
 import { StatePublisher } from './state.ts';
 import { listDirectories, normalizeDirectoryInput } from './directories.ts';
@@ -112,8 +111,6 @@ const conversations = new ConversationReader({ dshHistory: id => dsh.readHistory
 // Claude/dsh-only installation usable when an older Codex CLI lacks the bridge
 // flags, while preserving exact native IDs whenever the installed CLI supports it.
 const codexBridge = new CodexBridge({ dataDir });
-const claudeBridge = new ClaudeChatBridge();
-const claudeRuns = new Map<string, { nativeId: string; launchId: string }>();
 const codexRuns = new Map<string, { nativeId: string; launchId: string }>();
 const app = express();
 const server = createServer(app);
@@ -249,24 +246,12 @@ function codexStatus(nativeId: string, event: { status: SessionStatus; detail: s
     status(item.id, { status: event.status, statusSource: 'native', statusDetail: event.detail, lastActivity: event.timestamp, ...(event.attentionKey ? { lastAttentionKey: event.attentionKey } : {}) });
 }
 codexBridge.onStatus(codexStatus);
-claudeBridge.onStatus((nativeId, event) => {
-  if (closing) return;
-  const item = publisher.sessions().find(s => s.backend === 'claude' && s.nativeSessionId === nativeId && s.running && !s.forkPending && claudeRuns.get(s.id)?.launchId === launchIds.get(s.id));
-  if (!item || stopping.has(item.id)) return;
-  status(item.id, { status: event.status, statusSource: 'native', statusDetail: event.detail, lastActivity: event.timestamp, ...(event.running === false ? { running: false } : {}), ...(event.attentionKey ? { lastAttentionKey: event.attentionKey } : {}) });
-  if (event.running === false) { claudeRuns.delete(item.id); launchIds.delete(item.id); }
-});
-claudeBridge.onInput((nativeId, text) => {
-  if (closing) return;
-  const item = publisher.sessions().find(s => s.backend === 'claude' && s.nativeSessionId === nativeId && s.running && !s.forkPending && claudeRuns.get(s.id)?.launchId === launchIds.get(s.id));
-  if (item) updatePreview(item, { messages: [{ id: randomUUID(), role: 'user', text, createdAt: new Date().toISOString() }], truncated: false });
-});
 async function ensureCodexBridge() {
   await codexBridge.start();
   return codexBridge;
 }
 function observeNative(item: Session) {
-  if (demo || !item.running || closing || codexRuns.has(item.id) || claudeRuns.has(item.id)) return;
+  if (demo || !item.running || closing || codexRuns.has(item.id)) return;
   const launchId = launchIds.get(item.id);
   nativeStatus.start(item, event => {
     if (closing || stopping.has(item.id) || launchIds.get(item.id) !== launchId || !store.session(item.id)?.running) return;
@@ -331,7 +316,7 @@ function captureTerminalImage(req: express.Request, res: express.Response, next:
   const suppliedGeneration = req.headers['x-sessiondeck-terminal'];
   if (typeof suppliedGeneration !== 'string' || !generation || suppliedGeneration !== generation)
     return res.status(409).json({ error: '原生终端已重启，请重新连接后粘贴图片' });
-  if (!item || !['codex', 'claude', 'dsh'].includes(item.backend) || !item.running || item.interactionMode === 'chat')
+  if (!item || !['codex', 'claude', 'dsh'].includes(item.backend) || !item.running || item.backend !== 'claude' && item.interactionMode === 'chat')
     return res.status(409).json({ error: '只有正在运行的 Agent 原生终端可以接收图片' });
   if (item.status === 'waiting_approval') return res.status(409).json({ error: '原生会话正在等待审批，请先完成审批后再添加图片' });
   pendingTerminalImages.set(req, { id, generation, type });
@@ -357,7 +342,7 @@ app.post('/api/sessions/:id/terminal/image', captureTerminalImage,
       await chmod(temporary, 0o600);
       // The PTY may have been stopped/replaced while the body was buffered.
       const current = store.session(pending.id);
-      if (!current || !current.running || current.interactionMode === 'chat' || terminals.generation(pending.id) !== pending.generation)
+      if (!current || !current.running || current.backend !== 'claude' && current.interactionMode === 'chat' || terminals.generation(pending.id) !== pending.generation)
         fail('原生终端已重启，请重新粘贴图片', 409);
       await rename(temporary, target);
       temporary = null;
@@ -539,10 +524,10 @@ app.delete('/api/shells/:id', async (req, res) => {
   res.json({ removed: true });
 });
 const chatApi = registerCodexChat(app, {
-  store, bridge: codexBridge, claudeBridge, conversations, instanceId, demo, updatePreview, attachments, submissions,
+  store, bridge: codexBridge, conversations, instanceId, demo, updatePreview, attachments, submissions,
   closing: () => closing,
   supported: item => !!info(item.backend).capabilities.graphicalChat,
-  ready: item => { const run = (item.backend === 'claude' ? claudeRuns : codexRuns).get(item.id); return run?.nativeId === item.nativeSessionId && run?.launchId === launchIds.get(item.id); },
+  ready: item => { const run = codexRuns.get(item.id); return run?.nativeId === item.nativeSessionId && run?.launchId === launchIds.get(item.id); },
   busy: id => starting.has(id) || stopping.has(id),
   sessions: () => publisher.sessions(),
   broadcast: scheduleBroadcast,
@@ -784,28 +769,18 @@ app.post('/api/sessions/:id/handoff', async (req, res) => {
 });
 
 app.post('/api/sessions/:id/start', async (req, res) => {
-  let item = session(String(req.params.id));
+  const item = session(String(req.params.id));
   const mode = req.body?.mode ?? 'terminal';
   if (!['terminal', 'chat'].includes(mode)) fail('未知会话交互方式');
   if (mode === 'chat' && (demo || !['codex', 'claude'].includes(item.backend) || !info(item.backend).capabilities.graphicalChat)) fail('这个后端目前不支持原生图形化聊天');
   if (item.archived) fail('请先恢复归档联系人');
   if (stopping.has(item.id) || terminals.isStopping(item.id)) fail('会话正在停止，请稍后再启动', 409);
-  // Claude's TUI and stream-json are two clients of the same persisted
-  // session, not simultaneous writers. A view change may hand off only when
-  // native evidence says the current client is idle; never interrupt a task.
-  if (item.running && !demo && item.backend === 'claude' && (claudeRuns.has(item.id) ? 'chat' : 'terminal') !== mode) {
-    const live = item.nativeSessionId && claudeRuns.has(item.id) ? claudeBridge.chatSnapshot(item.nativeSessionId) : undefined;
-    const idle = live ? live.connected && !live.activeTurnId && !live.requests.length : item.statusSource === 'native' && ['idle', 'waiting_input'].includes(item.status);
-    if (starting.has(item.id) || item.forkPending || !item.nativeSessionId || !idle) fail('Claude 仍在执行或等待审批，请等本轮结束后切换界面', 409);
-    stopping.add(item.id);
-    try {
-      nativeStatus.stop(item.id);
-      if (claudeRuns.has(item.id)) { await claudeBridge.closeSession(item.nativeSessionId); claudeRuns.delete(item.id); }
-      else await terminals.stop(item.id);
-      launchIds.delete(item.id); expectedNativeIds.delete(item.id);
-      status(item.id, { running: false, status: 'stopped', statusSource: 'process', statusDetail: '正在切换 Claude 会话界面' });
-    } finally { stopping.delete(item.id); }
-    item = session(item.id);
+  // Claude's interactive TUI is the single execution owner. The graphical
+  // history view sends through its PTY, so switching the view never replaces
+  // the native process or changes its live permission state.
+  if (item.running && !demo && item.backend === 'claude' && terminals.has(item.id) && item.interactionMode !== mode) {
+    status(item.id, { interactionMode: mode });
+    broadcast(); return res.json(session(item.id));
   }
   if (item.running && mode === 'terminal' && !demo && item.backend === 'codex' && codexRuns.has(item.id) && !terminals.has(item.id)) {
     if (starting.has(item.id)) fail('原生终端正在连接，请稍后重试', 409);
@@ -834,16 +809,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
   launchIds.set(item.id, launchId);
   expectedNativeIds.delete(item.id);
   try {
-    if (item.backend === 'claude' && mode === 'chat' && !demo) {
-      const history = await conversations.readLatest({ ...item, forkPending: false });
-      const command = await buildLaunch(item, dataDir);
-      if (!command.nativeSessionId) fail('Claude 原生会话标识尚未确定');
-      const nativeId = command.nativeSessionId!;
-      claudeRuns.set(item.id, { nativeId, launchId });
-      const bootstrap = item.claudeUnwritten ?? (!item.nativeSessionId || item.forkPending ? { sourceId: item.forkPending ? item.nativeSessionId : null } : undefined);
-      status(item.id, { nativeSessionId: nativeId, claudeUnwritten: bootstrap, forkPending: false, running: true, interactionMode: 'chat', status: 'unknown', statusSource: 'process', statusDetail: '正在连接 Claude 原生流式会话' });
-      await claudeBridge.start(nativeId, item.cwd, command, history);
-    } else if (dshWeb(item)) {
+    if (dshWeb(item)) {
       const native = item.nativeSessionId ? await dsh.openSession(item.nativeSessionId) : await dsh.createSession(item.cwd, item.title);
       // Keep the identity even if the native permission command is unavailable.
       status(item.id, { ...native, forkPending: false });
@@ -872,6 +838,9 @@ app.post('/api/sessions/:id/start', async (req, res) => {
     } else {
       const command: LaunchCommand = demo ? demoCommand() : await buildLaunch(item, dataDir);
       if (!demo && item.backend === 'claude') {
+        // Persist the preallocated identity before the first hook/history write.
+        // Reopening an empty TUI or fork must reuse its original launch shape.
+        status(item.id, { nativeSessionId: command.nativeSessionId, forkPending: false, claudeUnwritten: item.claudeUnwritten ?? (!item.nativeSessionId || item.forkPending ? { sourceId: item.forkPending ? item.nativeSessionId : null } : undefined) });
         const hookCommand = [process.execPath, join(root, 'server/native-hook.cjs'), `http://127.0.0.1:${port}/api/native-event/${item.id}?launch=${launchId}`, token, 'claude'].map(shellQuote).join(' ');
         const hooks = Object.fromEntries(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'Notification', 'PermissionRequest'].map(event => [event, [{ hooks: [{ type: 'command', command: hookCommand, timeout: 3 }] }]]));
         command.args.push('--settings', JSON.stringify({ hooks }));
@@ -881,7 +850,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
         command.args.push('-c', `notify=${JSON.stringify(notify)}`);
       }
       if (command.nativeSessionId) expectedNativeIds.set(item.id, command.nativeSessionId);
-      status(item.id, { running: true, interactionMode: 'terminal', status: 'unknown', statusSource: 'process', statusDetail: '正在连接原生终端' });
+      status(item.id, { running: true, interactionMode: item.backend === 'claude' ? mode : 'terminal', status: 'unknown', statusSource: 'process', statusDetail: item.backend === 'claude' && mode === 'chat' ? '正在连接 Claude 原生会话' : '正在连接原生终端' });
       terminals.start(item, command);
       status(item.id, { lastActivity: new Date().toISOString() });
       observeNative(session(item.id));
@@ -891,8 +860,6 @@ app.post('/api/sessions/:id/start', async (req, res) => {
   } catch (error) {
     if (launchIds.get(item.id) === launchId) launchIds.delete(item.id);
     expectedNativeIds.delete(item.id);
-    const claudeRun = claudeRuns.get(item.id);
-    if (claudeRun) { await claudeBridge.closeSession(claudeRun.nativeId); claudeRuns.delete(item.id); }
     const nativeRun = codexRuns.get(item.id);
     codexRuns.delete(item.id);
     if (nativeRun) codexBridge.releaseSession(nativeRun.nativeId);
@@ -910,11 +877,7 @@ app.post('/api/sessions/:id/stop', async (req, res) => {
   status(item.id, { status: 'unknown', statusSource: 'process', statusDetail: '正在停止，等待原生任务和进程退出' });
   broadcast();
   try {
-    if (claudeRuns.has(item.id) && item.nativeSessionId) {
-      await claudeBridge.closeSession(item.nativeSessionId);
-      claudeRuns.delete(item.id); launchIds.delete(item.id);
-      status(item.id, { running: false, status: 'stopped', statusSource: 'process', statusDetail: '已停止 Claude 会话，可恢复原生上下文' });
-    } else if (dshWeb(item)) {
+    if (dshWeb(item)) {
       if (item.nativeSessionId) await dsh.stopSession(item.nativeSessionId);
       launchIds.delete(item.id);
       status(item.id, { running: false, nativeUrl: null, status: 'stopped', statusSource: 'native', statusDetail: '已取消当前原生任务，可重新进入会话' });
@@ -982,14 +945,14 @@ app.post('/api/deliveries/:id/send', async (req, res) => {
   if (target.status === 'waiting_approval') fail('请先在原生会话中处理当前审批，再填入任务');
   const targetWeb = dshWeb(target);
   if (targetWeb && !target.nativeSessionId) fail('原生会话尚未准备好');
-  const codexChat = !demo && target.interactionMode === 'chat' && (target.backend === 'codex' ? codexRuns.has(target.id) : target.backend === 'claude' && claudeRuns.has(target.id));
+  const codexChat = !demo && target.interactionMode === 'chat' && target.backend === 'codex' && codexRuns.has(target.id);
   if (!targetWeb && !codexChat && !terminals.has(target.id)) fail('会话尚未启动或已经退出');
   deliveryLocks.add(id);
   try {
     const deliveryStatus = targetWeb || codexChat ? 'sent' : 'staged';
     const pending = sendDelivery(store, id, deliveryStatus, async () => {
       if (codexChat) {
-        try { await (target.backend === 'claude' ? claudeBridge : codexBridge).sendPrompt(target.nativeSessionId!, delivery.text); }
+        try { await codexBridge.sendPrompt(target.nativeSessionId!, delivery.text); }
         catch (error) {
           if ((error as { deliveryUnknown?: boolean }).deliveryUnknown === false) throw new DeliveryNotAcceptedError(error instanceof Error ? error.message : 'Codex 未接收任务');
           throw error;
@@ -1322,7 +1285,7 @@ function shutdown(exitCode = 0) {
   // Exiting directly in server.close used to orphan a slow native process and
   // let a replacement instance race it against the same native history.
   void (async () => {
-    const results = await Promise.allSettled([voiceClosed, httpClosed, tunnel.close(), frpTunnel.close(), terminals.close(), shells.close(), dsh.close(), codexBridge.close(), claudeBridge.close()]);
+    const results = await Promise.allSettled([voiceClosed, httpClosed, tunnel.close(), frpTunnel.close(), terminals.close(), shells.close(), dsh.close(), codexBridge.close()]);
     for (const result of results) if (result.status === 'rejected') { console.error('关闭原生资源失败：', result.reason instanceof Error ? result.reason.message : String(result.reason)); exitCode = 1; }
     try { publisher.close(); store.close(); }
     finally { await instanceLock.release(); }

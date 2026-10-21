@@ -60,6 +60,16 @@ test('Claude conversation reads only exact native file and human/assistant text'
   assert.equal((await reader.read(b)).messages[0].text, 'different session secret');
 });
 
+test('Claude AskUserQuestion tool input is shown as readable conversation content', async t => {
+  const { file, reader } = await fixture(t), a = contact('claude');
+  await file(a, [claude('user', '请继续实现'), claude('assistant', [
+    { type: 'text', text: '有一个实现选择需要确认。' },
+    { type: 'tool_use', name: 'AskUserQuestion', input: { questions: [{ question: '使用哪种存储？', header: '持久化', options: [{ label: 'SQLite', description: '本地单文件' }, { label: 'JSON', description: '简单但并发较弱' }] }] } },
+  ])]);
+  const result = await reader.read(a);
+  assert.equal(result.messages.at(-1)?.text, '有一个实现选择需要确认。\n\n**需要你回答的问题**\n\n1. **持久化**\n\n使用哪种存储？\n   - SQLite — 本地单文件\n   - JSON — 简单但并发较弱');
+});
+
 test('Codex uses native user events and excludes duplicate input, system, tools and model reasoning', async t => {
   const { file, reader } = await fixture(t), a = contact('codex');
   await file(a, [codexHeader(a.nativeSessionId!),
@@ -233,6 +243,18 @@ test('DeepSeek offline plaintext and compressed histories exclude injected and r
     const result = await new ConversationReader(paths).read(a);
     assert.deepEqual(result.messages.map(message => message.text), ['direct human request', 'visible assistant reply']);
   }
+});
+
+test('DeepSeek ask_user_question tool calls appear in the conversation transcript', async t => {
+  const { file, reader } = await fixture(t), a = contact('dsh');
+  await file(a, [{ type: 'session', id: a.nativeSessionId, cwd: a.cwd },
+    { type: 'tool/call', seq: 8, time: Date.parse(date) + 8, surfaceOp: 'append', data: { callId: 'question-1', name: 'ask_user_question', arguments: JSON.stringify({ questions: [{ id: 'q1', question: '是否保留旧接口？', detail: '这会影响现有客户端。', options: [{ label: '保留' }, { label: '删除', description: '需要同步迁移' }] }] }) } },
+  ]);
+  const result = await reader.read(a);
+  assert.equal(result.messages.length, 1);
+  assert.equal(result.messages[0].role, 'assistant');
+  assert.match(result.messages[0].text, /是否保留旧接口？/);
+  assert.match(result.messages[0].text, /删除 — 需要同步迁移/);
 });
 
 test('DeepSeek live history is cached, bounded and never called for a pending fork', async t => {
