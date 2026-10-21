@@ -253,6 +253,36 @@ test('staging a group task overrides the read-only preference and opens the exis
   expect(launches).toEqual([]);
 });
 
+test('Mermaid flowcharts tolerate escaped code quotes while keeping the original source', async ({ page }) => {
+  const state = await (await page.request.get('/api/state')).json() as AppState;
+  const session = await mutate<Session>(page.request, '/sessions', { backend: 'claude', title: 'Mermaid 引号兼容', cwd: state.defaultCwd });
+  const source = String.raw`flowchart TD
+    A["caps/actions/arm/grasp_by_description.yaml<br/>runner.type: script"] --> B["对应的 logic/arm/grasp_by_description.py"]
+    B --> C["扫描源码，找所有 context.call(\"xxx\", ...) 和 context.call_to_end(\"xxx\", ...)"]
+    C --> D["basic.arm.get_id<br/>basic.arm.pick_by_track_id"]
+    D --> E{"这两个能力<br/>这台车都有吗？"}
+    E -- 都有 --> F["grasp_by_description 保留"]
+    E -- 缺一个 --> G["grasp_by_description 自动消失<br/>日志记录缺了哪个"]`;
+  await page.route(`**/api/sessions/${session.id}/conversation`, route => route.fulfill({ json: { messages: [{ id: 'escaped-code-diagram', role: 'assistant', text: '```mermaid\n' + source + '\n```' }], truncated: false } }));
+  await page.goto(`/#/contacts?session=${session.id}`);
+  await page.getByRole('button', { name: '对话记录', exact: true }).click();
+  const svg = page.frameLocator('iframe[title="Mermaid 图表"]').locator('svg');
+  await expect(svg).toBeVisible({ timeout: 20000 });
+  await expect(svg).toContainText('context.call("xxx", ...)');
+  await expect(svg).toContainText('context.call_to_end("xxx", ...)');
+  await expect(svg).toContainText('runner.type: script');
+  await expect(svg).toContainText('这台车都有吗？');
+  await page.getByText('图表源码', { exact: true }).click();
+  await expect(page.locator('.mermaid-diagram details pre')).toHaveText(source);
+  await expect(page.locator('.mermaid-diagram>p[role=status]')).toHaveCount(0);
+  await page.getByRole('button', { name: '放大 Mermaid 图表', exact: true }).click();
+  const viewer = page.getByRole('dialog', { name: 'Mermaid 图表预览', exact: true });
+  await expect(viewer).toBeVisible();
+  await expect.poll(() => viewer.locator('img').evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  await page.screenshot({ path: 'artifacts/mermaid-escaped-quotes.png' });
+  await viewer.getByRole('button', { name: '关闭图表预览' }).click();
+});
+
 test('Claude history renders GFM and sandboxed Mermaid with a readable source fallback', async ({ page }) => {
   const state = await (await page.request.get('/api/state')).json() as AppState;
   const session = await mutate<Session>(page.request, '/sessions', { backend: 'claude', title: 'Claude Markdown 图表', cwd: state.defaultCwd });

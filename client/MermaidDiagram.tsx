@@ -3,6 +3,7 @@ import mermaidUrl from 'vditor/dist/js/mermaid/mermaid.min.js?url';
 import { useTheme } from './theme';
 import { Maximize2 } from 'lucide-react';
 import ImageViewer from './ImageViewer';
+import { compatibleFlowchartSource } from './mermaid-source';
 
 let renderer: Promise<string> | undefined;
 function loadRenderer() {
@@ -47,7 +48,17 @@ export default function MermaidDiagram({ source }: { source: string }) {
       const report = (status, height) => parent.postMessage({type:'dili-diagram',id:${scriptValue(id)},status,height},'*');
       try {
         mermaid.initialize({startOnLoad:false,securityLevel:'strict',suppressErrorRendering:true,maxTextSize:24000,maxEdges:300,theme:${scriptValue(scheme === 'dark' ? 'dark' : 'default')},flowchart:{htmlLabels:false},fontFamily:'system-ui, sans-serif'});
-        mermaid.render('diagram', ${scriptValue(settledSource)}).then(result => {
+        const render=async()=>{
+          let source=${scriptValue(settledSource)};
+          try { await mermaid.parse(source); }
+          catch(error) {
+            const compatible=${scriptValue(compatibleFlowchartSource(settledSource))};
+            if(compatible===source) throw error;
+            source=compatible;
+          }
+          return mermaid.render('diagram', source);
+        };
+        render().then(result => {
           document.getElementById('chart').innerHTML=result.svg;
           const svg=document.querySelector('svg'); if(svg){svg.style.maxWidth='100%';svg.style.height='auto';}
           if(svg){const box=svg.viewBox.baseVal;parent.postMessage({type:'dili-diagram',id:${scriptValue(id)},status:'image',svg:new XMLSerializer().serializeToString(svg),width:box.width,height:box.height},'*');}
