@@ -3,10 +3,10 @@ import type { AppState, Session } from '../shared/types';
 
 async function fixture(page: Page, backend: 'codex' | 'claude' | 'dsh', options: { installed?: boolean; holdReady?: boolean; deny?: boolean } = {}) {
   const seed = await (await page.request.get('/api/state')).json() as AppState;
-  const contact: Session = { ...seed.sessions[0], id: 'voice-' + backend, backend, title: backend + ' 语音测试', running: true, status: 'waiting_input', statusSource: 'native', interactionMode: backend === 'codex' ? 'chat' : 'terminal', nativeSessionId: 'voice-thread', forkPending: false };
+  const contact: Session = { ...seed.sessions[0], id: 'voice-' + backend, backend, title: backend + ' 语音测试', running: true, status: 'waiting_input', statusSource: 'native', interactionMode: backend === 'dsh' ? 'terminal' : 'chat', nativeSessionId: 'voice-thread', forkPending: false };
   const snapshot = { nativeSessionId: contact.nativeSessionId, connected: true, activeTurnId: null, revision: 1, items: [], requests: [], truncated: false };
   await page.addInitScript(({ backend, snapshot, deny }) => {
-    localStorage.setItem('sessiondeck.private-view.' + backend, backend === 'codex' ? 'chat' : 'conversation');
+    localStorage.setItem('sessiondeck.private-view.' + backend, backend === 'dsh' ? 'conversation' : 'chat');
     class Source extends EventTarget {
       onopen: (() => void) | null = null; onerror: (() => void) | null = null;
       constructor(url: string) { super(); setTimeout(() => { this.onopen?.(); if (url.includes('/chat/events')) this.dispatchEvent(new MessageEvent('state', { data: JSON.stringify(snapshot) })); }, 0); }
@@ -50,7 +50,7 @@ async function fixture(page: Page, backend: 'codex' | 'claude' | 'dsh', options:
   let sends = 0;
   await page.route(/\/api\/sessions\/[^/]+\/(input|chat\/messages)$/, route => { if (route.request().method() === 'POST') sends++; return route.fulfill({ json: { generation: 'voice-generation', directSubmit: true, status: 'accepted', submitted: true } }); });
   await page.goto('/#/contacts?session=' + contact.id);
-  const input = page.getByLabel(backend === 'codex' ? '给 Codex 发送消息' : '原生会话消息草稿');
+  const input = page.getByLabel(backend === 'dsh' ? '原生会话消息草稿' : `给 ${backend === 'claude' ? 'Claude' : 'Codex'} 发送消息`);
   await expect(input).toBeVisible();
   return { input, traffic, sends: () => sends, stats: () => page.evaluate(() => (window as unknown as { voiceStats: { opened: number; stopped: number } }).voiceStats) };
 }

@@ -37,17 +37,12 @@ async function launch(t: test.TestContext) {
   const executable = join(directory, 'codex.cjs');
   await copyFile(resolve('scripts/fixtures/codex-chat-protocol.cjs'), executable); await chmod(executable, 0o700);
   const claude = join(directory,'claude.cjs');
-  await writeFile(claude, `#!${process.execPath}
-const fs=require('node:fs'),path=require('node:path');
-if(process.argv.includes('--version')){console.log('fixture');process.exit(0)}
-if(process.argv.includes('--help')){console.log('--resume --fork-session');process.exit(0)}
-process.stdin.setRawMode(true);process.stdin.on('data',data=>fs.appendFileSync(path.join(__dirname,'native-input.log'),data));process.stdout.write('READY');
-`,{mode:0o700});
+  await copyFile(resolve('scripts/fixtures/claude-chat-protocol.cjs'), claude); await chmod(claude, 0o700);
   const port = await freePort(), base = `http://127.0.0.1:${port}`;
   const env: NodeJS.ProcessEnv = {};
   for (const key of ['PATH', 'LANG', 'LC_ALL', 'TZ']) if (process.env[key]) env[key] = process.env[key];
   const child = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
-    cwd: resolve('.'), env: { ...env, SESSIONDECK_PORT: String(port), SESSIONDECK_DEMO: '0', SESSIONDECK_DATA_DIR: join(directory, 'data'), SESSIONDECK_CODEX_PORT: '0', SESSIONDECK_CODEX_BIN: executable, SESSIONDECK_CLAUDE_BIN: claude, SESSIONDECK_DSH_BIN: '/missing-dsh-fixture', SESSIONDECK_FIXTURE_DIR: directory, SESSIONDECK_FIXTURE_WS: createRequire(import.meta.url).resolve('ws'), CODEX_HOME: join(directory, 'codex-home') },
+    cwd: resolve('.'), env: { ...env, SESSIONDECK_PORT: String(port), SESSIONDECK_DEMO: '0', SESSIONDECK_DATA_DIR: join(directory, 'data'), SESSIONDECK_CODEX_PORT: '0', SESSIONDECK_CODEX_BIN: executable, SESSIONDECK_CLAUDE_BIN: claude, SESSIONDECK_DSH_BIN: '/missing-dsh-fixture', SESSIONDECK_FIXTURE_DIR: directory, SESSIONDECK_FIXTURE_WS: createRequire(import.meta.url).resolve('ws'), CODEX_HOME: join(directory, 'codex-home'), CLAUDE_CONFIG_DIR: join(directory, 'claude-home') },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let logs = '';
@@ -346,4 +341,84 @@ test('Claude graphical send submits multiline text and images once, exposes reco
   const input=await readFile(join(f.directory,'native-input.log'),'utf8');
   assert.equal(input.split('\x1b[200~').length,3);
   assert.ok(input.endsWith(JSON.stringify(join(f.directory,'data','chat-images',image.id+'.png'))+'\x1b[201~\r'));
+});
+
+
+test('Claude graphical chat streams partial Markdown before completion and resumes the same native identity', { timeout: 30_000 }, async t => {
+  const f = await launch(t), { request, snapshot } = f;
+  const source = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Claude stream', cwd: f.directory }, 201);
+  assert.equal((await snapshot(source.id)).connected, false, 'Reading must not start Claude');
+  const events = await f.stream(source.id);
+  const blank = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'chat' });
+  assert.deepEqual(blank.claudeUnwritten, { sourceId: null });
+  await request(`/api/sessions/${source.id}/stop`, 'POST', {});
+  const started = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'chat' });
+  assert.equal(started.nativeSessionId, blank.nativeSessionId);
+  assert.equal(started.interactionMode, 'chat'); assert.ok(started.nativeSessionId);
+  const body = { requestId: randomUUID(), text: 'STREAM' };
+  const receipt = await request<CodexChatSubmission>(`/api/sessions/${source.id}/chat/messages`, 'POST', body);
+  assert.equal(receipt.status, 'accepted');
+  await until(async () => { const s = await snapshot(source.id); return !!s.activeTurnId && s.items.some(item => item.text === '第一段 **' && item.status === 'inProgress'); }, 'Partial text was not visible before completion');
+  await request(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' }, 409);
+  await request(`/api/sessions/${source.id}/chat/messages`, 'POST', body);
+  await until(async () => events.text.includes('第一段 **'), 'Partial text did not reach SSE');
+  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Claude did not finish');
+  const completed = await snapshot(source.id);
+  await until(async () => events.text.includes('第一段 **完成**'), 'Final text did not reach SSE');
+  assert.deepEqual(completed.items.filter(item => item.type === 'assistant').map(item => item.text), ['第一段 **完成**']);
+  assert.equal(completed.items.some(item => item.text.includes('hidden child')), false);
+  const calls = async () => (await readFile(join(f.directory, 'claude-calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.equal((await calls()).filter(row => row.type === 'user').length, 1, 'A retry must not send twice');
+  await request(`/api/sessions/${source.id}/stop`, 'POST', {});
+  const resumed = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'chat' });
+  assert.equal(resumed.nativeSessionId, started.nativeSessionId);
+  assert.ok((await snapshot(source.id)).items.some(item => item.text === body.text));
+  const fork = await request<Session>(`/api/sessions/${source.id}/fork`, 'POST', { title: 'Claude fork' }, 201);
+  const forked = await request<Session>(`/api/sessions/${fork.id}/start`, 'POST', { mode: 'chat' });
+  assert.notEqual(forked.nativeSessionId, started.nativeSessionId);
+  assert.ok((await snapshot(fork.id)).items.some(item => item.text === body.text), 'Fork must show source context immediately');
+  assert.deepEqual(forked.claudeUnwritten, { sourceId: started.nativeSessionId });
+  await request(`/api/sessions/${fork.id}/stop`, 'POST', {});
+  const reopenedFork = await request<Session>(`/api/sessions/${fork.id}/start`, 'POST', { mode: 'chat' });
+  assert.equal(reopenedFork.nativeSessionId, forked.nativeSessionId);
+  const terminal = await request<Session>(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' });
+  assert.equal(terminal.nativeSessionId, started.nativeSessionId); assert.equal(terminal.interactionMode, 'terminal');
+  assert.equal((await snapshot(source.id)).connected, false);
+});
+
+test('Claude graphical approvals, questions and interruption use native control messages', { timeout: 30_000 }, async t => {
+  const f = await launch(t), { request, snapshot } = f;
+  const source = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Claude controls', cwd: f.directory }, 201);
+  const other = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Other Claude', cwd: f.directory }, 201);
+  for (const item of [source, other]) await request(`/api/sessions/${item.id}/start`, 'POST', { mode: 'chat' });
+  const prompt = (text: string) => request(`/api/sessions/${source.id}/chat/messages`, 'POST', { requestId: randomUUID(), text });
+  await prompt('APPROVAL');
+  await until(async () => (await snapshot(source.id)).requests.length === 1, 'Approval missing');
+  const approval = (await snapshot(source.id)).requests[0];
+  assert.equal((await snapshot(other.id)).requests.length, 0);
+  await request(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' }, 409);
+  await request(`/api/sessions/${source.id}/chat/requests/${approval.id}`, 'POST', { decision: 'invented' }, 409);
+  await request(`/api/sessions/${other.id}/chat/requests/${approval.id}`, 'POST', { decision: 'allow' }, 409);
+  await request(`/api/sessions/${source.id}/chat/requests/${approval.id}`, 'POST', { decision: 'deny' });
+  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Approval did not finish');
+  await request(`/api/sessions/${source.id}/chat/requests/${approval.id}`, 'POST', { decision: 'allow' }, 409);
+  await prompt('QUESTION');
+  await until(async () => (await snapshot(source.id)).requests.some(item => item.kind === 'question'), 'Question missing');
+  const question = (await snapshot(source.id)).requests[0];
+  await request(`/api/sessions/${source.id}/chat/requests/${question.id}`, 'POST', { answers: { wrong: ['一'] } }, 409);
+  await request(`/api/sessions/${source.id}/chat/requests/${question.id}`, 'POST', { answers: { '0': ['二'] } });
+  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Question did not finish');
+  await prompt('HOLD');
+  await until(async () => (await snapshot(source.id)).items.some(item => item.status === 'inProgress'), 'Held stream missing');
+  await request(`/api/sessions/${source.id}/chat/interrupt`, 'POST', {});
+  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Interrupt did not finish');
+  assert.equal((await f.current(source.id)).running, true);
+  assert.ok((await snapshot(source.id)).items.some(item => item.status === 'failed'));
+  await prompt('STREAM');
+  await until(async () => !(await snapshot(source.id)).activeTurnId, 'Could not continue after interruption');
+  await prompt('EXIT');
+  await until(async () => !(await f.current(source.id)).running, 'Unexpected native exit left the contact running');
+  await request(`/api/sessions/${source.id}/start`, 'POST', { mode: 'terminal' });
+  await request(`/api/sessions/${source.id}/stop`, 'POST', {});
+  assert.equal((await request<{ generation: string | null }>(`/api/sessions/${source.id}/input`)).generation, null, 'Stale graphical ownership must not orphan a replacement terminal');
 });

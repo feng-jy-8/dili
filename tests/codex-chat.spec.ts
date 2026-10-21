@@ -177,20 +177,22 @@ async function emit(page: Page, url: string, type: string, data?: unknown) {
   }, { url, type, data });
 }
 
-async function fixture(page: Page) {
+async function fixture(page: Page, agent: 'codex' | 'claude' = 'codex') {
+  const name = agent === 'claude' ? 'Claude' : 'Codex';
   const seed = await (await page.request.get('/api/state')).json() as AppState;
   expect(seed.demo).toBe(true);
   const headers = await mutationHeaders(page.request);
-  const created = await page.request.post('/api/sessions', { data: { backend: 'codex', title: 'Codex 图形界面回归', cwd: seed.defaultCwd }, headers });
+  const created = await page.request.post('/api/sessions', { data: { backend: agent, title: name + ' 图形界面回归', cwd: seed.defaultCwd }, headers });
   expect(created.ok()).toBe(true);
   const contact = await created.json() as Session;
   const state: AppState = { ...seed, demo: false, sessions: [contact], groups: [], activities: [], revision: (seed.revision ?? 0) + 20,
-    backends: seed.backends.map(backend => backend.id === 'codex' ? { ...backend, installed: true, capabilities: { ...backend.capabilities, nativeControl: true, graphicalChat: true } } : backend) };
+    backends: seed.backends.map(backend => backend.id === agent ? { ...backend, installed: true, capabilities: { ...backend.capabilities, nativeControl: true, graphicalChat: true } } : backend) };
   const current: { snapshot: CodexChatSnapshot } = { snapshot: { instanceId: 'chat-test-instance', nativeSessionId: null, revision: 1, connected: false, activeTurnId: null, items: [], requests: [], truncated: false } };
   const requests: { path: string; body: Record<string, unknown> }[] = [];
   const submissions = new Map<string, CodexChatSubmission>();
   let reads = 0;
-  await page.addInitScript(() => {
+  await page.addInitScript(agent => {
+    if (agent === 'claude') localStorage.setItem('sessiondeck.private-view.claude', 'chat');
     const target = window as unknown as { codexSources: Source[] };
     target.codexSources = [];
     class FakeSource extends EventTarget {
@@ -207,7 +209,7 @@ async function fixture(page: Page) {
       close() { this.closed = true; }
     }
     Object.defineProperty(window, 'EventSource', { configurable: true, value: FakeSource });
-  });
+  }, agent);
   await page.route('**/api/state', route => route.fulfill({ json: state }));
   await page.route(`**/api/sessions/${contact.id}/chat`, route => { reads++; return route.fulfill({ json: current.snapshot }); });
   await page.route(`**/api/sessions/${contact.id}/start`, async route => {
@@ -249,7 +251,7 @@ async function fixture(page: Page) {
   });
   return {
     contact, state, current, requests, submissions, reads: () => reads,
-    open: async () => { await page.goto(`/#/contacts?session=${contact.id}`); await expect(page.getByRole('region', { name: 'Codex 图形会话' })).toBeVisible(); await expect(page.getByLabel('给 Codex 发送消息')).toBeVisible(); },
+    open: async () => { await page.goto(`/#/contacts?session=${contact.id}`); await expect(page.getByRole('region', { name: name + ' 图形会话' })).toBeVisible(); await expect(page.getByLabel('给 ' + name + ' 发送消息')).toBeVisible(); },
     patch: async (values: Partial<CodexChatSnapshot>) => {
       const previous = current.snapshot;
       current.snapshot = { ...previous, ...values, revision: previous.revision + 1 };
@@ -799,4 +801,39 @@ test('a late image upload merges into a reopened draft without replacing new att
   await expect(page.getByLabel('待发送图片').locator('figure')).toHaveCount(2);
   await expect(page.getByLabel('给 Codex 发送消息')).toHaveValue('新的草稿');
   expect(app.requests.filter(item=>item.path === 'messages')).toEqual([]);
+});
+
+
+test('Claude streams Markdown in the shared graphical UI and queues input until native completion', async ({ page }) => {
+  const app = await fixture(page, 'claude'); await app.open();
+  const input = page.getByLabel('给 Claude 发送消息');
+  await input.fill('开始任务'); await input.press('Enter'); await expect(input).toHaveValue('');
+  await app.patch({ items: [app.current.snapshot.items[0], { id: 'answer-1', turnId: 'turn-1', type: 'assistant', text: '## 增量回复\n\n第一段', status: 'inProgress' }] });
+  await expect(page.getByRole('heading', { name: '增量回复' })).toBeVisible();
+  await expect(page.locator('.codex-assistant')).toContainText('第一段');
+  await expect(page.getByRole('status', { name: '会话响应状态' })).toHaveText('正在回复…');
+  await input.fill('下一项工作'); await input.press('Enter');
+  await expect(page.getByRole('region', { name: '待发送消息' })).toContainText('下一项工作');
+  expect(app.requests.filter(item => item.path === 'messages')).toHaveLength(1);
+  await app.patch({ items: [app.current.snapshot.items[0], { id: 'answer-1', turnId: 'turn-1', type: 'assistant', text: '## 增量回复\n\n第一段 **第二段**', status: 'inProgress' }] });
+  await expect(page.locator('.codex-assistant strong').last()).toHaveText('第二段');
+  await expect(page.locator('.codex-assistant')).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(input).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: 'artifacts/claude-streaming-mobile.png' });
+  await app.patch({ activeTurnId: null, items: app.current.snapshot.items.map(item => ({ ...item, status: 'completed' })) });
+  await expect.poll(() => app.requests.filter(item => item.path === 'messages').length).toBe(2);
+  expect(app.requests.filter(item => item.path === 'messages').at(-1)?.body).toMatchObject({ text: '下一项工作' });
+  expect(app.requests.filter(item => item.path === 'messages').at(-1)?.body).not.toHaveProperty('expectedTurnId');
+  expect(app.requests.filter(item => item.path === 'interrupt')).toHaveLength(0);
+});
+
+test('Claude migrates old graphical drafts without automatically releasing old queued work', async ({ page }) => {
+  const app = await fixture(page, 'claude');
+  await page.addInitScript(id => sessionStorage.setItem('dili.native-input-draft.' + id, JSON.stringify({ text: '原来的草稿', attachments: [], queue: [{ id: 'old-queue', text: '原来的排队消息', attachments: [], identity: 'old-generation' }] })), app.contact.id);
+  await app.open();
+  await expect(page.getByLabel('给 Claude 发送消息')).toHaveValue('原来的草稿');
+  await expect(page.getByRole('region', { name: '待发送消息' })).toContainText('已暂停');
+  expect(app.requests).toHaveLength(0);
 });

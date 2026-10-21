@@ -40,8 +40,11 @@ export interface Session {
   /** Stable native attention identity prevents replayed events from reminding twice. */
   lastAttentionKey?: string | null;
   running: boolean;
-  /** Codex can run without a PTY; terminal attachment keeps the same native thread. */
+  /** Native graphical transport or interactive PTY. */
   interactionMode?: 'chat' | 'terminal';
+  /** Claude print mode saves a new/forked identity only after its first input.
+   * Retain the bootstrap until then so closing an empty chat remains resumable. */
+  claudeUnwritten?: { sourceId: string | null };
   /** Per-contact native permission preset; absent means native defaults. */
   executionMode?: ExecutionMode;
   origin: 'created' | 'imported' | 'forked' | 'handoff';

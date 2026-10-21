@@ -29,6 +29,7 @@
     "test:terminal-load": "tsx scripts/terminal-load.ts",
     "test:smoke:claude-image": "tsx scripts/claude-workflow-smoke.ts --image-only --loopback-fixture",
     "test:smoke:claude": "tsx scripts/claude-workflow-smoke.ts",
+    "test:smoke:claude-chat": "tsx scripts/claude-chat-smoke.ts",
     "test:smoke:workspace": "tsx scripts/workspace-workflow-smoke.ts",
     "backup": "tsx scripts/backup.ts",
     "prepack": "npm run build",

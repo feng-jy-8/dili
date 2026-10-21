@@ -201,6 +201,15 @@ export class ConversationReader {
 
   async preview(session: ConversationSession): Promise<string | null> { return conversationPreview(await this.read(session))?.text ?? null; }
 
+  /** A transport handoff must hydrate the just-finished native turn, even if
+   * an earlier poll cached the transcript before it was saved. */
+  async readLatest(session: ConversationSession): Promise<ConversationTranscript> {
+    const key = `${session.backend}:${session.nativeSessionId}`;
+    await this.pending.get(key);
+    this.cache.delete(key); this.indexes.delete(session.backend);
+    return this.read(session);
+  }
+
   private finish(messages: ConversationMessage[], truncated: boolean, updatedAt?: string): ConversationTranscript {
     const latestUser = messages.findLast(item => item.role === 'user');
     const maxMessages = Math.max(1, Math.min(200, this.options.maxMessages ?? 200));

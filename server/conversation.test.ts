@@ -187,6 +187,18 @@ test('unchanged files reuse a parsed result and appended records refresh preview
   assert.equal(await reader.read(a), second);
 });
 
+test('transport handoff bypasses stale transcript and missing-file caches', async t => {
+  const { file, paths } = await fixture(t), a = contact('claude');
+  const reader = new ConversationReader({ ...paths, cacheMs: 60_000, indexMs: 60_000 });
+  assert.equal((await reader.read(a)).messages.length, 0);
+  const path = await file(a, [claude('user', 'first')]);
+  assert.equal((await reader.read(a)).messages.length, 0);
+  assert.equal((await reader.readLatest(a)).messages[0].text, 'first');
+  await appendFile(path, JSON.stringify(claude('assistant', 'saved after last poll')) + '\n');
+  assert.equal((await reader.read(a)).messages.length, 1);
+  assert.equal((await reader.readLatest(a)).messages.at(-1)?.text, 'saved after last poll');
+});
+
 test('large assistant turns retain the latest user preview within the total text and message budgets', async t => {
   const { paths, file } = await fixture(t), a = contact('claude');
   await file(a, [claude('user', 'Keep this actual latest request'), ...Array.from({ length: 30 }, (_, index) => claude('assistant', `${index}:` + 'a'.repeat(23_995)))]);

@@ -2,6 +2,7 @@ import type express from 'express';
 import type { ConversationTranscript, Session } from '../shared/types.ts';
 import type { CodexChatPatch, CodexChatSnapshot } from '../shared/chat.ts';
 import type { CodexBridge } from './codex.ts';
+export type ChatBridge = Pick<CodexBridge, 'readChat' | 'chatSnapshot' | 'readChatHistory' | 'onChat' | 'sendPrompt' | 'getStatus' | 'answerChatRequest' | 'stopSession'>;
 import type { ConversationReader } from './conversation.ts';
 import type { ChatSubmissions } from './chat-submissions.ts';
 import type { Attachments } from './attachments.ts';
@@ -11,12 +12,13 @@ interface Dependencies {
   store: Store;
   attachments: Attachments;
   submissions: ChatSubmissions;
-  bridge: CodexBridge;
+  bridge: ChatBridge;
+  claudeBridge?: ChatBridge;
   conversations: ConversationReader;
   instanceId: string;
   demo: boolean;
   closing(): boolean;
-  supported(): boolean;
+  supported(item: Session): boolean;
   ready(item: Session): boolean;
   busy(id: string): boolean;
   sessions(): Session[];
@@ -28,7 +30,8 @@ const requestId = (value: unknown): string => typeof value === 'string' && /^[a-
 interface Viewer { response: express.Response; previous?: CodexChatSnapshot; device?: string }
 
 export function registerCodexChat(app: express.Express, options: Dependencies) {
-  const { store, bridge, conversations } = options;
+  const { store, conversations } = options;
+  const bridgeFor = (item: Session) => item.backend === 'claude' ? options.claudeBridge! : options.bridge;
   const submissions = options.submissions;
   const viewers = new Map<string, Set<Viewer>>();
   const scheduled = new Map<string, NodeJS.Timeout>();
@@ -36,14 +39,14 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
   let revision = 0;
   function session(id: string): Session {
     const item = store.session(id) ?? fail('会话不存在', 404);
-    if (item.backend !== 'codex') fail('图形化聊天目前仅支持 Codex');
+    if (item.backend !== 'codex' && !(item.backend === 'claude' && options.claudeBridge)) fail('这个后端尚未支持原生流式图形聊天');
     return item;
   }
   function writable(id: string): Session {
     const item = session(id);
-    if (options.demo || !options.supported()) fail('当前 Codex 不支持原生图形化交互，请使用原生终端');
+    if (options.demo || !options.supported(item)) fail('当前后端不支持原生图形化交互，请使用原生终端');
     if (options.closing() || options.busy(id)) fail('会话正在启动或停止，请稍后重试', 409);
-    if (item.archived || item.forkPending || !item.running || !item.nativeSessionId || !options.ready(item)) fail('请先启动或恢复这个 Codex 会话', 409);
+    if (item.archived || item.forkPending || !item.running || !item.nativeSessionId || !options.ready(item)) fail('请先启动或恢复这个图形会话', 409);
     return item;
   }
   function remember(id: string, snapshot: CodexChatSnapshot) {
@@ -63,7 +66,7 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     return remember(item.id, { ...snapshot, connected: item.running && options.ready(item) && snapshot.connected });
   }
   async function read(id: string) {
-    const item = session(id);
+    const item = session(id), bridge = bridgeFor(item);
     const identity = item.nativeSessionId;
     if (!options.demo && identity && !item.forkPending) {
       try {
@@ -116,25 +119,25 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
       scheduled.delete(id);
       if (options.closing()) return;
       const item = store.session(id);
-      const native = item?.nativeSessionId && !item.forkPending ? bridge.chatSnapshot(item.nativeSessionId) : undefined;
+      const native = item?.nativeSessionId && !item.forkPending ? bridgeFor(item).chatSnapshot(item.nativeSessionId) : undefined;
       if (item && native) emit(id, nativeView(item, native));
       else void read(id).then(snapshot => emit(id, snapshot)).catch(() => {});
     }, 80));
   }
-  const offChat = bridge.onChat((nativeId) => {
+  const offChats = ([['codex', options.bridge], ['claude', options.claudeBridge]] as const).filter((entry): entry is readonly ['codex' | 'claude', ChatBridge] => !!entry[1]).map(([backend, bridge]) => bridge.onChat((nativeId) => {
     if (options.closing()) return;
-    const item = options.sessions().find(item => item.backend === 'codex' && item.nativeSessionId === nativeId && !item.forkPending);
+    const item = options.sessions().find(item => item.backend === backend && item.nativeSessionId === nativeId && !item.forkPending);
     if (!item) return;
     queue(item.id);
     // Bounded chat snapshots have no input timestamps and may contain only
     // older users. Saved native history owns previews; successful local sends
     // update immediately below, without letting late snapshot hydration regress them.
-  });
-  const offStore = store.onChange(change => { if (change.table === 'sessions' && change.data.backend === 'codex') queue(change.data.id); });
+  }));
+  const offStore = store.onChange(change => { if (change.table === 'sessions' && ['codex', 'claude'].includes(change.data.backend)) queue(change.data.id); });
 
   app.get('/api/sessions/:id/chat', async (req, res) => res.json(await read(String(req.params.id))));
   app.get('/api/sessions/:id/chat/history', async (req, res) => {
-    const id = String(req.params.id), item = session(id), identity = item.nativeSessionId;
+    const id = String(req.params.id), item = session(id), bridge = bridgeFor(item), identity = item.nativeSessionId;
     if (options.demo || !identity || item.forkPending) fail('当前会话没有可分页读取的原生历史', 409);
     const cursor = req.query.cursor;
     if (typeof cursor !== 'string' || !cursor || cursor.length > 8192 || /[\x00-\x1f]/.test(cursor)) fail('历史游标无效');
@@ -146,7 +149,7 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
   });
   app.get('/api/sessions/:id/chat/events', async (req, res) => {
     const id = String(req.params.id);
-    const item = session(id);
+    const item = session(id), bridge = bridgeFor(item);
     const viewer: Viewer = { response: res, device: typeof res.locals.device === 'string' ? res.locals.device : undefined };
     const set = viewers.get(id) ?? new Set<Viewer>(); set.add(viewer); viewers.set(id, set);
     res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders();
@@ -164,7 +167,7 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     res.json(submissions.get(item.id, requestId(req.params.requestId)) ?? fail('没有找到发送记录，请先核对会话历史', 404));
   });
   app.post('/api/sessions/:id/chat/messages', async (req, res) => {
-    const item = writable(String(req.params.id));
+    const item = writable(String(req.params.id)), bridge = bridgeFor(item);
     const id = requestId(req.body.requestId);
     if (typeof req.body.text !== 'string' || req.body.text.length > 32_000 || /\x00/.test(req.body.text)) fail('消息不能为空，且最多 32000 字符');
     const text = req.body.text.trim();
@@ -192,7 +195,7 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     }
   });
   app.post('/api/sessions/:id/chat/connect', async (req, res) => {
-    const item = writable(String(req.params.id)), identity = item.nativeSessionId!;
+    const item = writable(String(req.params.id)), bridge = bridgeFor(item), identity = item.nativeSessionId!;
     // Recover just the subscription. Never start an agent or interrupt a turn
     // as a side effect of retrying a failed graphical connection.
     const result = await bridge.getStatus(identity);
@@ -202,14 +205,14 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     res.json({ connected: true });
   });
   app.post('/api/sessions/:id/chat/requests/:requestId', async (req, res) => {
-    const item = writable(String(req.params.id));
+    const item = writable(String(req.params.id)), bridge = bridgeFor(item);
     const id = String(req.params.requestId);
     if (!id || id.length > 200) fail('审批标识无效');
     await bridge.answerChatRequest(item.nativeSessionId!, id, req.body);
     res.json({ ok: true });
   });
   app.post('/api/sessions/:id/chat/interrupt', async (req, res) => {
-    const item = writable(String(req.params.id));
+    const item = writable(String(req.params.id)), bridge = bridgeFor(item);
     await bridge.stopSession(item.nativeSessionId!);
     res.json({ ok: true });
   });
@@ -217,7 +220,7 @@ export function registerCodexChat(app: express.Express, options: Dependencies) {
     // Revoked share devices stop receiving the native chat stream immediately.
     for (const set of viewers.values()) for (const viewer of set) if (viewer.device && !valid(viewer.device)) viewer.response.end();
   }, close() {
-    offChat(); offStore();
+    offChats.forEach(off => off()); offStore();
     for (const timer of scheduled.values()) clearTimeout(timer);
     scheduled.clear();
     for (const set of viewers.values()) for (const viewer of set) viewer.response.end();

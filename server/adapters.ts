@@ -61,7 +61,7 @@ export async function getBackendInfo(): Promise<BackendInfo[]> {
     try { version = (await run(file, ['--version'], { timeout: 5000, maxBuffer: 4096 })).stdout.trim().slice(0, 120); } catch { /* launch will report details */ }
     let help = '';
     try { help = (await run(file, ['--help'], { timeout: 5000, maxBuffer: 40_000 })).stdout; } catch { /* conservative capability detection */ }
-    let nativeControl = false;
+    let nativeControl = id === 'claude' && help.includes('--include-partial-messages') && help.includes('--input-format');
     if (id === 'codex' && help.includes('--remote-auth-token-env')) {
       try {
         const serverHelp = (await run(file, ['app-server', '--help'], { timeout: 5000, maxBuffer: 40_000 })).stdout;
@@ -75,7 +75,7 @@ export async function getBackendInfo(): Promise<BackendInfo[]> {
     return {
       id, label: LABELS[id], installed: true, version,
       capabilities: { terminal: id !== 'dsh' || !!tui, resume: id === 'dsh' || /\bresume\b/.test(help), fork: id === 'dsh' || (id === 'claude' ? help.includes('--fork-session') : /\bfork\b/.test(help)), discovery: true, nativeControl, graphicalChat: nativeControl, autoMode: id === 'claude' ? help.includes('--permission-mode') && /["']auto["']/.test(help) : id === 'codex' ? help.includes('--approve-for-me') : true },
-      note: id === 'dsh' ? (tui ? '原生终端界面（dsh-tui）与对话记录；原生 Web 界面仍可打开' : '复用原生 Web 界面与本地 session API；安装 @deepseek-harness-tui/dsh-tui 可获得原生终端') : id === 'codex' ? (nativeControl ? '原生 app-server 提供图形对话、流式回复、审批和精确会话；可切换原生终端' : '兼容终端模式：原生 ID 在完成一轮后确认；更新 Codex 可启用图形对话') : '复用原生终端，保留后端自身的登录、权限与审批',
+      note: id === 'dsh' ? (tui ? '原生终端界面（dsh-tui）与对话记录；原生 Web 界面仍可打开' : '复用原生 Web 界面与本地 session API；安装 @deepseek-harness-tui/dsh-tui 可获得原生终端') : id === 'codex' ? (nativeControl ? '原生 app-server 提供图形对话、流式回复、审批和精确会话；可切换原生终端' : '兼容终端模式：原生 ID 在完成一轮后确认；更新 Codex 可启用图形对话') : nativeControl ? '原生 stream-json 提供流式图形对话与审批；保留登录和原生历史，可在空闲时切换终端' : '复用原生终端，保留后端自身的登录、权限与审批',
     };
   }));
 }
@@ -104,6 +104,10 @@ export async function buildLaunch(session: Session, dataDir?: string): Promise<{
   if (!file) throw new Error(`未找到 ${LABELS[session.backend]}，请安装原生命令并加入 PATH`);
   const autoArgs = session.executionMode === 'auto' ? session.backend === 'claude' ? ['--permission-mode', 'auto'] : ['--approve-for-me'] : [];
   if (session.backend === 'claude') {
+    if (source && !session.forkPending && session.claudeUnwritten) {
+      const parent = session.claudeUnwritten.sourceId;
+      return { file, args: [...(parent ? ['--resume', validateNativeId('claude', parent), '--fork-session'] : []), ...autoArgs, '--session-id', source, '--name', session.title], nativeSessionId: source };
+    }
     if (source && !session.forkPending) return { file, args: ['--resume', source, ...autoArgs], nativeSessionId: source };
     const nativeSessionId = randomUUID();
     const args = source ? ['--resume', source, '--fork-session'] : [];

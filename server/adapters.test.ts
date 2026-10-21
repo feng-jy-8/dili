@@ -28,6 +28,11 @@ test('native launch uses argument arrays, preserves fork source, rejects option 
     assert.deepEqual(claude.args.slice(0, 3), ['--resume', source, '--fork-session']);
     assert.notEqual(claude.nativeSessionId, source);
     assert.equal(claude.args.at(-1), '$(touch /tmp/nope)');
+    const unwritten = await buildLaunch(makeSession({ backend: 'claude', nativeSessionId: source, claudeUnwritten: { sourceId: null } }));
+    assert.equal(unwritten.nativeSessionId, source);
+    assert.deepEqual(unwritten.args.slice(0, 2), ['--session-id', source]);
+    const emptyFork = await buildLaunch(makeSession({ backend: 'claude', nativeSessionId: claude.nativeSessionId, claudeUnwritten: { sourceId: source } }));
+    assert.deepEqual(emptyFork.args.slice(0, 5), ['--resume', source, '--fork-session', '--session-id', claude.nativeSessionId]);
     await assert.rejects(buildLaunch(makeSession({ nativeSessionId: '--dangerously-bypass-approvals-and-sandbox' })), /无效/);
     assert.throws(() => validateNativeId('dsh', '../session-id'), /无效/);
     assert.throws(() => validateNativeId('dsh', `session-${'-'.repeat(36)}`), /无效/);
