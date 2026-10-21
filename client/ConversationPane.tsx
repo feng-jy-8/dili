@@ -7,6 +7,7 @@ import { api } from './api';
 import Markdown from './Markdown';
 import { interfaceScale } from './zoom';
 import NativeInputComposer from './NativeInputComposer';
+import ChatActivity from './ChatActivity';
 import NoticeToasts from './NoticeToasts';
 import ConversationOutline from './ConversationOutline';
 import './conversation.css';
@@ -49,6 +50,18 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
   running.current = session.running;
   selectionCallback.current = onSelection;
   const current = snapshot?.identity === identity ? snapshot : null;
+  const activityKey = JSON.stringify([session.running, session.status, session.statusSource, session.lastActivity, session.lastAttentionKey]);
+  const [submissionActivity, setSubmissionActivity] = useState<{ identity: string; key: string; phase: 'sending' | 'accepted' } | null>(null);
+  const localActivity = submissionActivity?.identity === identity ? submissionActivity : null;
+  // A native transition takes over the optimistic bridge. In particular, an
+  // approval, completion or stop that arrives before the send response wins.
+  useEffect(() => {
+    if (submissionActivity && (submissionActivity.identity !== identity || submissionActivity.key !== activityKey) && submissionActivity.phase !== 'sending') setSubmissionActivity(null);
+  }, [identity, activityKey, submissionActivity]);
+  const activityPhase = session.archived || !session.running || session.status === 'error' || session.status === 'stopped' || session.status === 'waiting_approval' ? null
+    : localActivity?.phase === 'sending' ? 'sending'
+    : session.status === 'running' ? 'working'
+    : localActivity?.key === activityKey ? 'waiting' : null;
   useLayoutEffect(() => {
     const element = pane.current; if (!element) return;
     const measure = () => setCompactOutline(element.clientWidth <= 720);
@@ -198,6 +211,7 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
     </div>
     <ConversationOutline id={outlineId} open={outlineOpen} compact={compactOutline} entries={transcript?.messages.filter(message => message.role === 'user') ?? []} selectedId={selectedInput} truncated={transcript?.truncated ?? false} close={closeOutline} select={jumpToInput} />
     </div>
-    {allowInput && session.backend !== 'codex' && <NativeInputComposer key={session.id} session={session} onTerminal={onTerminal} onSent={() => { followBottom.current = true; refresh.current(); }} />}
+    <ChatActivity phase={activityPhase} />
+    {allowInput && session.backend !== 'codex' && <NativeInputComposer key={session.id} session={session} onTerminal={onTerminal} onActivityChange={phase => setSubmissionActivity(previous => phase === 'sending' ? { identity, key: activityKey, phase } : phase === 'accepted' && previous?.identity === identity ? { ...previous, phase } : null)} onSent={() => { followBottom.current = true; refresh.current(); }} />}
   </section>;
 }

@@ -19,7 +19,7 @@ function read(id: string): Draft {
   try { const value = JSON.parse(sessionStorage.getItem(key(id)) || 'null'); if (value && typeof value.text === 'string') return { text:value.text.slice(0,30000), attachments:Array.isArray(value.attachments) ? value.attachments.filter((item: ChatAttachment)=>item && typeof item.id === 'string' && typeof item.name === 'string').slice(0,8) : [], queue:readQueue(value.queue), ...(typeof value.pending === 'string' ? {pending:value.pending} : {}), ...(value.pendingMessage && typeof value.pendingMessage.text === 'string' && Array.isArray(value.pendingMessage.attachments) ? {pendingMessage:value.pendingMessage} : {}) }; } catch { /* invalid drafts are ignored */ }
   return {text:'',attachments:[]};
 }
-export default function NativeInputComposer({session,onTerminal,onSent}: {session:Session;onTerminal():void;onSent?():void}) {
+export default function NativeInputComposer({session,onTerminal,onSent,onActivityChange}: {session:Session;onTerminal():void;onSent?():void;onActivityChange?(phase:'sending'|'accepted'|null):void}) {
   const [voiceActive,setVoiceActive] = useState(false);
   const [draft,setDraft] = useState(() => read(session.id));
   const [busy,setBusy] = useState(false), [uploading,setUploading] = useState(false), [preview,setPreview] = useState(false), [error,setError] = useState('');
@@ -45,7 +45,7 @@ export default function NativeInputComposer({session,onTerminal,onSent}: {sessio
     const current = active.current ? latest.current : read(session.id);
     if (current.pending !== pending) return;
     update({text:!sent.queueId && current.text === sent.text ? '' : current.text, attachments:sent.queueId ? current.attachments : current.attachments.filter(item=>!sent.attachments.includes(item.id)), queue:current.queue?.filter(item=>item.id!==sent.queueId)});
-    if (active.current) onSent?.();
+    if (active.current) { onActivityChange?.('accepted'); onSent?.(); }
   }
   const canSend = !voiceActive && !busy && !uploading && !draft.pending && !session.archived && session.running && session.status !== 'waiting_approval' && (!!draft.text.trim() || !!draft.attachments.length);
   async function send(queued?: QueuedMessage) {
@@ -53,6 +53,7 @@ export default function NativeInputComposer({session,onTerminal,onSent}: {sessio
     const source = queued || latest.current;
     sending.current = true;
     setBusy(true); setError('');
+    onActivityChange?.('sending');
     let pending: string | undefined;
     try {
       const native = await api<NativeInputState>('/sessions/' + session.id + '/input');
@@ -72,7 +73,7 @@ export default function NativeInputComposer({session,onTerminal,onSent}: {sessio
         const current = active.current ? latest.current : read(session.id);
         if (current.pending === pending) update({...current,pending:undefined,pendingMessage:undefined});
       }
-      if (active.current) setError(cause instanceof Error ? cause.message : '发送失败');
+      if (active.current) { onActivityChange?.(null); setError(cause instanceof Error ? cause.message : '发送失败'); }
       if (queued) { const current = active.current ? latest.current : read(session.id); update({...current,queue:current.queue?.map(item=>item.id===queued.id ? {...item,paused:true} : item)}); }
     } finally { sending.current = false; if(active.current) setBusy(false); }
   }

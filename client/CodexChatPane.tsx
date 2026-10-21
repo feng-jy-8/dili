@@ -15,6 +15,7 @@ import NoticeToasts from './NoticeToasts';
 import ResizableComposer from './ResizableComposer';
 import VoiceInput, { appendVoiceText } from './VoiceInput';
 import MessageQueue, { readQueue, type QueuedMessage } from './MessageQueue';
+import ChatActivity from './ChatActivity';
 import './codex-chat.css';
 
 type Pending = { requestId: string; text: string; attachments?: ChatAttachment[]; queueId?: string };
@@ -103,6 +104,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [awaitingTurnId, setAwaitingTurnId] = useState<string | null>(null);
   const [voiceActive, setVoiceActive] = useState(false);
   const [preview, setPreview] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -314,13 +316,13 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     return () => { observer.disconnect(); document.removeEventListener('selectionchange', select); };
   }, []);
 
-  function accepted(pending: Pending) {
+  function accepted(pending: Pending, turnId?: string) {
     // A late response may finish after this panel was closed and reopened.
     // Clear only its own submitted snapshot, preserving the newer editor.
     const current = active.current ? draftRef.current : readDraft(session.id);
     if (current.pending?.requestId !== pending.requestId) return;
     updateDraft({ text: !pending.queueId && current.text === pending.text ? '' : current.text, attachments: pending.queueId ? current.attachments : current.attachments.filter(item => !pending.attachments?.some(sent => sent.id === item.id)), pending: null, queue:current.queue?.filter(item=>item.id!==pending.queueId) });
-    if (active.current) { setCheckNotice(''); setCheckedUnknown(false); void readSnapshot.current(); }
+    if (active.current) { if (turnId) setAwaitingTurnId(turnId); setCheckNotice(''); setCheckedUnknown(false); void readSnapshot.current(); }
   }
   async function checkSubmission() {
     const pending = draftRef.current.pending;
@@ -353,7 +355,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
       if (!saveDraft(session.id, next)) throw new Error('无法保存本次发送状态。请允许此站点使用浏览器存储后重试。');
       updateDraft(next);
       const result = await api<CodexChatSubmission>(`/sessions/${session.id}/chat/messages`, { text, attachments: pending.attachments?.map(item => item.id), requestId: pending.requestId, ...(expectedTurnId ? { expectedTurnId } : {}) });
-      if (result.status === 'accepted') accepted(pending);
+      if (result.status === 'accepted') accepted(pending, result.turnId);
       else if (result.status === 'rejected') { const current = active.current ? draftRef.current : readDraft(session.id); if (current.pending?.requestId === pending.requestId) updateDraft({ ...current, pending: null }); if (active.current) setError(result.error || '消息未被接收，草稿已保留。'); }
       else if (active.current) setCheckNotice(result.status === 'sending' ? '消息正在提交，请查询发送结果。' : '发送结果尚未确认，请查询结果后继续。');
     } catch (cause) {
@@ -385,6 +387,15 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   },[transport,snapshot?.activeTurnId,snapshot?.connected,snapshot?.instanceId,snapshot?.nativeSessionId,snapshot?.requests.length,session.running,session.archived,voiceActive]);
 
   const hasTurn = !!snapshot?.activeTurnId;
+  useEffect(() => {
+    if (awaitingTurnId && (!session.running || snapshot?.activeTurnId === awaitingTurnId || snapshot?.items.some(item => item.turnId === awaitingTurnId))) setAwaitingTurnId(null);
+  }, [awaitingTurnId, session.running, snapshot]);
+  const activeItems = snapshot?.items.filter(item => item.turnId === snapshot.activeTurnId && item.status === 'inProgress') ?? [];
+  const activityPhase = session.archived || session.status === 'error' || session.status === 'waiting_approval' || !!snapshot?.requests.length ? null
+    : busy ? 'sending'
+    : !transport || !snapshot?.connected || !session.running ? null
+    : hasTurn ? activeItems.some(item => item.type === 'assistant' && item.text) ? 'replying' : activeItems.some(item => ['command', 'tool', 'fileChange'].includes(item.type)) ? 'working' : 'thinking'
+    : awaitingTurnId && !snapshot.items.some(item => item.turnId === awaitingTurnId) ? 'waiting' : null;
   const nativeAvailable = !session.running || !!snapshot?.connected;
   const canSend = (!!draft.text.trim() || !!draft.attachments.length) && !voiceActive && !uploading && !busy && !draft.pending && transport && nativeAvailable && !snapshot?.requests.length && !session.archived;
   const olderCurrent = older?.identity === snapshot?.nativeSessionId ? older : null;
@@ -419,6 +430,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     <ConversationOutline id={outlineId} open={outlineOpen} compact={compactOutline} entries={outlineEntries} selectedId={selectedInput} truncated={snapshot?.truncated ?? false} close={closeOutline} select={jumpToInput} loadOlder={olderCursor && !olderCurrent?.limited ? () => void loadOlder() : undefined} loadingOlder={olderCurrent?.loading} />
     </div>
     {draft.pending && !busy && <div className="codex-pending" role="status"><strong>发送结果待确认</strong><p>{checkNotice || '这条消息可能已被原生会话接收。查询结果前不会重复发送。'}</p><div><button type="button" className="button secondary small-button" disabled={checking} onClick={() => void checkSubmission()}>{checking ? '正在查询…' : '查询发送结果'}</button>{checkedUnknown && <><button type="button" className="text-button" onClick={() => { if (draftRef.current.pending) accepted(draftRef.current.pending); setError(''); }}>已核对收到，完成发送</button><button type="button" className="text-button" onClick={() => { updateDraft({ ...draftRef.current, pending: null }); setCheckedUnknown(false); setCheckNotice(''); setError(''); }}>已核对未发送，恢复草稿</button></>}</div></div>}
+    <ChatActivity phase={activityPhase} />
     <MessageQueue items={draft.queue||[]} locked={busy || uploading || !!draft.pending} disabled={busy || uploading || !!draft.pending || !transport || !nativeAvailable || !!snapshot?.requests.length || session.archived} sendingId={draft.pending?.queueId} send={item=>void send(undefined,item)} edit={editQueue} remove={id=>updateDraft({...draftRef.current,queue:draftRef.current.queue?.filter(item=>item.id!==id)})}/>
     <ResizableComposer><form className="chat-composer codex-composer" onSubmit={event => void send(event)}>
       <ImageAttachments sessionId={session.id} items={draft.attachments} onChange={update => { const current = active.current ? draftRef.current : readDraft(session.id); updateDraft({ ...current, attachments: update(current.attachments) }); }} onBusy={setUploading} disabled={session.archived || !!draft.pending}>

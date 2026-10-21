@@ -4,6 +4,33 @@ import { expect, type Page } from '@playwright/test';
 import type { AppState, Session } from '../shared/types';
 import type { CodexChatAnswer, CodexChatItem, CodexChatPatch, CodexChatSnapshot, CodexChatSubmission } from '../shared/chat';
 
+test('Codex shows activity before the first token and follows tools, replies, approvals and completion', async ({ page }) => {
+  const app = await fixture(page); await app.open();
+  const activity = page.getByRole('status', { name: '会话响应状态' });
+  const input = page.getByLabel('给 Codex 发送消息');
+  let release!: () => void;
+  const wait = new Promise<void>(resolve => { release = resolve; });
+  await page.route(`**/api/sessions/${app.contact.id}/chat/messages`, async route => {
+    await wait;
+    await route.fulfill({ json: { requestId: route.request().postDataJSON().requestId, status: 'accepted', turnId: 'slow-turn' } });
+  });
+  await input.fill('先思考，再回答'); await input.press('Enter');
+  await expect(activity).toHaveText('正在发送…'); release();
+  await expect(input).toHaveValue(''); await expect(activity).toContainText('正在等待后端响应');
+  await app.patch({ activeTurnId: 'slow-turn', items: [{ id: 'slow-user', turnId: 'slow-turn', type: 'user', text: '先思考，再回答', status: 'completed' }] });
+  await expect(activity).toHaveText('正在思考…');
+  await page.screenshot({ path: 'artifacts/codex-chat-thinking.png' });
+  await app.patch({ items: [...app.current.snapshot.items, { id: 'tool', turnId: 'slow-turn', type: 'command', text: 'pwd', status: 'inProgress' }] });
+  await expect(activity).toHaveText('正在处理任务…');
+  await app.patch({ items: [...app.current.snapshot.items, { id: 'reply', turnId: 'slow-turn', type: 'assistant', text: '正在回答', status: 'inProgress' }] });
+  await expect(activity).toHaveText('正在回复…');
+  await app.patch({ requests: [{ id: 'approval', kind: 'approval', title: '确认操作' }] });
+  await expect(activity).toHaveCount(0);
+  await app.patch({ requests: [], activeTurnId: null, items: app.current.snapshot.items.map(item => ({ ...item, status: 'completed' })) });
+  await expect(activity).toHaveCount(0);
+  await page.screenshot({ path: 'artifacts/chat-activity-completed.png' });
+});
+
 test('Codex chat shares message presentation and a single title row with the other platforms', async ({ page }) => {
   const app = await fixture(page); await app.open();
   await app.patch({ items: [{ id: 'layout-user', type: 'user', status: 'completed', text: '检查布局' }, { id: 'layout-assistant', type: 'assistant', status: 'completed', text: '## 检查结果\n\n排版一致。' }] });
