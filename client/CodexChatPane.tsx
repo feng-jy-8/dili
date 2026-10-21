@@ -13,6 +13,7 @@ import type { ChatAttachment } from '../shared/attachments';
 import ConversationOutline from './ConversationOutline';
 import NoticeToasts from './NoticeToasts';
 import ResizableComposer from './ResizableComposer';
+import VoiceInput, { appendVoiceText } from './VoiceInput';
 import MessageQueue, { readQueue, type QueuedMessage } from './MessageQueue';
 import './codex-chat.css';
 
@@ -102,6 +103,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
   const [preview, setPreview] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkedUnknown, setCheckedUnknown] = useState(false);
@@ -338,7 +340,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   async function send(event?: FormEvent, queued?: QueuedMessage) {
     event?.preventDefault();
     const source=queued || draftRef.current, text = source.text;
-    if ((!text.trim() && !source.attachments.length) || uploading || busyRef.current || draftRef.current.pending || !transport || session.archived || snapshotRef.current?.requests.length || (session.running && !snapshotRef.current?.connected)) return;
+    if ((!text.trim() && !source.attachments.length) || voiceActive || uploading || busyRef.current || draftRef.current.pending || !transport || session.archived || snapshotRef.current?.requests.length || (session.running && !snapshotRef.current?.connected)) return;
     const expectedTurnId = snapshotRef.current?.activeTurnId;
     busyRef.current = true; setBusy(true); setError(''); setCheckNotice('');
     let pending: Pending | undefined;
@@ -379,12 +381,12 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   }
   useEffect(()=>{
     const current=draftRef.current,head=current.queue?.[0];
-    if(head && !head.paused && !current.pending && !busyRef.current && transport && snapshot?.connected && !snapshot.activeTurnId && !snapshot.requests.length && session.running && !session.archived) void send(undefined,head);
-  },[transport,snapshot?.activeTurnId,snapshot?.connected,snapshot?.instanceId,snapshot?.nativeSessionId,snapshot?.requests.length,session.running,session.archived]);
+    if(head && !head.paused && !current.pending && !busyRef.current && !voiceActive && transport && snapshot?.connected && !snapshot.activeTurnId && !snapshot.requests.length && session.running && !session.archived) void send(undefined,head);
+  },[transport,snapshot?.activeTurnId,snapshot?.connected,snapshot?.instanceId,snapshot?.nativeSessionId,snapshot?.requests.length,session.running,session.archived,voiceActive]);
 
   const hasTurn = !!snapshot?.activeTurnId;
   const nativeAvailable = !session.running || !!snapshot?.connected;
-  const canSend = (!!draft.text.trim() || !!draft.attachments.length) && !uploading && !busy && !draft.pending && transport && nativeAvailable && !snapshot?.requests.length && !session.archived;
+  const canSend = (!!draft.text.trim() || !!draft.attachments.length) && !voiceActive && !uploading && !busy && !draft.pending && transport && nativeAvailable && !snapshot?.requests.length && !session.archived;
   const olderCurrent = older?.identity === snapshot?.nativeSessionId ? older : null;
   const existingIds = new Set(snapshot?.items.map(item => item.id));
   const visibleItems = [...(olderCurrent?.items.filter(item => !existingIds.has(item.id)) ?? []), ...(snapshot?.items ?? [])];
@@ -426,7 +428,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); if (canSend) void send(); }
       }} />
       </ImageAttachments>
-      <div className="chat-composer-footer codex-composer-footer"><span>{busy ? '正在发送…' : draft.pending ? '请先核对上一条消息的发送结果' : !transport ? '正在连接本地服务，草稿已保留' : !nativeAvailable ? '请使用上方的重新连接按钮恢复输入' : hasTurn ? '生成中发送会补充当前任务 · 不停止生成' : 'Enter 发送 · Shift + Enter 换行'}</span><div><button type="button" className="text-button" aria-pressed={preview} onClick={() => setPreview(value => !value)}>Markdown 预览</button>{hasTurn && <button type="button" className="button secondary small-button" disabled={!transport || interrupting} onClick={async () => {
+      <div className="chat-composer-footer codex-composer-footer"><span>{busy ? '正在发送…' : draft.pending ? '请先核对上一条消息的发送结果' : !transport ? '正在连接本地服务，草稿已保留' : !nativeAvailable ? '请使用上方的重新连接按钮恢复输入' : hasTurn ? '生成中发送会补充当前任务 · 不停止生成' : 'Enter 发送 · Shift + Enter 换行'}</span><div><VoiceInput sessionId={session.id} disabled={session.archived || busy || !!draft.pending} onActive={setVoiceActive} insert={text => { const next = { ...draftRef.current, text: appendVoiceText(draftRef.current.text, text) }; if (!saveDraft(session.id, next)) throw new Error("草稿保存失败，识别文字保留在下方"); updateDraft(next); }} /><button type="button" className="text-button" aria-pressed={preview} onClick={() => setPreview(value => !value)}>Markdown 预览</button>{hasTurn && <button type="button" className="button secondary small-button" disabled={!transport || interrupting} onClick={async () => {
         updateDraft({...draftRef.current,queue:draftRef.current.queue?.map(item=>({...item,paused:true}))});
         setInterrupting(true); setError('');
         try { await api(`/sessions/${session.id}/chat/interrupt`, {}); await readSnapshot.current(); }

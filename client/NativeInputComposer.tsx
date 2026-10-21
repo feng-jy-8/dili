@@ -6,6 +6,7 @@ import { api, ApiError } from './api';
 import ImageAttachments from './ImageAttachments';
 import Markdown from './Markdown';
 import ResizableComposer from './ResizableComposer';
+import VoiceInput, { appendVoiceText } from './VoiceInput';
 import MessageQueue, { readQueue, type QueuedMessage } from './MessageQueue';
 import './attachments.css';
 
@@ -19,6 +20,7 @@ function read(id: string): Draft {
   return {text:'',attachments:[]};
 }
 export default function NativeInputComposer({session,onTerminal,onSent}: {session:Session;onTerminal():void;onSent?():void}) {
+  const [voiceActive,setVoiceActive] = useState(false);
   const [draft,setDraft] = useState(() => read(session.id));
   const [busy,setBusy] = useState(false), [uploading,setUploading] = useState(false), [preview,setPreview] = useState(false), [error,setError] = useState('');
   const latest = useRef(draft); latest.current = draft;
@@ -45,9 +47,9 @@ export default function NativeInputComposer({session,onTerminal,onSent}: {sessio
     update({text:!sent.queueId && current.text === sent.text ? '' : current.text, attachments:sent.queueId ? current.attachments : current.attachments.filter(item=>!sent.attachments.includes(item.id)), queue:current.queue?.filter(item=>item.id!==sent.queueId)});
     if (active.current) onSent?.();
   }
-  const canSend = !busy && !uploading && !draft.pending && !session.archived && session.running && session.status !== 'waiting_approval' && (!!draft.text.trim() || !!draft.attachments.length);
+  const canSend = !voiceActive && !busy && !uploading && !draft.pending && !session.archived && session.running && session.status !== 'waiting_approval' && (!!draft.text.trim() || !!draft.attachments.length);
   async function send(queued?: QueuedMessage) {
-    if (sending.current || latest.current.pending || (!queued && !canSend) || session.archived || !session.running || session.status === 'waiting_approval') return;
+    if (voiceActive || sending.current || latest.current.pending || (!queued && !canSend) || session.archived || !session.running || session.status === 'waiting_approval') return;
     const source = queued || latest.current;
     sending.current = true;
     setBusy(true); setError('');
@@ -92,8 +94,8 @@ export default function NativeInputComposer({session,onTerminal,onSent}: {sessio
     // Only native completion can release queued work; terminal heuristics cannot.
     // One release per state transition, not per render or successful submission.
     const current=latest.current,head=current.queue?.[0];
-    if (head && !head.paused && !current.pending && !sending.current && !uploading && session.running && !session.archived && session.statusSource==='native' && session.status==='waiting_input') void send(head);
-  },[session.running,session.archived,session.status,session.statusSource,session.lastAttentionKey]);
+    if (head && !head.paused && !current.pending && !sending.current && !voiceActive && !uploading && session.running && !session.archived && session.statusSource==='native' && session.status==='waiting_input') void send(head);
+  },[session.running,session.archived,session.status,session.statusSource,session.lastAttentionKey,voiceActive]);
   function editQueue(item:QueuedMessage) {
     if (latest.current.text.trim() || latest.current.attachments.length) { setError('请先处理输入框中的草稿，再编辑排队消息'); return; }
     update({...latest.current,text:item.text,attachments:item.attachments,queue:latest.current.queue?.filter(value=>value.id!==item.id)});
@@ -117,6 +119,6 @@ export default function NativeInputComposer({session,onTerminal,onSent}: {sessio
     {['claude','dsh'].includes(session.backend) ? <ImageAttachments sessionId={session.id} items={draft.attachments} onChange={change=>{ const current = active.current ? latest.current : read(session.id); update({...current,attachments:change(current.attachments)}); }} onBusy={setUploading} disabled={!!draft.pending || busy || session.archived}>{field}</ImageAttachments> : field}
     {error && <p className="attachment-error" role="alert">{error}</p>}
     {draft.pending && !busy && <div role="status"><p>{draft.pendingMessage ? '发送结果待确认；草稿已保留，不会自动重发。' : '上次填入结果待确认，请先核对原生会话。'}</p>{draft.pendingMessage && <button type="button" className="text-button" onClick={()=>void checkSend()}>核对发送结果</button>}<button type="button" className="text-button" onClick={onTerminal}>查看原生会话</button><button type="button" className="text-button" onClick={()=>update({...latest.current,pending:undefined,pendingMessage:undefined})}>已核对，恢复草稿</button></div>}
-    <div className="chat-composer-footer native-input-footer"><span>{busy ? '正在发送…' : draft.pending ? '请先核对上一条消息的发送结果' : session.status === 'waiting_approval' ? '请先在原生终端中处理审批' : !session.running ? '请先启动会话，草稿已保留' : 'Enter 发送 · Shift + Enter 换行'}</span><div><button className="text-button" type="button" aria-pressed={preview} onClick={()=>setPreview(value=>!value)}>Markdown 预览</button>{session.status==='running' && <button type="button" className="text-button" disabled={!canSend} onClick={()=>void enqueue()}>加入队列</button>}<button type="button" className="button primary small-button" disabled={!canSend} onClick={()=>void send()}>{busy ? '正在发送…' : '发送'}</button></div></div>
+    <div className="chat-composer-footer native-input-footer"><span>{busy ? '正在发送…' : draft.pending ? '请先核对上一条消息的发送结果' : session.status === 'waiting_approval' ? '请先在原生终端中处理审批' : !session.running ? '请先启动会话，草稿已保留' : 'Enter 发送 · Shift + Enter 换行'}</span><div><VoiceInput sessionId={session.id} disabled={session.archived || busy || !!draft.pending} onActive={setVoiceActive} insert={text => { if (!update({...latest.current,text:appendVoiceText(latest.current.text,text)})) throw new Error("草稿保存失败，识别文字保留在下方"); }} /><button className="text-button" type="button" aria-pressed={preview} onClick={()=>setPreview(value=>!value)}>Markdown 预览</button>{session.status==='running' && <button type="button" className="text-button" disabled={!canSend} onClick={()=>void enqueue()}>加入队列</button>}<button type="button" className="button primary small-button" disabled={!canSend} onClick={()=>void send()}>{busy ? '正在发送…' : '发送'}</button></div></div>
   </div></ResizableComposer></>;
 }

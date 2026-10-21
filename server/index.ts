@@ -8,6 +8,8 @@ import { chmod, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Store } from './store.ts';
+import { FunAsr, VoiceConnections } from './voice.ts';
+import { VOICE_MAX_FRAME } from '../shared/voice.ts';
 import { ScratchpadStore } from './scratchpad.ts';
 import { Terminals, type LaunchCommand } from './terminal.ts';
 import { ShellTerminals } from './shell-terminals.ts';
@@ -116,6 +118,9 @@ const remoteServer = createServer(app);
 const remoteSockets = new WeakSet<object>();
 remoteServer.on('connection', socket => remoteSockets.add(socket));
 const isRemote = (req: { socket: object }) => remoteSockets.has(req.socket);
+const voiceEngine = new FunAsr(dataDir, { enabled: () => !demo && auth.setting('voice-enabled') === true, enable: () => auth.setSetting('voice-enabled', true) });
+const voiceConnections = new VoiceConnections(voiceEngine);
+const voiceWss = new WebSocketServer({ noServer: true, maxPayload: VOICE_MAX_FRAME, perMessageDeflate: false });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 // Remote viewers keep their device token in memory so a revoked or expired
 // device is disconnected instead of continuing to receive live output.
@@ -164,6 +169,7 @@ function principalOf(res: express.Response): Principal { return res.locals.princ
 function revalidateViewers() {
   for (const [client, viewer] of sse) if (viewer.device && !auth.principal(viewer.device)) { sse.delete(client); client.end(); }
   for (const socket of wss.clients) { const viewer = viewers.get(socket); if (viewer?.device && !auth.principal(viewer.device)) socket.close(4401, '访问已撤销'); }
+  voiceConnections.revalidate(device => !!auth.principal(device));
   chatApi.revalidate(device => !!auth.principal(device));
 }
 function terminalEvent(id: string, event: unknown, channel: 'sessionId' | 'shellId' = 'sessionId') {
@@ -610,6 +616,27 @@ app.get('/api/events', (req, res) => {
   req.on('close', () => { sse.delete(res); clearInterval(heartbeat); });
 });
 
+app.get('/api/voice', (_req, res) => res.json(voiceEngine.status()));
+app.get('/api/sessions/:id/voice', (req, res) => { session(String(req.params.id)); res.json(voiceEngine.status()); });
+app.post('/api/voice', (req, res) => {
+  if (demo) fail('演示模式不修改语音设置', 409);
+  if (typeof req.body.enabled !== 'boolean') fail('无效的语音设置');
+  if (req.body.enabled && !voiceEngine.status().installed) fail('请先安装语音插件', 409);
+  auth.setSetting('voice-enabled', req.body.enabled);
+  if (!req.body.enabled) { voiceConnections.close(); voiceEngine.disable(); }
+  res.json(voiceEngine.status());
+});
+app.post('/api/voice/install', (_req, res) => {
+  if (demo || closing) fail('当前模式不能安装语音插件', 409);
+  voiceEngine.install(); res.status(202).json(voiceEngine.status());
+});
+app.post('/api/voice/warmup', (_req, res) => {
+  if (demo || closing) fail('当前模式不能启动语音插件', 409);
+  if (!voiceEngine.status().enabled || !voiceEngine.status().installed) fail('请先安装并启用语音插件', 409);
+  void voiceEngine.ready().catch(() => {});
+  res.status(202).json(voiceEngine.status());
+});
+
 const agentSetup = new AgentSetup();
 const startupService = new StartupService({ root, dataDir, port, host });
 app.get('/api/setup/agents', async (_req, res) => {
@@ -1026,6 +1053,19 @@ function applySharedSize(id: string) {
 }
 function upgrade(req: import('node:http').IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) {
   const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);
+  const voiceMatch = /^\/api\/sessions\/([^/]+)\/voice$/.exec(url.pathname);
+  if (voiceMatch) {
+    const remote = isRemote(req);
+    const device = remote ? readCookie(req.headers.cookie, DEVICE_COOKIE) : undefined;
+    const principal = remote ? auth.principal(device) : LOCAL_OWNER;
+    const allowed = remote ? allowedRemoteRequest(req, remoteSettings().publicUrl, remoteSettings().localPort) : allowedRequest(req, port, wildcardHost);
+    const decision = authorize(principal, remote, 'GET', url.pathname);
+    const item = store.session(voiceMatch[1]!);
+    if (!allowed || !decision.allowed || !principal || !validToken(url.searchParams.get('token'), auth.csrf(principal))) { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; }
+    if (demo || closing || !item || item.archived) { socket.write('HTTP/1.1 409 Conflict\r\n\r\n'); socket.destroy(); return; }
+    voiceWss.handleUpgrade(req, socket, head, ws => voiceConnections.attach(ws, device));
+    return;
+  }
   const shellMatch = /^\/api\/shells\/([^/]+)\/terminal$/.exec(url.pathname);
   if (!url.pathname.startsWith('/api/terminal/') && !shellMatch) return; // Vite owns its own HMR upgrade.
   const remote = isRemote(req);
@@ -1216,6 +1256,9 @@ function shutdown(exitCode = 0) {
   clearInterval(previewPoll);
   clearInterval(viewerCheck);
   chatApi.close();
+  voiceConnections.close();
+  const voiceClosed = voiceEngine.close();
+  for (const ws of voiceWss.clients) ws.terminate();
   if (nativeScheduled) clearTimeout(nativeScheduled);
   if (scheduled) clearTimeout(scheduled);
   for (const timer of identityTimers) clearTimeout(timer);
@@ -1231,7 +1274,7 @@ function shutdown(exitCode = 0) {
   // Exiting directly in server.close used to orphan a slow native process and
   // let a replacement instance race it against the same native history.
   void (async () => {
-    const results = await Promise.allSettled([httpClosed, tunnel.close(), frpTunnel.close(), terminals.close(), shells.close(), dsh.close(), codexBridge.close()]);
+    const results = await Promise.allSettled([voiceClosed, httpClosed, tunnel.close(), frpTunnel.close(), terminals.close(), shells.close(), dsh.close(), codexBridge.close()]);
     for (const result of results) if (result.status === 'rejected') { console.error('关闭原生资源失败：', result.reason instanceof Error ? result.reason.message : String(result.reason)); exitCode = 1; }
     try { publisher.close(); store.close(); }
     finally { await instanceLock.release(); }

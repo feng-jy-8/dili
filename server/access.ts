@@ -60,6 +60,12 @@ export const ROUTES: Route[] = [
 
   { method: 'POST', path: '/api/native-event/:id', access: 'local' },
 
+  { method: 'GET', path: '/api/voice', access: 'owner' },
+  { method: 'POST', path: '/api/voice', access: 'local' },
+  { method: 'POST', path: '/api/voice/install', access: 'local' },
+  { method: 'POST', path: '/api/voice/warmup', access: 'local' },
+  { method: 'GET', path: '/api/sessions/:id/voice', access: 'write' },
+
   { method: 'GET', path: '/api/setup/agents', access: 'owner' },
   { method: 'POST', path: '/api/setup/agents/:id/config', access: 'local' },
   { method: 'POST', path: '/api/setup/agents/:id/terminal', access: 'local' },

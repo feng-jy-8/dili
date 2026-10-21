@@ -39,7 +39,9 @@ for(const backend of ['claude','dsh'] as const) {
     app.contact.status='waiting_input';app.contact.statusSource='terminal';await page.reload();
     await expect(queue).toContainText('修改后的任务');expect(app.result.posts).toHaveLength(0);
     app.contact.statusSource='native';await page.reload();
-    await expect(queue).toHaveCount(0);expect(app.result.posts).toHaveLength(1);
+    await expect(app.input).toBeVisible();
+    await expect.poll(()=>app.result.posts.length).toBe(1);
+    await expect(queue).toHaveCount(0);
     expect(app.result.posts[0]).toMatchObject({text:'修改后的任务',submit:true});
   });
 

@@ -1,0 +1,11 @@
+.voice-input { position:relative; display:inline-flex; min-width:0; }
+.voice-controls { display:flex; align-items:center; gap:3px; }
+.voice-trigger { white-space:nowrap; }
+.voice-trigger.recording { color:var(--red); }
+.voice-result { position:fixed; bottom:84px; right:24px; z-index:1000; width:min(380px,calc(var(--ui-viewport-width,100vw) - 32px)); max-height:220px; overflow:auto; padding:10px 12px; border:1px solid var(--line-strong); border-radius:8px; background:var(--bg); color:var(--text); box-shadow:var(--shadow); font-size:12px; }
+.voice-result small { color:var(--muted); }
+.voice-transcript { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.7; user-select:text; margin:5px 0; }
+.voice-error { color:var(--error-text); line-height:1.6; overflow-wrap:anywhere; }
+.voice-result-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:5px; }
+.voice-settings .setup-message { overflow-wrap:anywhere; }
+@media(max-width:640px) { .voice-result { position:fixed; left:16px; right:16px; width:auto; } .chat-composer-footer>div { flex-wrap:wrap; justify-content:flex-end; } }

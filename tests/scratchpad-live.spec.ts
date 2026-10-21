@@ -78,7 +78,8 @@ test('Markdown paste, nested tasks, clear/restore and keyboard undo preserve sav
 test('live editor preserves drafts through offline conflict resolution and theme changes', async ({ page, request }) => {
   await seed(request, '# 初始\n');
   const { panel, editor } = await open(page);
-  await page.route('**/api/scratchpad', route => route.request().method() === 'PATCH' ? route.abort() : route.continue());
+  // Context routing also covers pagehide's save while the old page unloads.
+  await page.context().route('**/api/scratchpad', route => route.request().method() === 'PATCH' ? route.abort() : route.continue());
   await editor.press('Control+End'); await page.keyboard.insertText('我的草稿');
   await expect(panel.getByRole('status')).toHaveText('保存未完成');
   await page.reload();
@@ -88,7 +89,7 @@ test('live editor preserves drafts through offline conflict resolution and theme
   // and remove the retry button before this test clicks it.
   await expect(panel.getByRole('status')).toHaveText('保存未完成');
   await seed(request, '# 其他设备更新\n');
-  await page.unroute('**/api/scratchpad');
+  await page.context().unroute('**/api/scratchpad');
   await panel.getByRole('button', { name: '重试', exact: true }).click();
   await expect(panel.getByRole('status')).toHaveText('需要核对');
   await panel.getByRole('button', { name: '使用最新内容' }).click();

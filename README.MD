@@ -27,6 +27,8 @@ Logo 设计方向保存于 [设计选型文档](docs/logo-concepts/README.md)，
 
 设置页提供原生 Agent 安装/登录终端、Claude/Codex API 配置和 Linux systemd 用户服务自动启动。DeepSeek Harness API 配置复用其原生 Web 设置。配置供其他终端的原生命令共享，保存会备份已有文件。安装不会自动使用 sudo；自动启动开关不停止或重启现有会话。
 
+语音输入作为可选 FunASR 插件提供：在本机设置中一键安装并启用，默认不下载模型。三平台图形输入支持实时语音预览，录音结束后追加草稿，由用户确认发送；手机录音通过现有可信中继交由主机识别。采用独立 Python / CPU 工作进程和压缩音频二进制分片，不落盘音频，中继代码无需更新。已在隔离目录验证真实安装和模型加载，麦克风识别效果与设备体验仍需验收，详见安装指南的语音输入章节。
+
 详见 [安装指南](docs/installation.md) 和 [正式版发布清单](docs/releasing.md)。自动化命令：`npm run verify` 与 `npm run test:package`。Windows 原生与 macOS 尚未完成发行验收；WSL 的服务在发行版启动后运行，不等同于 Windows 开机启动。
 
 新建联系人和群组新成员可选择「原生默认」或「Auto · 自动审核」。旧联系人沿用原生默认；同平台 Fork 继承来源选择。Claude 使用原生 `--permission-mode auto`，Codex 使用 `--approve-for-me`（图形会话通过原生审批审核器与 workspace-write 沙箱），Harness 使用原生 Auto 权限预设。Auto 会减少人工审批，仍受原生审核规则和可用性限制，不等于跳过所有权限保护。设置只保存到该联系人，不修改原生全局配置；Harness 需安装并配置原生 Auto 审核能力。
