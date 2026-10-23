@@ -160,6 +160,49 @@ test('workspace sidebar renders markdown and real git diff without blocking the 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('workspace sidebar previews HTML in a sandbox and plays local media', async ({ page, request }) => {
+  const root = await mkdtemp(join(tmpdir(), 'sessiondeck-preview-'));
+  try {
+    await mkdir(join(root, 'site'));
+    await writeFile(join(root, 'site', 'index.html'), '<!doctype html><html><head><link rel="stylesheet" href="style.css"></head><body><h1 id="title">Codex site</h1><script>document.title="preview-ok"</script></body></html>');
+    await writeFile(join(root, 'site', 'style.css'), '#title{color:#0a7;font-family:sans-serif}');
+    // 1x1 PNG
+    await writeFile(join(root, 'dot.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+    const session = await mutate<Session>(request, '/sessions', { backend: 'codex', title: '成果预览验收', cwd: root });
+    const raw = await request.get(`/api/sessions/${session.id}/workspace/raw/site/index.html`);
+    expect(raw.ok()).toBeTruthy();
+    expect(raw.headers()['content-type']).toMatch(/text\/html/);
+    expect(raw.headers()['content-security-policy']).toContain("frame-ancestors 'self'");
+    expect(await raw.text()).toContain('Codex site');
+    const css = await request.get(`/api/sessions/${session.id}/workspace/raw/site/style.css`);
+    expect(css.ok()).toBeTruthy();
+    expect(await css.text()).toContain('#title');
+    const png = await request.get(`/api/sessions/${session.id}/workspace/raw/dot.png`);
+    expect(png.ok()).toBeTruthy();
+    expect(png.headers()['content-type']).toBe('image/png');
+    expect(png.headers()['accept-ranges']).toBe('bytes');
+
+    await page.goto('/');
+    await page.getByRole('button', { name: `进入 ${session.title} 的会话`, exact: true }).click();
+    await page.getByRole('button', { name: '打开资源管理器', exact: true }).click();
+    const explorer = page.getByRole('complementary', { name: '资源管理器' });
+    await explorer.getByRole('button', { name: /^site$/ }).click();
+    await explorer.getByRole('button', { name: /index\.html/ }).click();
+    const frame = explorer.frameLocator('iframe[title="预览 site/index.html"]');
+    await expect(frame.locator('#title')).toHaveText('Codex site');
+    await expect(explorer.locator('iframe[title="预览 site/index.html"]')).toHaveAttribute('sandbox', 'allow-scripts allow-forms');
+    await explorer.getByRole('button', { name: '查看源码', exact: true }).click();
+    await expect(explorer.locator('.workspace-html-preview pre')).toContainText('Codex site');
+    await explorer.getByRole('button', { name: '预览网页', exact: true }).click();
+    await expect(frame.locator('#title')).toHaveText('Codex site');
+
+    await explorer.getByRole('button', { name: /dot\.png/ }).click();
+    await expect(explorer.locator('.workspace-media-stage img')).toHaveAttribute('src', new RegExp(`/api/sessions/${session.id}/workspace/raw/dot\\.png$`));
+    await expect(explorer.locator('.workspace-media-stage img')).toBeVisible();
+    await page.screenshot({ path: 'artifacts/workspace-html-preview.png' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('opening a shell from a contact uses its directory and is immediately interactive', async ({ page, request }) => {
   const root = await mkdtemp(join(tmpdir(), 'sessiondeck-shell-cwd-'));
   const initial = await (await request.get('/api/shells')).json() as { id: string }[];

@@ -38,7 +38,7 @@ import { DeliveryNotAcceptedError, sendDelivery } from './delivery.ts';
 import { StatePublisher } from './state.ts';
 import { listDirectories, normalizeDirectoryInput } from './directories.ts';
 import { ConversationReader, conversationPreview, handoffPrompt } from './conversation.ts';
-import { gitDiff, gitStatus, listWorkspace, readWorkspaceFile } from './workspace.ts';
+import { gitDiff, gitStatus, listWorkspace, openWorkspaceContent, parseByteRange, readWorkspaceFile, streamWorkspaceContent } from './workspace.ts';
 import { Attachments, registerAttachments, hasImageSignature } from './attachments.ts';
 import { ChatSubmissions } from './chat-submissions.ts';
 import { registerCodexChat } from './chat-api.ts';
@@ -594,6 +594,47 @@ app.get('/api/sessions/:id/workspace/tree', async (req, res) => {
 app.get('/api/sessions/:id/workspace/file', async (req, res) => {
   const item = session(String(req.params.id));
   res.json(await readWorkspaceFile(item.cwd, req.query.path));
+});
+app.get('/api/sessions/:id/workspace/raw/*path', async (req, res) => {
+  const item = session(String(req.params.id));
+  // Express 5 exposes `*path` as a segment array; join it back for workspace paths.
+  const rawPath = req.params.path;
+  const relative = (Array.isArray(rawPath) ? rawPath.join('/') : String(rawPath ?? '')).replace(/^\/+/, '');
+  const content = await openWorkspaceContent(item.cwd, relative);
+  const range = parseByteRange(typeof req.headers.range === 'string' ? req.headers.range : undefined, content.size);
+  if (range === 'invalid') {
+    await content.handle.close().catch(() => {});
+    res.setHeader('Content-Range', `bytes */${content.size}`);
+    return res.status(416).end();
+  }
+  res.setHeader('Content-Type', content.mime);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, no-store');
+  // Keep HTML previews framed only by this origin. Opaque-origin iframe sandbox
+  // on the client is the main isolation; this CSP also blocks form/API exfil if
+  // the same URL is opened outside the sandbox.
+  if (content.kind === 'html') {
+    res.setHeader('Content-Security-Policy', "default-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; font-src 'self' https: data:; media-src 'self' https: data: blob:; connect-src 'none'; form-action 'none'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
+  } else if (content.kind === 'other') {
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(content.path.split('/').pop() || 'file')}`);
+  }
+  if (content.size === 0) {
+    await content.handle.close().catch(() => {});
+    res.setHeader('Content-Length', '0');
+    return res.status(200).end();
+  }
+  if (range) {
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${content.size}`);
+    res.setHeader('Content-Length', String(range.end - range.start + 1));
+  } else {
+    res.setHeader('Content-Length', String(content.size));
+  }
+  const stream = streamWorkspaceContent(content, range);
+  stream.on('error', () => { if (!res.headersSent) res.status(500); res.end(); });
+  req.on('close', () => stream.destroy());
+  stream.pipe(res);
 });
 app.get('/api/sessions/:id/workspace/git/status', async (req, res) => {
   const item = session(String(req.params.id));

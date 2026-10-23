@@ -23,7 +23,7 @@ test('every registered API route has an explicit access rule', () => {
   const routes = [...sources.matchAll(/app\.(get|post|patch|delete)\('(\/api\/[^']+)'/g)].map(match => ({ method: match[1].toUpperCase(), path: match[2] }));
   assert.ok(routes.length > 40, 'route scan found the API');
   for (const route of routes) {
-    const concrete = route.path.replace(/:([a-zA-Z]+)/g, 'x1');
+    const concrete = route.path.replace(/:([a-zA-Z]+)/g, 'x1').replace(/\*([a-zA-Z]+)/g, 'x1/y');
     assert.ok(matchRoute(route.method, concrete), `${route.method} ${route.path} is missing from server/access.ts`);
   }
 });
@@ -34,6 +34,8 @@ test('shares are scoped to one session and owner-only routes stay closed', () =>
   assert.equal(authorize(null, true, 'GET', '/api/state').allowed, false);
   assert.equal(authorize(null, true, 'POST', '/api/auth/login').allowed, true);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/mine/workspace/git/diff').allowed, true);
+  assert.equal(authorize(read, true, 'GET', '/api/sessions/mine/workspace/raw/site/index.html').allowed, true);
+  assert.equal(authorize(read, true, 'GET', '/api/sessions/other/workspace/raw/site/index.html').allowed, false);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/other/workspace/file').allowed, false);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/mine/chat/history').allowed, true);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/other/chat/history').allowed, false);

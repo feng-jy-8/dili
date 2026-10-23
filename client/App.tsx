@@ -4,7 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowRightLeft, Archive, Bell, BellOff, Check, CheckCheck,
   CircleHelp, Clock3, Command, Copy, Ellipsis, ExternalLink, Folder,
-  GitFork, LoaderCircle, MessageSquare, Pencil, Pin, PinOff, Play, Plus,
+  GitFork, Globe2, LoaderCircle, MessageSquare, Pencil, Pin, PinOff, Play, Plus,
   Radio, Search, Send, Settings2, Share2, SlidersHorizontal, Square, UsersRound, X,
   PanelBottomOpen, Volume2, VolumeX, TerminalSquare, Link2, PanelLeftOpen, PanelLeftClose,
   FilePenLine, Palette, Maximize2, Minimize2,
@@ -25,6 +25,7 @@ import VoiceSettings from './VoiceSettings';
 import { AgentSetupControls, StartupSettings } from './SetupSettings';
 import type { AgentSetupInfo } from '../shared/setup';
 import ScratchpadPanel from './ScratchpadPanel';
+import ServicePreviewPanel from './ServicePreviewPanel';
 import AppearanceDialog from './AppearanceDialog';
 import InterfaceZoom from './InterfaceZoom';
 import BackendLogo from './BackendLogo';
@@ -91,6 +92,7 @@ function HelpDialog({ close }: { close: () => void }) {
       <ul className="status-guide"><li><span className="status-badge running">运行中</span><span>后端正在执行任务。</span></li><li><span className="status-badge waiting">等待输入 / 审批</span><span>需要你进入会话回复或决定。</span></li><li><span className="status-badge idle">空闲 / 已停止</span><span>当前没有执行任务；不代表工作已验收。</span></li><li><span className="status-badge unknown">状态未知</span><span>目前没有足够信息确认状态，进入原生会话查看。</span></li></ul>
       <p>标有“估测”的状态来自终端输出。卡片上的提醒、来源说明和原生会话可帮助你判断；断线时保留最后收到的状态。</p>
       <h3>保留你的工作方式</h3><p>置顶联系人始终在最前；然后依次是有红点提醒、正在执行任务、无红点等待输入的会话，其余在后。同层默认按上次输入时间，也可改为创建时间或名称；没有输入时间时排在该层有输入记录的联系人之后。有新提醒的联系人显示红点，打开会话后消失。桌面左侧列表切换联系人，右侧继续会话；手机进入单会话后可返回列表。每个页面独立保存搜索和筛选，刷新后继续使用；Fork 继承上下文，原联系人保留。</p>
+      <h3>网页服务预览</h3><p>顶栏地球图标可打开本机或局域网服务（如 <code>http://10.11.1.111:5173/</code>）。也可输入 <code>:5173</code>。远程打开 Dili 时请用运行 Codex 的机器 IP；若嵌入预览空白，用「新标签打开」。</p>
     </div><div className="modal-footer"><button className="button primary" onClick={close}>知道了</button></div>
   </ModalShell>;
 }
@@ -113,8 +115,11 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const [selection, setSelection] = useState('');
   const [workspaceOpen, setWorkspaceOpen] = useState(() => readLocalPreference('sessiondeck.explorer-open') === 'on');
   const [scratchpadOpen, setScratchpadOpen] = useState(() => readLocalPreference('sessiondeck.scratchpad-open') === 'on');
+  const [servicePreviewOpen, setServicePreviewOpen] = useState(() => readLocalPreference('sessiondeck.service-preview-open') === 'on');
   const toggleScratchpad = () => setScratchpadOpen(value => !value);
+  const toggleServicePreview = () => setServicePreviewOpen(value => !value);
   useEffect(() => { writeLocalPreference('sessiondeck.scratchpad-open', scratchpadOpen ? 'on' : 'off'); }, [scratchpadOpen]);
+  useEffect(() => { writeLocalPreference('sessiondeck.service-preview-open', servicePreviewOpen ? 'on' : 'off'); }, [servicePreviewOpen]);
   // The rail is collapsed by default and only expands on request, never on hover.
   const [railOpen, setRailOpen] = useState(() => readLocalPreference('sessiondeck.rail') === 'open');
   const toggleRail = () => { setRailOpen(value => { writeLocalPreference('sessiondeck.rail', value ? 'closed' : 'open'); return !value; }); };
@@ -556,6 +561,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         <span className="connection-indicator" title={connectionLabel}><span className={`connection-dot ${connected ? 'online' : ''}`} /><span className="sr-only">{connectionLabel}</span></span>
         <MoreMenu items={[
           { label: '连接与能力', icon: <Settings2 size={14} />, active: view === 'backends', onSelect: () => navigate('backends') },
+          { label: '网页服务', icon: <Globe2 size={14} />, active: servicePreviewOpen, onSelect: toggleServicePreview },
           { label: '随手记', icon: <FilePenLine size={14} />, active: scratchpadOpen, onSelect: toggleScratchpad },
           { label: '外观主题', icon: <Palette size={14} />, onSelect: () => setModal({ type: 'appearance' }) },
           { label: '使用说明与快捷键', icon: <CircleHelp size={14} />, onSelect: () => setModal({ type: 'help' }) },
@@ -574,6 +580,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
               <label className="filter-group"><span>排序</span><select aria-label="联系人排序" value={contactSort} onChange={(event) => setContactSort(event.target.value as ContactSort)}><option value="input">上次输入时间</option><option value="created">创建时间</option><option value="name">名称</option></select></label>
             </FilterMenu></>}
           <button className={`icon-button ${workspaceOpen ? 'active' : ''}`} aria-label="打开资源管理器" title="打开资源管理器" disabled={!workspaceSession} onClick={() => setWorkspaceOpen((value) => !value)}><Folder size={17} /></button>
+          <button className={`icon-button ${servicePreviewOpen ? 'active' : ''}`} aria-label="打开网页服务" title="网页服务预览" aria-expanded={servicePreviewOpen} onClick={toggleServicePreview}><Globe2 size={17} /></button>
           <button className={`icon-button ${terminalPanelOpen ? 'active' : ''}`} aria-label="打开终端" title={terminalPanelOpen ? '终端面板已打开' : '打开底部终端'} disabled={!state} onClick={() => openTerminalPanel(selected?.id)}><PanelBottomOpen size={17} /></button>
           <button className={`icon-button ${scratchpadOpen ? 'active' : ''}`} aria-label="打开随手记" title="随手记" aria-expanded={scratchpadOpen} onClick={toggleScratchpad}><FilePenLine size={17} /></button>
           <button className="icon-button appearance-toggle" aria-label="切换主题" title="外观主题" onClick={() => setModal({ type: 'appearance' })}><Palette size={17} /></button>
@@ -665,6 +672,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
     {state && <ShellTerminalDock open={terminalPanelOpen} sessionId={terminalSessionId} requestedShellId={setupShellId} onClose={() => setTerminalPanelOpen(false)} inert={!!modal} />}
     </div>
     <ScratchpadPanel open={scratchpadOpen} close={() => setScratchpadOpen(false)} inert={!!modal} />
+    <ServicePreviewPanel open={servicePreviewOpen} close={() => setServicePreviewOpen(false)} inert={!!modal} />
     </div>
 
     </div>

@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { gitDiff, gitStatus, listWorkspace, readWorkspaceFile } from './workspace.ts';
+import { gitDiff, gitStatus, listWorkspace, openWorkspaceContent, parseByteRange, readWorkspaceFile, streamWorkspaceContent, workspaceContentKind, workspaceMime } from './workspace.ts';
 
 const execFileAsync = promisify(execFile);
 async function temporary(t: TestContext) {
@@ -59,6 +59,30 @@ test('exact parent symlinks, outside files and deleted paths under outside symli
   await assert.rejects(gitDiff(root, 'parent/deleted.txt'), /超出工作目录/);
   await symlink(join(parent, 'missing.txt'), join(root, 'dangling'));
   await assert.rejects(gitDiff(root, 'dangling'), /文件或目录不存在/);
+});
+
+test('raw preview opens media with MIME types and serves ranged byte streams', async t => {
+  const root = await temporary(t);
+  await mkdir(join(root, 'site'));
+  await writeFile(join(root, 'site', 'index.html'), '<link rel="stylesheet" href="style.css"><h1>Hi</h1>');
+  await writeFile(join(root, 'site', 'style.css'), 'h1{color:red}');
+  await writeFile(join(root, 'clip.mp4'), Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz'));
+  assert.equal(workspaceMime('site/index.html'), 'text/html; charset=utf-8');
+  assert.equal(workspaceContentKind('clip.mp4'), 'video');
+  assert.equal(workspaceContentKind('note.bin'), 'other');
+  const html = await openWorkspaceContent(root, 'site/index.html');
+  assert.equal(html.kind, 'html');
+  assert.equal(html.mime, 'text/html; charset=utf-8');
+  await html.handle.close();
+  const video = await openWorkspaceContent(root, 'clip.mp4');
+  assert.deepEqual(parseByteRange('bytes=0-9', video.size), { start: 0, end: 9 });
+  assert.deepEqual(parseByteRange('bytes=10-', video.size), { start: 10, end: video.size - 1 });
+  assert.deepEqual(parseByteRange('bytes=-4', video.size), { start: video.size - 4, end: video.size - 1 });
+  assert.equal(parseByteRange('bytes=99-100', video.size), 'invalid');
+  const chunks: Buffer[] = [];
+  const stream = streamWorkspaceContent(video, { start: 10, end: 15 });
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  assert.equal(Buffer.concat(chunks).toString(), 'abcdef');
 });
 
 test('file previews bound sparse input and detect binary bytes beyond the first sample', async t => {

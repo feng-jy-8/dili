@@ -129,6 +129,9 @@
 :root[data-color-scheme="dark"] .hljs-deletion { color: var(--error-text); background: var(--diff-remove-bg); }
 :root[data-color-scheme="dark"] .workspace-file-icon-markdown { color: #8ab4e8; }
 :root[data-color-scheme="dark"] .workspace-file-icon-code { color: #d4a5e3; }
+:root[data-color-scheme="dark"] .workspace-file-icon-media { color: #e0a070; }
+:root[data-color-scheme="dark"] .workspace-html-frame { background: #111; }
+:root[data-color-scheme="dark"] .workspace-media-stage img, :root[data-color-scheme="dark"] .workspace-media-stage video { background: #00000040; }
 :root[data-color-scheme="dark"] .workspace-git-entry.git-renamed code,:root[data-color-scheme="dark"] .workspace-git-entry.git-renamed .workspace-git-name { color: #81cce5; }
 :root[data-color-scheme="dark"] .workspace-git-entry.git-conflict code,:root[data-color-scheme="dark"] .workspace-git-entry.git-conflict .workspace-git-name { color: #dda3ed; }
 @media (max-width: 720px) { .appearance-toggle { display: none; }.appearance-options { padding: 0 18px 20px; gap: 7px; }.appearance-option { padding: 5px; }.appearance-label { gap: 3px; font-size: 11px; }.appearance-option small { font-size: 10.5px; }.appearance-note { max-width: 220px; } }
