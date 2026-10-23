@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { zstdCompressSync } from 'node:zlib';
 import { ConversationReader, conversationPreview, handoffPrompt, type ConversationSession } from './conversation.ts';
@@ -243,6 +243,34 @@ test('DeepSeek offline plaintext and compressed histories exclude injected and r
     const result = await new ConversationReader(paths).read(a);
     assert.deepEqual(result.messages.map(message => message.text), ['direct human request', 'visible assistant reply']);
   }
+});
+
+test('a compressed DeepSeek log past the old 2MB tail-window size still decodes whole, is cached, and only a truly oversized log is deferred to the native service', async t => {
+  const { file, paths } = await fixture(t), a = contact('dsh');
+  // Many ordinary-sized messages inflate the compressed file past the old
+  // 2MB ceiling while staying a single-digit-megabyte log, like an actively
+  // used real session; high-entropy text keeps it from compressing away.
+  const values: unknown[] = [{ type: 'session', id: a.nativeSessionId, cwd: a.cwd }];
+  for (let seq = 1; seq <= 400; seq++) values.push(dshMessage(seq, seq % 2 ? 'user' : 'assistant', `turn ${seq}: ${randomBytes(6_000).toString('base64')}`));
+  values.push(dshMessage(401, 'assistant', 'visible assistant reply'));
+  const path = await file(a, values, true);
+  assert.ok((await stat(path)).size > 2 * 1024 * 1024, 'fixture did not exceed the old 2MB ceiling');
+  const reader = new ConversationReader(paths);
+  const result = await reader.read(a);
+  assert.equal(result.messages.at(-1)?.text, 'visible assistant reply');
+  // 400 generated turns exceed finish()'s own 200-message window; that is
+  // its own, unrelated bound and is not what this test is about.
+  assert.ok(result.messages.length > 1);
+  assert.notEqual(result.notice, '原生压缩历史较大，请先打开 DeepSeek 原生界面，再刷新对话。');
+  // Re-reading an unchanged file must reuse the cached transcript, not re-decode.
+  const again = await reader.read(a);
+  assert.equal(again, result);
+  // A log past the generous hard ceiling still defers to the native service
+  // instead of decoding an abnormally large file in the server process.
+  const strict = new ConversationReader({ ...paths, maxCompressedBytes: 1024 });
+  const deferred = await strict.read(a);
+  assert.equal(deferred.messages.length, 0);
+  assert.match(deferred.notice ?? '', /请先打开 DeepSeek 原生界面/);
 });
 
 test('DeepSeek ask_user_question tool calls appear in the conversation transcript', async t => {

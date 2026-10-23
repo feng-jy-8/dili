@@ -18,6 +18,11 @@ export interface ConversationOptions {
   cacheMs?: number;
   indexMs?: number;
   maxBytes?: number;
+  /** Ceiling on a DSH compressed log's file size before it is decoded whole.
+   * Decoding is fast relative to typical sizes; this only guards against a
+   * truly abnormal file. Larger logs fall back to DSH's own paginated history
+   * API instead of decoding here. */
+  maxCompressedBytes?: number;
   maxMessages?: number;
 }
 type RecordValue = Record<string, unknown>;
@@ -307,12 +312,19 @@ export class ConversationReader {
       const maxBytes = Math.max(1024, Math.min(2 * 1024 * 1024, this.options.maxBytes ?? 2 * 1024 * 1024));
       let contents: string, offset = 0, truncated = false;
       if (path.endsWith('.zstd')) {
-        // Native DSH defaults to Zstandard. Decode only small persisted logs;
-        // larger archives use its already-running, paginated history API.
-        if (info.size > maxBytes) return { messages: [], truncated: true, notice: '原生压缩历史较大，请先打开 DeepSeek 原生界面，再刷新对话。' };
+        // The whole compressed log is decoded, not just a tail window: a
+        // Zstandard frame cannot be entered at an arbitrary byte offset like
+        // plain text can. Decoding is fast relative to typical log sizes
+        // (tens of milliseconds for single-digit megabytes); the signature
+        // check above already skips re-decoding an unchanged file, and
+        // finish() below still bounds the returned message count and text.
+        // Only a log past this generous ceiling is left to DSH's own running,
+        // paginated history API instead of decoding it here.
+        const maxCompressedBytes = Math.max(maxBytes, this.options.maxCompressedBytes ?? 64 * 1024 * 1024);
+        if (info.size > maxCompressedBytes) return { messages: [], truncated: true, notice: '原生压缩历史较大，请先打开 DeepSeek 原生界面，再刷新对话。' };
         const buffer = Buffer.alloc(info.size);
         const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-        try { const decoded = decodeDshFrames(buffer.subarray(0, bytesRead), maxBytes * 4); contents = decoded.text; truncated = decoded.truncated; }
+        try { const decoded = decodeDshFrames(buffer.subarray(0, bytesRead), Math.max(MAX_TOTAL_TEXT, maxCompressedBytes * 4)); contents = decoded.text; truncated = decoded.truncated; }
         catch { return { messages: [], truncated: true, notice: '原生压缩历史暂时无法读取，请打开 DeepSeek 原生界面后刷新。' }; }
       } else {
         const size = Math.min(info.size, maxBytes);
