@@ -28,13 +28,13 @@ import { remoteBase, remoteHtml, remoteManifest } from './remote-base.ts';
 import { caddyConfig, DEFAULT_REMOTE, normalizeRemote, SecretBox, secretKey, Tunnel } from './remote.ts';
 import type { AuthStatus, RemoteSettings, RemoteStatus, ShareMode } from '../shared/auth.ts';
 import { demoBackends, seedDemo, demoCommand } from './demo.ts';
-import { getBackendInfo, buildLaunch, discoverSessions, resolveNativeSessionId, validateNativeId, findExecutable } from './adapters.ts';
+import { getBackendInfo, buildLaunch, discoverSessions, resolveNativeSessionId, validateNativeId, findExecutable, effectiveClaudeSettings } from './adapters.ts';
 import { DshBridge } from './dsh.ts';
 import { NativeStatusWatcher } from './native-status.ts';
 import { nativeHookPatch } from './native-events.ts';
 import { acquireInstanceLock } from './instance-lock.ts';
 import { CodexBridge } from './codex.ts';
-import { ClaudeChatBridge } from './claude-chat.ts';
+import { ClaudeChatBridge, probeClaudeModels } from './claude-chat.ts';
 import { DeliveryNotAcceptedError, sendDelivery } from './delivery.ts';
 import { StatePublisher } from './state.ts';
 import { listDirectories, normalizeDirectoryInput } from './directories.ts';
@@ -45,7 +45,8 @@ import { ChatSubmissions } from './chat-submissions.ts';
 import { registerAgentChat } from './chat-api.ts';
 import { createAgentChatAdapters } from './agents/chat.ts';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES, type TerminalImageType } from '../shared/terminal-images.ts';
-import type { Backend, BackendInfo, Session, AppState, SessionStatus, ConversationTranscript, DiscoveredSession } from '../shared/types.ts';
+import type { Backend, BackendInfo, NativeSettings, Session, AppState, SessionStatus, ConversationTranscript, DiscoveredSession } from '../shared/types.ts';
+import { normalizeClaudePermission } from '../shared/permissions.ts';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const port = Number(process.env.PORT || process.env.SESSIONDECK_PORT || 4317);
@@ -114,7 +115,22 @@ const conversations = new ConversationReader({ dshHistory: id => dsh.readHistory
 // flags, while preserving exact native IDs whenever the installed CLI supports it.
 const codexBridge = new CodexBridge({ dataDir });
 const codexRuns = new Map<string, { nativeId: string; launchId: string }>();
-const claudeBridge = new ClaudeChatBridge((id, cursor) => conversations.readClaudePage(id, cursor));
+// Settings each running Claude terminal was launched with, by contact ID.
+const claudeTerminalSettings = new Map<string, NativeSettings>();
+const claudeContact = (nativeId: string) => nativeId ? store.sessions().find(item => item.backend === 'claude' && !item.forkPending && item.nativeSessionId === nativeId) : undefined;
+const claudeBridge = new ClaudeChatBridge((id, cursor) => conversations.readClaudePage(id, cursor), {
+  permissionModes: () => info('claude').capabilities.permissionModes ?? [],
+  stored: nativeId => { const item = claudeContact(nativeId); return item ? effectiveClaudeSettings(item) : undefined; },
+  save: (nativeId, patch) => {
+    const item = claudeContact(nativeId);
+    if (!item) return;
+    const next = { ...effectiveClaudeSettings(item), ...patch };
+    if (JSON.stringify(next) === JSON.stringify(item.nativeSettings ?? {})) return;
+    store.updateSession(item.id, { nativeSettings: next }); broadcast();
+  },
+  terminal: nativeId => { const item = claudeContact(nativeId); return item?.running && item.executionTransport === 'pty' ? claudeTerminalSettings.get(item.id) : undefined; },
+  probeModels: async () => { const file = await findExecutable('claude'); return file ? probeClaudeModels(file) : []; },
+});
 const claudeRuns = new Map<string, { nativeId: string; launchId: string }>();
 const app = express();
 const server = createServer(app);
@@ -539,6 +555,7 @@ const chatApi = registerAgentChat(app, {
   store, adapters: createAgentChatAdapters([['codex', codexBridge], ['claude', claudeBridge]]), conversations, instanceId, demo, updatePreview, attachments, submissions,
   closing: () => closing,
   supported: item => !!info(item.backend).capabilities.graphicalChat,
+  contactSettings: item => item.backend === 'claude',
   ready: item => { const run = (item.backend === 'claude' ? claudeRuns : codexRuns).get(item.id); return run?.nativeId === item.nativeSessionId && run?.launchId === launchIds.get(item.id); },
   busy: id => starting.has(id) || stopping.has(id),
   sessions: () => publisher.sessions(),
@@ -745,9 +762,21 @@ app.post('/api/import', (req, res) => {
   const item = store.addSession({ backend: id, title, cwd, nativeSessionId, origin: 'imported', status: 'unknown', statusDetail: '已导入历史，启动后通过原生能力恢复' });
   store.activity(item.id, 'import', `导入了 ${item.title}`); broadcast(); res.status(201).json(item);
 });
+/** A new contact may preset a permission mode the installed Claude CLI offers. */
+function claudeSettingsInput(value: unknown): NativeSettings | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) fail('原生设置无效');
+  const permission = (value as { permission?: unknown }).permission;
+  if (permission === undefined || permission === null || permission === '') return undefined;
+  if (typeof permission !== 'string') fail('权限模式无效');
+  const mode = normalizeClaudePermission(permission as string);
+  if (!(info('claude').capabilities.permissionModes ?? []).includes(mode)) fail('当前 Claude CLI 不支持该权限模式，请重新检测后端');
+  return { permission: mode };
+}
 app.post('/api/sessions', (req, res) => {
   const id = backend(req.body.backend);
-  const item = store.addSession({ backend: id, title: text(req.body.title, '名称'), cwd: directory(req.body.cwd), groupId: groupId(req.body.groupId), executionMode: executionMode(req.body.executionMode) });
+  const nativeSettings = id === 'claude' ? claudeSettingsInput(req.body.nativeSettings) : undefined;
+  const item = store.addSession({ backend: id, title: text(req.body.title, '名称'), cwd: directory(req.body.cwd), groupId: groupId(req.body.groupId), executionMode: executionMode(req.body.executionMode), ...(nativeSettings ? { nativeSettings } : {}) });
   store.activity(item.id, 'create', `创建了 ${item.title}`); broadcast(); res.status(201).json(item);
 });
 app.patch('/api/sessions/:id', (req, res) => {
@@ -775,6 +804,12 @@ app.post('/api/native-event/:id', (req, res) => {
   const patch = nativeHookPatch(item, req.body?.payload, expectedNativeIds.get(item.id));
   if (!patch || publisher.sessions().some(other => other.id !== item.id && other.backend === item.backend && !other.forkPending && other.nativeSessionId === patch.nativeSessionId)) return res.json({ ok: true });
   if (item.backend === 'claude' && req.body?.payload?.hook_event_name === 'UserPromptSubmit') patch.claudeUnwritten = undefined;
+  // Shift+Tab in the TUI changes the live mode; keep the contact aligned.
+  const reported = item.backend === 'claude' && typeof req.body?.payload?.permission_mode === 'string' ? normalizeClaudePermission(req.body.payload.permission_mode) : undefined;
+  if (reported && (info('claude').capabilities.permissionModes ?? []).includes(reported)) {
+    claudeTerminalSettings.set(item.id, { ...claudeTerminalSettings.get(item.id), permission: reported });
+    if (effectiveClaudeSettings(item).permission !== reported) { store.updateSession(item.id, { nativeSettings: { ...effectiveClaudeSettings(item), permission: reported } }); broadcast(); }
+  }
   // Replayed Stop notifications should not repeatedly increment unread counts.
   const changed = item.status !== patch.status || item.nativeSessionId !== patch.nativeSessionId || item.forkPending;
   if (!changed) return res.json({ ok: true });
@@ -793,17 +828,17 @@ app.post('/api/sessions/:id/fork', async (req, res) => {
   let child: Session;
   if (dshWeb(parent)) {
     const native = await dsh.forkSession(parent.nativeSessionId, cwd);
-    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', origin: 'forked', ...native, running: true, status: 'idle', statusSource: 'native', statusDetail: '已通过原生能力 Fork，点击进入' });
+    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', ...(parent.nativeSettings ? { nativeSettings: parent.nativeSettings } : {}), origin: 'forked', ...native, running: true, status: 'idle', statusSource: 'native', statusDetail: '已通过原生能力 Fork，点击进入' });
   } else if (parent.backend === 'codex' && !demo && info('codex').capabilities.nativeControl) {
     if (!parent.nativeSessionId || parent.forkPending) fail('Codex 原生会话 ID 尚未确定，请先启动来源会话');
     const bridge = await ensureCodexBridge();
     // Codex's native fork returns a new exact thread immediately. Persist that
     // identity before exposing the card; a failed fork never becomes a fake child.
     const native = await bridge.forkSession(parent.nativeSessionId, cwd, parent.executionMode);
-    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', origin: 'forked', nativeSessionId: native.nativeSessionId, running: false, status: 'idle', statusSource: 'native', statusDetail: '已通过 Codex 原生能力 Fork，点击进入' });
+    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', ...(parent.nativeSettings ? { nativeSettings: parent.nativeSettings } : {}), origin: 'forked', nativeSessionId: native.nativeSessionId, running: false, status: 'idle', statusSource: 'native', statusDetail: '已通过 Codex 原生能力 Fork，点击进入' });
     bridge.releaseSession(native.nativeSessionId);
   } else {
-    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', origin: 'forked', nativeSessionId: demo ? `demo-${randomUUID()}` : parent.nativeSessionId, forkPending: !demo, statusDetail: demo ? '演示分支已创建' : '待启动：将调用原生 Fork，原会话保持独立' });
+    child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', ...(parent.nativeSettings ? { nativeSettings: parent.nativeSettings } : {}), origin: 'forked', nativeSessionId: demo ? `demo-${randomUUID()}` : parent.nativeSessionId, forkPending: !demo, statusDetail: demo ? '演示分支已创建' : '待启动：将调用原生 Fork，原会话保持独立' });
   }
   store.activity(child.id, 'fork', `从 ${parent.title} 分叉为 ${child.title}`); broadcast(); res.status(201).json(child);
 });
@@ -833,13 +868,13 @@ app.post('/api/sessions/:id/start', async (req, res) => {
   // closes the current writer completely before resuming the saved identity.
   if (item.running && !demo && item.backend === 'claude') {
     const structured = claudeRuns.has(item.id);
-    if ((mode === 'chat') === structured) {
+    if ((mode === 'chat') === structured && req.body?.restart !== true) {
       status(item.id, { interactionMode: mode, executionTransport: structured ? 'structured' : 'pty' });
       broadcast(); return res.json(session(item.id));
     }
     const snapshot = structured ? claudeBridge.chatSnapshot(item.nativeSessionId!) : undefined;
     if (!['idle', 'waiting_input'].includes(item.status) || snapshot?.activeTurnId || snapshot?.requests.length || terminals.isSubmitting(item.id)) fail('请先完成或停止当前任务，并处理审批后再切换执行方式', 409);
-    if (req.body?.handoff !== true) fail('切换将退出当前 Claude 进程，并恢复同一份已保存的会话；需要确认交接', 409);
+    if (req.body?.handoff !== true) fail(req.body?.restart === true ? '重启将退出当前 Claude 进程，并用联系人设置恢复同一份已保存的会话；需要确认' : '切换将退出当前 Claude 进程，并恢复同一份已保存的会话；需要确认交接', 409);
     starting.add(item.id); stopping.add(item.id);
     try {
       if (structured) await claudeBridge.closeSession(item.nativeSessionId!);
@@ -912,7 +947,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
           item = session(item.id);
         }
       }
-      const command: LaunchCommand = demo ? demoCommand() : await buildLaunch(item, dataDir);
+      const command: LaunchCommand = demo ? demoCommand() : await buildLaunch(item, dataDir, info(item.backend).capabilities);
       if (!demo && item.backend === 'claude') {
         // Persist the preallocated identity before the first hook/history write.
         // Reopening an empty TUI or fork must reuse its original launch shape.
@@ -923,6 +958,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
           await claudeBridge.start(command.nativeSessionId!, item.cwd, command);
           store.activity(item.id, 'start', `打开了 ${item.title}`); broadcast(); return res.json(session(item.id));
         }
+        claudeTerminalSettings.set(item.id, effectiveClaudeSettings(item));
         const hookCommand = [process.execPath, join(root, 'server/native-hook.cjs'), `http://127.0.0.1:${port}/api/native-event/${item.id}?launch=${launchId}`, token, 'claude'].map(shellQuote).join(' ');
         const hooks = Object.fromEntries(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'Notification', 'PermissionRequest'].map(event => [event, [{ hooks: [{ type: 'command', command: hookCommand, timeout: 3 }] }]]));
         command.args.push('--settings', JSON.stringify({ hooks }));

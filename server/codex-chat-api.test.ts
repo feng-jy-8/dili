@@ -396,6 +396,8 @@ test('Claude graphical execution streams once, handles approvals/questions, and 
   assert.equal(restored.nativeSessionId, started.nativeSessionId);
   assert.equal((await snapshot(source.id)).connected, true);
   assert.ok((await snapshot(source.id)).items.some(item => item.text === payload.text));
+  // The fake TUI records its launch asynchronously after the PTY starts.
+  await until(async () => !!(await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8').catch(() => '')), 'Claude terminal launch was not recorded');
   assert.equal((await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8')).trim().split('\n').length, 1);
 });
 
@@ -483,6 +485,88 @@ for (const backend of ['codex', 'claude'] as const) test(`${backend} settings us
   assert.equal(competing.filter(result => 'version' in result).length, 1, 'Only one mutation from the same settings version may succeed');
   const confirmed = await request<AgentChatSettings>(path);
   assert.equal(confirmed.permission, (competing.find(result => 'version' in result) as AgentChatSettings).permission);
+});
+
+test('Claude contact settings align graphical and terminal executors, including every native permission mode', { timeout: 40_000 }, async t => {
+  const f = await launch(t), { request } = f;
+  const launches = async (name: string) => (await readFile(join(f.directory, name), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line).args as string[]);
+  const state = () => request<{ backends: { id: string; capabilities: { permissionModes?: string[]; bypassOption?: boolean } }[]; sessions: Session[] }>('/api/state');
+  const current = async (id: string) => (await state()).sessions.find(item => item.id === id)!;
+  const claude = (await state()).backends.find(item => item.id === 'claude')!;
+  assert.deepEqual(claude.capabilities.permissionModes, ['default', 'acceptEdits', 'auto', 'bypassPermissions', 'dontAsk', 'plan']);
+  assert.equal(claude.capabilities.bypassOption, true);
+  await request('/api/sessions', 'POST', { backend: 'claude', title: 'Unknown mode', cwd: f.directory, nativeSettings: { permission: 'invented' } }, 400);
+  const contact = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Bypass contact', cwd: f.directory, nativeSettings: { permission: 'bypassPermissions' } }, 201);
+  assert.deepEqual(contact.nativeSettings, { permission: 'bypassPermissions' });
+  const path = `/api/sessions/${contact.id}`, settingsPath = path + '/chat/settings';
+
+  // Graphical executor: launched with the contact mode, every CLI mode offered, live changes persist.
+  await request<Session>(path + '/start', 'POST', { mode: 'chat' });
+  let printArgs = (await launches('claude-print-launches.jsonl')).at(-1)!;
+  assert.deepEqual(printArgs.slice(printArgs.indexOf('--permission-mode'), printArgs.indexOf('--permission-mode') + 2), ['--permission-mode', 'bypassPermissions']);
+  assert.ok(printArgs.includes('--allow-dangerously-skip-permissions'));
+  let settings = await request<AgentChatSettings>(settingsPath);
+  assert.equal(settings.apply, 'live');
+  assert.equal(settings.permission, 'bypassPermissions');
+  assert.deepEqual(settings.permissions.map(choice => choice.id), claude.capabilities.permissionModes);
+  settings = await request<AgentChatSettings>(settingsPath, 'POST', { version: settings.version, field: 'permission', value: 'auto' });
+  settings = await request<AgentChatSettings>(settingsPath, 'POST', { version: settings.version, field: 'model', value: 'fixture-alternative' });
+  settings = await request<AgentChatSettings>(settingsPath, 'POST', { version: settings.version, field: 'permission', value: 'bypassPermissions' });
+  assert.equal(settings.permission, 'bypassPermissions', 'The allow flag keeps bypass switchable without a restart');
+  settings = await request<AgentChatSettings>(settingsPath, 'POST', { version: settings.version, field: 'permission', value: 'manual' });
+  assert.equal(settings.permission, 'default', 'manual is the CLI alias of default');
+  settings = await request<AgentChatSettings>(settingsPath, 'POST', { version: settings.version, field: 'permission', value: 'auto' });
+  assert.deepEqual((await current(contact.id)).nativeSettings, { permission: 'auto', model: 'fixture-alternative' });
+
+  // Terminal executor: resumes with the same settings and serves the same settings API.
+  await request(path, 'PATCH', { status: 'waiting_input' });
+  const terminal = await request<Session>(path + '/start', 'POST', { mode: 'terminal', handoff: true });
+  assert.equal(terminal.executionTransport, 'pty');
+  const ptyLaunch = async (count: number) => { await until(async () => (await launches('claude-launches.jsonl')).length >= count, 'Claude terminal did not launch'); return (await launches('claude-launches.jsonl')).at(-1)!; };
+  let ptyArgs = await ptyLaunch(1);
+  for (const pair of [['--permission-mode', 'auto'], ['--model', 'fixture-alternative']]) assert.equal(ptyArgs[ptyArgs.indexOf(pair[0]) + 1], pair[1]);
+  assert.ok(ptyArgs.includes('--allow-dangerously-skip-permissions'));
+  settings = await request<AgentChatSettings>(settingsPath);
+  assert.equal(settings.apply, 'restart');
+  assert.equal(settings.restartRequired, false);
+  assert.equal(settings.permission, 'auto');
+  assert.equal(settings.model, 'fixture-alternative');
+  assert.deepEqual(settings.permissions.map(choice => choice.id), claude.capabilities.permissionModes);
+  assert.ok(settings.models.some(choice => choice.id === 'fixture-claude'), 'Terminal mode reads the native model list too');
+  await request(settingsPath, 'POST', { version: settings.version, field: 'permission', value: 'invented' }, 409);
+  settings = await request<AgentChatSettings>(settingsPath, 'POST', { version: settings.version, field: 'permission', value: 'plan' });
+  assert.equal(settings.permission, 'plan');
+  assert.equal(settings.restartRequired, true, 'A running terminal keeps its launch settings until restarted');
+  await request(path + '/start', 'POST', { mode: 'terminal', restart: true }, 409);
+  await request(path, 'PATCH', { status: 'waiting_input' });
+  await request<Session>(path + '/start', 'POST', { mode: 'terminal', restart: true, handoff: true });
+  ptyArgs = await ptyLaunch(2);
+  assert.equal(ptyArgs[ptyArgs.indexOf('--permission-mode') + 1], 'plan');
+  assert.equal((await request<AgentChatSettings>(settingsPath)).restartRequired, false);
+
+  // Shift+Tab inside the TUI reports its live mode through the launch hook; the contact follows it.
+  const hook = JSON.parse(ptyArgs[ptyArgs.indexOf('--settings') + 1]).hooks.UserPromptSubmit[0].hooks[0].command as string;
+  const [hookUrl, hookToken] = [...hook.matchAll(/'([^']*)'/g)].map(match => match[1]).slice(2, 4);
+  const reported = await fetch(hookUrl, { method: 'POST', headers: { 'content-type': 'application/json', 'x-sessiondeck-token': hookToken }, body: JSON.stringify({ source: 'claude', payload: { session_id: terminal.nativeSessionId, hook_event_name: 'UserPromptSubmit', permission_mode: 'acceptEdits' } }) });
+  assert.equal(reported.status, 200);
+  await until(async () => (await current(contact.id)).nativeSettings?.permission === 'acceptEdits', 'TUI permission change did not reach the contact');
+  settings = await request<AgentChatSettings>(settingsPath);
+  assert.equal(settings.permission, 'acceptEdits');
+  assert.equal(settings.restartRequired, false, 'The running terminal already uses the reported mode');
+
+  // Stopped: still the same contact settings, applied by whichever executor starts next.
+  await request(path + '/stop', 'POST', {});
+  settings = await request<AgentChatSettings>(settingsPath);
+  assert.equal(settings.apply, 'restart');
+  settings = await request<AgentChatSettings>(settingsPath, 'POST', { version: settings.version, field: 'permission', value: 'dontAsk' });
+  await request<Session>(path + '/start', 'POST', { mode: 'chat' });
+  printArgs = (await launches('claude-print-launches.jsonl')).filter(args => args.includes('--session-id') || args.includes('--resume')).at(-1)!;
+  assert.equal(printArgs[printArgs.indexOf('--permission-mode') + 1], 'dontAsk');
+  assert.equal((await request<AgentChatSettings>(settingsPath)).permission, 'dontAsk');
+
+  // Forks inherit the contact settings.
+  const fork = await request<Session>(path + '/fork', 'POST', { title: 'Fork keeps settings' }, 201);
+  assert.deepEqual(fork.nativeSettings, { permission: 'dontAsk', model: 'fixture-alternative' });
 });
 
 test('Claude stopped history pages never launch a CLI; live and restored IDs agree and evicted messages stay reachable', { timeout: 30_000 }, async t => {

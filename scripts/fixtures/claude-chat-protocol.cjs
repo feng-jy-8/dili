@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 const fs = require('node:fs'), path = require('node:path'), readline = require('node:readline'), { randomUUID } = require('node:crypto');
 if (process.argv.includes('--version')) { console.log('fixture-stream'); process.exit(0); }
-if (process.argv.includes('--help')) { console.log('--resume --fork-session --input-format --include-partial-messages'); process.exit(0); }
+if (process.argv.includes('--help')) { console.log('--resume --fork-session --input-format --include-partial-messages\n  --allow-dangerously-skip-permissions  Enable bypassing all permission checks\n  --permission-mode <mode>              Permission mode to use for the session\n                                        (choices: "acceptEdits", "auto",\n                                        "bypassPermissions", "manual",\n                                        "dontAsk", "plan")\n  --print'); process.exit(0); }
 const root = process.env.SESSIONDECK_FIXTURE_DIR;
 if (!process.argv.includes('--print')) {
   fs.appendFileSync(path.join(root, 'claude-launches.jsonl'), JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }) + '\n');
@@ -10,6 +10,7 @@ if (!process.argv.includes('--print')) {
   process.stdout.write('READY');
 } else {
   const arg = flag => process.argv[process.argv.indexOf(flag) + 1];
+  fs.appendFileSync(path.join(root, 'claude-print-launches.jsonl'), JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }) + '\n');
   const id = process.argv.includes('--session-id') ? arg('--session-id') : arg('--resume');
   const folder = path.join(root, 'claude-home/projects/fixture'); fs.mkdirSync(folder, { recursive: true });
   const file = path.join(folder, id + '.jsonl');
@@ -17,7 +18,8 @@ if (!process.argv.includes('--print')) {
   const out = row => process.stdout.write(JSON.stringify({ ...row, session_id: id }) + '\n');
   const saved = (role, content, uuid = randomUUID()) => fs.appendFileSync(file, JSON.stringify({ type: role, uuid, sessionId: id, timestamp: new Date().toISOString(), message: { role, content } }) + '\n');
   const event = payload => out({ type: 'stream_event', event: payload, parent_tool_use_id: null });
-  let timer, messageId, active = false, pending, model = 'fixture-claude', mode = 'default';
+  let timer, messageId, active = false, pending, model = process.argv.includes('--model') ? arg('--model') : 'fixture-claude', mode = process.argv.includes('--permission-mode') ? arg('--permission-mode').replace(/^manual$/, 'default') : 'default';
+  const bypassAllowed = process.argv.includes('--allow-dangerously-skip-permissions') || process.argv.includes('--dangerously-skip-permissions');
   function finish(error = false) {
     clearTimeout(timer);
     if (!active) return;
@@ -40,7 +42,11 @@ if (!process.argv.includes('--print')) {
         if (row.request.model === 'fixture-denied') { out({ type: 'control_response', response: { subtype: 'error', request_id: row.request_id, error: 'Native policy denied model' } }); return; }
         model = row.request.model; response = model === 'fixture-no-ack' ? {} : { model };
       }
-      if (row.request.subtype === 'set_permission_mode') { mode = row.request.mode; response = { mode }; }
+      if (row.request.subtype === 'set_permission_mode') {
+        // Mirrors the real CLI: bypass needs an allow flag at launch; manual reads back as default.
+        if (row.request.mode === 'bypassPermissions' && !bypassAllowed) { out({ type: 'control_response', response: { subtype: 'error', request_id: row.request_id, error: 'Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions' } }); return; }
+        mode = row.request.mode === 'manual' ? 'default' : row.request.mode; response = { mode };
+      }
       out({ type: 'control_response', response: { subtype: 'success', request_id: row.request_id, response } });
       if (row.request.subtype === 'interrupt') finish(true);
     } else if (row.type === 'user') {

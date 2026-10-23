@@ -37,3 +37,8 @@
 .agent-chat-command-copy em { color:var(--muted); font-size:10px; font-style:normal; }
 .agent-chat-command > svg { flex:none; color:var(--muted); }
 @media(max-width:420px) { .agent-chat-quick-settings { gap:4px; }.agent-chat-quick-button { gap:4px; padding:3px 6px; }.agent-chat-quick-button strong { max-width:24vw; } }
+.claude-terminal-settings { display:flex; align-items:center; gap:6px; min-width:0; flex:0 1 auto; margin-right:auto; }
+.claude-terminal-settings .agent-chat-quick-settings { padding:0; }
+.claude-terminal-restart { max-width:none; color:var(--accent); border-color:var(--accent); }
+.claude-terminal-settings-error { max-width:24ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--danger, #c0392b); font-size:11px; }
+@media(max-width:720px) { .claude-terminal-settings .agent-chat-quick-button > span { display:none; } }

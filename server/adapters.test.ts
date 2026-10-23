@@ -12,6 +12,7 @@ import { buildLaunch, discoverSessions, resolveNativeSessionId, validateNativeId
 import { zstdCompressSync } from 'node:zlib';
 import { DshBridge, dshDeepLinkClient } from './dsh.js';
 import type { Session } from '../shared/types.js';
+import { claudePermissionChoices, normalizeClaudePermission, parseClaudePermissionModes } from '../shared/permissions.ts';
 
 const makeSession = (patch: Partial<Session> = {}): Session => ({ id: randomUUID(), backend: 'codex', title: 'test', cwd: '/tmp', nativeSessionId: null, groupId: null, parentId: null, forkPending: false, status: 'idle', statusSource: 'process', statusDetail: '', lastActivity: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), archived: false, pinned: false, unread: 0, running: false, origin: 'created', ...patch });
 
@@ -39,6 +40,41 @@ test('native launch uses argument arrays, preserves fork source, rejects option 
   } finally {
     for (const [backend, value] of Object.entries(saved)) { const key = `SESSIONDECK_${backend.toUpperCase()}_BIN`; if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
+});
+
+test('Claude permission modes come from the installed CLI and launch args are shared by every executor', async t => {
+  // Wrapped exactly like `claude --help` 2.1.280 prints it.
+  const help = `  --permission-mode <mode>              Permission mode to use for the session
+                                        (choices: "acceptEdits", "auto",
+                                        "bypassPermissions", "manual",
+                                        "dontAsk", "plan")
+  --permission-prompts <target>         Who answers permission prompts with
+                                        (choices: "host", "none", default:
+                                        "host")`;
+  assert.deepEqual(parseClaudePermissionModes(help), ['default', 'acceptEdits', 'auto', 'bypassPermissions', 'dontAsk', 'plan']);
+  assert.deepEqual(parseClaudePermissionModes('--resume --print'), []);
+  assert.equal(normalizeClaudePermission('manual'), 'default');
+  assert.ok(claudePermissionChoices(['bypassPermissions'])[0].description!.includes('不再请求任何确认'));
+  assert.deepEqual(claudePermissionChoices(['futureMode']), [{ id: 'futureMode', label: 'futureMode' }]);
+
+  const saved = process.env.SESSIONDECK_CLAUDE_BIN;
+  process.env.SESSIONDECK_CLAUDE_BIN = process.execPath;
+  t.after(() => { if (saved === undefined) delete process.env.SESSIONDECK_CLAUDE_BIN; else process.env.SESSIONDECK_CLAUDE_BIN = saved; });
+  const caps = { terminal: true, resume: true, fork: true, discovery: true, bypassOption: true };
+  const contact = makeSession({ backend: 'claude', nativeSessionId: randomUUID(), nativeSettings: { permission: 'plan', model: 'opus' } });
+  const args = (await buildLaunch(contact, undefined, caps)).args;
+  assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
+  assert.equal(args[args.indexOf('--model') + 1], 'opus');
+  assert.ok(args.includes('--allow-dangerously-skip-permissions'), 'bypass stays switchable when the CLI offers it');
+  assert.ok(!args.includes('--dangerously-skip-permissions'), 'the allow flag never enables bypass by itself');
+  // Contact settings override the legacy Auto preset; `default` model is the native alias and is omitted.
+  const legacy = (await buildLaunch({ ...contact, executionMode: 'auto', nativeSettings: { model: 'default' } }, undefined, caps)).args;
+  assert.equal(legacy[legacy.indexOf('--permission-mode') + 1], 'auto');
+  assert.ok(!legacy.includes('--model'));
+  const bypass = (await buildLaunch({ ...contact, nativeSettings: { permission: 'bypassPermissions' } })).args;
+  assert.ok(bypass.includes('--allow-dangerously-skip-permissions'), 'a bypass contact can launch even before capability detection');
+  const plain = (await buildLaunch({ ...contact, nativeSettings: undefined })).args;
+  assert.ok(!plain.includes('--permission-mode') && !plain.includes('--model') && !plain.includes('--allow-dangerously-skip-permissions'));
 });
 
 test('Auto launch keeps native defaults intact and opts in per contact for Claude, Codex and Harness', async t => {

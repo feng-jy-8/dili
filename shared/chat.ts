@@ -77,6 +77,11 @@ export interface AgentChatSettings {
   modelReason?: string;
   permissionReason?: string;
   disabledReason?: string;
+  /** live: applied to the running executor now; restart: saved to the contact
+   * and used by the next graphical or terminal launch. */
+  apply?: 'live' | 'restart';
+  /** A running terminal still uses older launch settings than the saved ones. */
+  restartRequired?: boolean;
   scope: string;
 }
 export interface AgentChatSettingsUpdate {

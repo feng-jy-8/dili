@@ -6,7 +6,7 @@ async function deliver() {
     const payload = JSON.parse(notification.join(' ') || input || '{}');
     // Lifecycle monitoring only needs identifiers and event names. Prompt,
     // assistant text and tool arguments stay in the native agent's own history.
-    const keys = source === 'claude' ? ['session_id', 'hook_event_name', 'notification_type']
+    const keys = source === 'claude' ? ['session_id', 'hook_event_name', 'notification_type', 'permission_mode']
       : source === 'codex' ? ['thread-id', 'thread_id', 'type'] : [];
     const event = Object.fromEntries(keys.filter(key => typeof payload?.[key] === 'string').map(key => [key, payload[key]]));
     await fetch(url, {

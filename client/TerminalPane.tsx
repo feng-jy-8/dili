@@ -2,7 +2,7 @@ import { PaneToolOverflow, SessionToolbar, useSessionChrome } from './SessionToo
 import { appUrl } from './urls';
 import { copyToClipboard } from './clipboard';
 import { sendTerminalInput } from './terminal-input';
-import { useEffect, useRef, useState, type ClipboardEvent, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type ChangeEvent, type ReactNode } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ArrowDownToLine, ClipboardPaste, Copy, Check, ImagePlus, Keyboard, LoaderCircle, Maximize2, Minimize2, Send, WifiOff, X } from 'lucide-react';
@@ -85,8 +85,10 @@ function attachTouchScroll(container: HTMLElement, terminal: Terminal) {
   };
 }
 
-export default function TerminalPane({ sessionId, running, status, allowImages: imagesRequested, onSelection, channel = 'session', onExit, focusRequest, readOnly: readOnlyRequested = false }: {
+export default function TerminalPane({ sessionId, running, status, allowImages: imagesRequested, onSelection, channel = 'session', onExit, focusRequest, readOnly: readOnlyRequested = false, settings }: {
   sessionId: string; running: boolean; status?: string; allowImages?: boolean; onSelection: (text: string) => void;
+  /** Contact-level native settings, shared with the graphical composer. */
+  settings?: ReactNode;
   channel?: 'session' | 'shell'; onExit?: (exitCode: number) => void; focusRequest?: number;
   /** Watch only. The server also discards input from read-only shares. */
   readOnly?: boolean;
@@ -427,7 +429,7 @@ export default function TerminalPane({ sessionId, running, status, allowImages: 
   const quickKeys: [string, string, string][] = [['Esc', '\x1b', '发送 Esc'], ['Tab', '\t', '发送 Tab'], ['↑', '\x1b[A', '上一条'], ['↓', '\x1b[B', '下一条'], ['^C', '\x03', '发送 Ctrl+C'], ['⏎', '\r', '发送回车']];
   const toggleLabel = fullscreen ? '退出全屏' : '全屏';
   return <div className={`terminal-pane ${!chrome && fullscreen ? 'fullscreen' : ''}`} onPasteCapture={onPasteCapture}>
-    <SessionToolbar className="terminal-toolbar">{readOnly && <span className="terminal-readonly">只读查看</span>}<span title={connected ? '浏览器已连接终端通道；任务是否执行请查看会话状态' : '正在连接终端通道'} className={`terminal-connection ${connected ? 'connected' : ''}`}><i /><span className="pane-connection-label">{connected ? '已连接' : '连接中'}</span></span><div><PaneToolOverflow>
+    <SessionToolbar className="terminal-toolbar">{readOnly && <span className="terminal-readonly">只读查看</span>}<span title={connected ? '浏览器已连接终端通道；任务是否执行请查看会话状态' : '正在连接终端通道'} className={`terminal-connection ${connected ? 'connected' : ''}`}><i /><span className="pane-connection-label">{connected ? '已连接' : '连接中'}</span></span>{settings}<div><PaneToolOverflow>
       {allowImages && <><input ref={fileInputRef} className="terminal-image-input" type="file" accept={TERMINAL_IMAGE_TYPES.join(',')} onChange={onImageSelected} /><button title="选择图片并填入原生输入" aria-label="选择图片并填入原生输入" disabled={!connected || !terminalId || !running || uploadingImage} onClick={() => fileInputRef.current?.click()}>{uploadingImage ? <LoaderCircle className="spin" size={14} /> : <ImagePlus size={14} />}<span>选择图片并填入原生输入</span></button></>}
       <button title="复制选中的终端内容（Ctrl/⌘+Shift+C）" aria-label="复制选中的终端内容" onClick={() => void copySelection()}>{copied ? <Check size={14} /> : <Copy size={14} />}<span>复制选中的终端内容</span></button>
       {!readOnly && <button title="粘贴剪贴板；也可使用 Ctrl/⌘+V" aria-label="粘贴到终端" disabled={!connected || !running || uploadingImage} onClick={() => void pasteClipboard()}><ClipboardPaste size={14} /><span>粘贴到终端</span></button>}

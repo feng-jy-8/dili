@@ -9,9 +9,17 @@ export interface BackendInfo {
   label: string;
   installed: boolean;
   version: string | null;
-  capabilities: { terminal: boolean; resume: boolean; fork: boolean; discovery: boolean; nativeControl?: boolean; graphicalChat?: boolean; autoMode?: boolean };
+  capabilities: {
+    terminal: boolean; resume: boolean; fork: boolean; discovery: boolean; nativeControl?: boolean; graphicalChat?: boolean; autoMode?: boolean;
+    /** Native permission modes reported by the installed CLI (Claude). */
+    permissionModes?: string[];
+    /** The CLI can offer bypassPermissions as a switchable mode without enabling it. */
+    bypassOption?: boolean;
+  };
   note?: string;
 }
+
+export interface NativeSettings { model?: string; permission?: string }
 
 export interface Session {
   id: string;
@@ -49,6 +57,9 @@ export interface Session {
   claudeUnwritten?: { sourceId: string | null };
   /** Per-contact native permission preset; absent means native defaults. */
   executionMode?: ExecutionMode;
+  /** Contact-scoped native settings shared by every executor of this contact
+   * (Claude graphical and terminal). Absent fields follow native defaults. */
+  nativeSettings?: NativeSettings;
   origin: 'created' | 'imported' | 'forked' | 'handoff';
 }
 

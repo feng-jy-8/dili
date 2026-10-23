@@ -1,10 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { AgentChatAnswer, AgentChatHistoryPage, AgentChatItem, AgentChatRequest, AgentChatSnapshot, AgentChatSettings, AgentChatSettingsUpdate } from '../shared/chat.ts';
+import type { AgentChatAnswer, AgentChatChoice, AgentChatHistoryPage, AgentChatItem, AgentChatRequest, AgentChatSnapshot, AgentChatSettings, AgentChatSettingsUpdate } from '../shared/chat.ts';
 import { checkSettingsUpdate, settingsError, settingsVersion } from './agents/settings.ts';
-import type { ConversationTranscript, SessionStatus } from '../shared/types.ts';
+import type { ConversationTranscript, NativeSettings, SessionStatus } from '../shared/types.ts';
+import { claudePermissionChoices, claudePermissionLabel, normalizeClaudePermission } from '../shared/permissions.ts';
 import type { LaunchCommand } from './terminal.ts';
 import { OwnedProcess } from './owned-process.ts';
 
@@ -22,12 +24,61 @@ interface Run {
   inheritedHistory?: AgentChatItem[];
 }
 
+/** Contact-scoped settings shared by the graphical and terminal executors. */
+export interface ClaudeContactSettings {
+  /** Modes reported by the installed CLI's --help. */
+  permissionModes(): string[];
+  /** Saved contact settings, or undefined when no contact owns this native ID. */
+  stored(nativeId: string): NativeSettings | undefined;
+  save(nativeId: string, patch: NativeSettings): void;
+  /** Settings the running terminal executor was launched with, if one runs. */
+  terminal(nativeId: string): NativeSettings | undefined;
+  /** Reads the native model list without a live executor (no session is saved). */
+  probeModels(): Promise<AgentChatChoice[]>;
+}
+
+const LIVE_SCOPE = '保存到当前联系人，并立即作用于图形执行器；切换到原生终端或重新启动时沿用同一设置。';
+const TERMINAL_SCOPE = '保存到当前联系人。原生终端按启动时的设置运行，重启终端后生效；在终端内用 Shift+Tab 切换的权限会同步回联系人。';
+const STOPPED_SCOPE = '保存到当前联系人，下次启动图形对话或原生终端时生效。';
+
 /** Claude's own stream-json protocol. No TUI scraping, API credentials or SDK
  * dependency: the installed CLI still owns tools, auth, permissions and history. */
 export class ClaudeChatBridge {
   private runs = new Map<string, Run>();
   private events = new EventEmitter();
-  constructor(private readonly history?: (id: string, cursor?: string) => Promise<AgentChatHistoryPage>) {}
+  private offline = new Map<string, AgentChatSettings>();
+  private models: AgentChatChoice[] = [];
+  private modelsProbe?: Promise<AgentChatChoice[]>;
+  constructor(private readonly history?: (id: string, cursor?: string) => Promise<AgentChatHistoryPage>, private readonly contact?: ClaudeContactSettings) {}
+  private permissionChoices(current: string | null) {
+    const modes = this.contact?.permissionModes() ?? [];
+    // A mode reported by the process stays selectable even if --help omitted it.
+    return claudePermissionChoices(current && !modes.includes(current) ? [...modes, current] : modes);
+  }
+  private async offlineModels(): Promise<AgentChatChoice[]> {
+    if (this.models.length || !this.contact) return this.models;
+    this.modelsProbe ??= this.contact.probeModels().then(models => { if (models.length) this.models = models; return models; }).catch(() => []).finally(() => { this.modelsProbe = undefined; });
+    return this.modelsProbe;
+  }
+  /** Settings without a live graphical executor: the contact's saved values. */
+  private async contactSettings(id: string): Promise<AgentChatSettings> {
+    const stored = this.contact?.stored(id);
+    if (!stored) return settingsError('请先连接 Claude 图形会话');
+    const terminal = this.contact!.terminal(id);
+    const models = await this.offlineModels();
+    const model = stored.model ?? null, permission = stored.permission ?? null;
+    const choices = this.permissionChoices(permission);
+    const restartRequired = !!terminal && ((terminal.model ?? null) !== model || (terminal.permission ?? null) !== permission);
+    const next = settingsVersion(this.offline.get(id), {
+      nativeSessionId: id, model, models, permission, permissions: choices, apply: 'restart', restartRequired,
+      ...(permission ? {} : { permissionLabel: claudePermissionLabel(null) }),
+      ...(!models.length ? { modelReason: '暂时无法读取 Claude 模型列表，请检查 CLI 版本和原生登录后刷新' } : {}),
+      ...(!choices.length ? { permissionReason: '当前 Claude CLI 未报告可选权限模式，请升级后重新检测' } : {}),
+      scope: terminal ? TERMINAL_SCOPE : STOPPED_SCOPE,
+    });
+    this.offline.set(id, next);
+    return next;
+  }
   onChat(listener: (id: string, snapshot: AgentChatSnapshot) => void) { this.events.on('chat', listener); return () => this.events.off('chat', listener); }
   onStatus(listener: (id: string, status: ClaudeChatStatus) => void) { this.events.on('status', listener); return () => this.events.off('status', listener); }
   onInput(listener: (id: string, text: string) => void) { this.events.on('input', listener); return () => this.events.off('input', listener); }
@@ -50,11 +101,20 @@ export class ClaudeChatBridge {
   }
   async readChatSettings(id: string): Promise<AgentChatSettings> {
     const run = this.runs.get(id);
-    if (!run?.alive || !run.snapshot.connected || !run.settings) return settingsError('请先连接 Claude 图形会话');
+    if (!run?.alive) return this.contactSettings(id);
+    if (!run.snapshot.connected || !run.settings) return settingsError('Claude 图形会话正在连接，请稍后刷新');
     return { ...run.settings, ...(run.changingSettings || run.snapshot.activeTurnId || run.snapshot.requests.length ? { disabledReason: '请等待当前任务、审批或设置修改结束' } : {}) };
   }
   async updateChatSettings(id: string, update: AgentChatSettingsUpdate): Promise<AgentChatSettings> {
     const run = this.runs.get(id);
+    if (update.field === 'permission') update = { ...update, value: normalizeClaudePermission(update.value) };
+    if (!run?.alive) {
+      // No executor to change: persist for the next graphical or terminal launch.
+      checkSettingsUpdate(await this.contactSettings(id), update);
+      if (this.runs.get(id)?.alive) return settingsError('Claude 图形会话已启动，请刷新设置后重试');
+      this.contact!.save(id, { [update.field]: update.value });
+      return this.contactSettings(id);
+    }
     checkSettingsUpdate(await this.readChatSettings(id), update);
     if (!run?.alive || this.runs.get(id) !== run || run.settings?.version !== update.version || run.changingSettings || run.snapshot.activeTurnId || run.snapshot.requests.length) return settingsError('原生会话正在处理任务或设置，或连接已变化，请刷新后重试');
     run.changingSettings = true;
@@ -68,7 +128,8 @@ export class ClaudeChatBridge {
         run.settings = settingsVersion(undefined, { ...run.settings!, [update.field]: null });
         return settingsError('原生进程未返回设置确认，请刷新检查；当前 CLI 可能不支持此操作');
       }
-      run.settings = settingsVersion(undefined, { ...run.settings!, [update.field]: actual });
+      run.settings = settingsVersion(undefined, { ...run.settings!, [update.field]: actual, ...(update.field === 'permission' ? { permissions: this.permissionChoices(actual) } : {}) });
+      this.contact?.save(id, { [update.field]: actual });
     } catch (cause) {
       if (!(cause as { nativeRejected?: boolean })?.nativeRejected && run.settings) run.settings = settingsVersion(undefined, { ...run.settings, [update.field]: null });
       throw cause;
@@ -185,19 +246,17 @@ export class ClaudeChatBridge {
           run.inheritedHistory = undefined;
         }
       }
-      const models = (Array.isArray(initialized.models) ? initialized.models : []).filter((model: Row) => typeof model.value === 'string').slice(0, 100).map((model: Row) => ({ id: model.value as string, label: String(model.displayName || model.value), description: typeof model.description === 'string' ? model.description : undefined }));
+      const models = nativeModels(initialized.models);
+      if (models.length) this.models = models;
       const modelIndex = command.args.indexOf('--model');
+      const permission = typeof initialized.current_permission_mode === 'string' ? normalizeClaudePermission(initialized.current_permission_mode) : null;
+      const permissions = permission ? this.permissionChoices(permission) : [];
       run.settings = settingsVersion(undefined, {
         nativeSessionId: id, model: modelIndex >= 0 ? command.args[modelIndex + 1] ?? null : null, models,
-        permission: typeof initialized.current_permission_mode === 'string' ? initialized.current_permission_mode : null,
-        permissions: typeof initialized.current_permission_mode === 'string' ? [
-          { id: 'default', label: '默认审批', description: '沿用原生允许规则，其他操作请求审批' },
-          { id: 'acceptEdits', label: '自动接受编辑', description: '允许文件编辑，其他操作仍按原生规则审批' },
-          { id: 'plan', label: '计划模式', description: '先分析和规划，限制执行修改' },
-        ] : [],
+        permission, permissions, apply: 'live',
         ...(!models.length ? { modelReason: '当前 Claude 未返回模型列表，请检查 CLI 版本和原生配置' } : {}),
-        ...(typeof initialized.current_permission_mode !== 'string' ? { permissionReason: '当前 Claude 未报告权限模式，请升级 CLI 后重试' } : {}),
-        scope: '作用于当前 Claude 图形执行器；切换至终端或重开执行器后重新沿用原生配置。',
+        ...(!permission ? { permissionReason: '当前 Claude 未报告权限模式，请升级 CLI 后重试' } : {}),
+        scope: LIVE_SCOPE,
       });
       for (const request of [...(Array.isArray(initialized.pending_permission_requests) ? initialized.pending_permission_requests : []), ...(Array.isArray(initialized.pending_user_dialog_requests) ? initialized.pending_user_dialog_requests : [])]) {
         const row = object(request); if (row) this.receive(id, run, row);
@@ -373,4 +432,31 @@ export class ClaudeChatBridge {
     await run.owner.stop();
   }
   async close() { await Promise.all([...this.runs.keys()].map(id => this.closeSession(id))); this.events.removeAllListeners(); }
+}
+
+export function nativeModels(value: unknown): AgentChatChoice[] {
+  return (Array.isArray(value) ? value : []).filter((model: Row) => typeof model?.value === 'string').slice(0, 100)
+    .map((model: Row) => ({ id: model.value as string, label: String(model.displayName || model.value), ...(typeof model.description === 'string' ? { description: model.description } : {}) }));
+}
+
+/** One short-lived print-mode process answers `initialize` and exits. It sends
+ * no prompt and persists no session, so it cannot spend quota or add history. */
+export function probeClaudeModels(file: string, timeoutMs = 15_000): Promise<AgentChatChoice[]> {
+  return new Promise(resolve => {
+    const env = { ...process.env }; delete env.CLAUDECODE; delete env.SESSIONDECK_TOKEN;
+    const child = spawn(file, ['--print', '--no-session-persistence', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], { cwd: tmpdir(), env, stdio: 'pipe' });
+    let buffer = '', done = false;
+    const finish = (models: AgentChatChoice[]) => { if (done) return; done = true; clearTimeout(timer); child.kill(); resolve(models); };
+    const timer = setTimeout(() => finish([]), timeoutMs);
+    child.on('error', () => finish([])); child.on('close', () => finish([]));
+    child.stdin.on('error', () => finish([]));
+    child.stdout.on('data', chunk => {
+      buffer = (buffer + chunk).slice(-1_000_000);
+      for (let index; (index = buffer.indexOf('\n')) >= 0;) {
+        const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
+        try { const row = JSON.parse(line); if (row?.type === 'control_response' && row.response?.request_id === 'models') finish(nativeModels(row.response.response?.models)); } catch { /* partial or unrelated line */ }
+      }
+    });
+    child.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'models', request: { subtype: 'initialize' } }) + '\n');
+  });
 }

@@ -18,6 +18,8 @@ interface Dependencies {
   closing(): boolean;
   supported(item: Session): boolean;
   ready(item: Session): boolean;
+  /** Settings live on the contact and serve every executor, running or not. */
+  contactSettings?(item: Session): boolean;
   busy(id: string): boolean;
   sessions(): Session[];
   broadcast(): void;
@@ -38,6 +40,16 @@ export function registerAgentChat(app: express.Express, options: Dependencies) {
   function session(id: string): Session {
     const item = store.session(id) ?? fail('会话不存在', 404);
     if (!options.adapters[item.backend]) fail('这个后端尚未支持原生流式图形聊天');
+    return item;
+  }
+  /** Contact-level settings stay readable in terminal mode and while stopped;
+   * other backends still require their live graphical executor. */
+  function settingsTarget(id: string): Session {
+    const item = session(id);
+    if (!options.contactSettings?.(item)) return writable(id);
+    if (options.demo || !options.supported(item)) fail('当前后端不支持原生图形化交互，请使用原生终端');
+    if (options.closing() || options.busy(id)) fail('会话正在启动或停止，请稍后重试', 409);
+    if (item.archived || item.forkPending || !item.nativeSessionId) fail('请先启动一次这个会话，再修改原生设置', 409);
     return item;
   }
   function writable(id: string): Session {
@@ -135,20 +147,20 @@ export function registerAgentChat(app: express.Express, options: Dependencies) {
 
   app.get('/api/sessions/:id/chat', async (req, res) => res.json(await read(String(req.params.id))));
   app.get('/api/sessions/:id/chat/settings', async (req, res) => {
-    const item = writable(String(req.params.id)), identity = item.nativeSessionId!;
+    const item = settingsTarget(String(req.params.id)), identity = item.nativeSessionId!;
     const settings = await bridgeFor(item).readChatSettings(identity);
-    if (writable(item.id).nativeSessionId !== identity) fail('会话身份已变化，请刷新', 409);
+    if (settingsTarget(item.id).nativeSessionId !== identity) fail('会话身份已变化，请刷新', 409);
     res.json({ ...settings, ...(res.locals.principal?.kind === 'share' ? { disabledReason: '分享访问只能查看设置，请由所有者修改' } : {}) });
   });
   app.post('/api/sessions/:id/chat/settings', async (req, res) => {
-    const item = writable(String(req.params.id)), identity = item.nativeSessionId!;
+    const item = settingsTarget(String(req.params.id)), identity = item.nativeSessionId!;
     const { version, field, value } = req.body;
     if (typeof version !== 'string' || version.length > 100 || !version || (field !== 'model' && field !== 'permission') || typeof value !== 'string' || !value || value.length > 200 || /[\x00-\x1f]/.test(value)) fail('设置参数无效');
     const settings = await bridgeFor(item).updateChatSettings(identity, { version, field, value }).catch(cause => {
       const error = cause instanceof Error ? cause : new Error('原生设置修改失败，请刷新确认');
       throw Object.assign(error, { status: (cause as { status?: number })?.status ?? 409 });
     });
-    if (writable(item.id).nativeSessionId !== identity) fail('会话身份已变化，请刷新确认原生设置', 409);
+    if (settingsTarget(item.id).nativeSessionId !== identity) fail('会话身份已变化，请刷新确认原生设置', 409);
     res.json(settings);
   });
   app.get('/api/sessions/:id/chat/history', async (req, res) => {

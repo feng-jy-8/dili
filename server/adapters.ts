@@ -8,7 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { zstdDecompressSync } from 'node:zlib';
 import { prepareDshAuto } from './dsh-auto.ts';
-import type { Backend, BackendInfo, DiscoveredSession, Session } from '../shared/types.js';
+import type { Backend, BackendInfo, DiscoveredSession, NativeSettings, Session } from '../shared/types.js';
+import { parseClaudePermissionModes } from '../shared/permissions.ts';
 
 const run = promisify(execFile);
 const BACKENDS: Backend[] = ['claude', 'codex', 'dsh'];
@@ -74,14 +75,14 @@ export async function getBackendInfo(): Promise<BackendInfo[]> {
     const tui = id === 'dsh' ? await findDshTui() : null;
     return {
       id, label: LABELS[id], installed: true, version,
-      capabilities: { terminal: id !== 'dsh' || !!tui, resume: id === 'dsh' || /\bresume\b/.test(help), fork: id === 'dsh' || (id === 'claude' ? help.includes('--fork-session') : /\bfork\b/.test(help)), discovery: true, nativeControl, graphicalChat: nativeControl, autoMode: id === 'claude' ? help.includes('--permission-mode') && /["']auto["']/.test(help) : id === 'codex' ? help.includes('--approve-for-me') : true },
+      capabilities: { ...(id === 'claude' ? { permissionModes: parseClaudePermissionModes(help), bypassOption: help.includes('--allow-dangerously-skip-permissions') } : {}), terminal: id !== 'dsh' || !!tui, resume: id === 'dsh' || /\bresume\b/.test(help), fork: id === 'dsh' || (id === 'claude' ? help.includes('--fork-session') : /\bfork\b/.test(help)), discovery: true, nativeControl, graphicalChat: nativeControl, autoMode: id === 'claude' ? help.includes('--permission-mode') && /["']auto["']/.test(help) : id === 'codex' ? help.includes('--approve-for-me') : true },
       note: id === 'dsh' ? (tui ? '原生终端界面（dsh-tui）与对话记录；原生 Web 界面仍可打开' : '复用原生 Web 界面与本地 session API；安装 @deepseek-harness-tui/dsh-tui 可获得原生终端') : id === 'codex' ? (nativeControl ? '原生 app-server 提供图形对话、流式回复、审批和精确会话；可切换原生终端' : '兼容终端模式：原生 ID 在完成一轮后确认；更新 Codex 可启用图形对话') : nativeControl ? '图形模式复用 Claude stream-json：流式正文、工具、审批与提问；与 TUI 通过已保存会话交接' : '兼容终端模式与对话记录；更新 Claude 可启用结构化图形对话',
     };
   }));
 }
 
 /** Arguments are always passed directly to exec/PTY, never through a shell. */
-export async function buildLaunch(session: Session, dataDir?: string): Promise<{ file: string; args: string[]; nativeSessionId?: string; env?: Record<string, string> }> {
+export async function buildLaunch(session: Session, dataDir?: string, capabilities?: BackendInfo['capabilities']): Promise<{ file: string; args: string[]; nativeSessionId?: string; env?: Record<string, string> }> {
   const source = session.nativeSessionId ? validateNativeId(session.backend, session.nativeSessionId) : null;
   if (session.forkPending && !source) throw new Error('原会话尚未获得原生 ID，无法 Fork');
   if (session.backend === 'dsh') {
@@ -102,7 +103,7 @@ export async function buildLaunch(session: Session, dataDir?: string): Promise<{
   }
   const file = await findExecutable(session.backend);
   if (!file) throw new Error(`未找到 ${LABELS[session.backend]}，请安装原生命令并加入 PATH`);
-  const autoArgs = session.executionMode === 'auto' ? session.backend === 'claude' ? ['--permission-mode', 'auto'] : ['--approve-for-me'] : [];
+  const autoArgs = session.backend === 'claude' ? claudeSettingsArgs(session, capabilities) : session.executionMode === 'auto' ? ['--approve-for-me'] : [];
   if (session.backend === 'claude') {
     if (source && !session.forkPending && session.claudeUnwritten) {
       const parent = session.claudeUnwritten.sourceId;
@@ -386,4 +387,22 @@ export async function resolveNativeSessionId(session: Session, startedAt: string
   const cutoff = Date.parse(startedAt) - 2000;
   const found = (await candidates(session.backend, paths)).filter(r => resolve(r.cwd) === resolve(session.cwd) && !excludeIds.includes(r.nativeSessionId) && r.createdAt && Date.parse(r.createdAt) >= cutoff);
   return found.length === 1 ? found[0]!.nativeSessionId : null;
+}
+
+/** Claude's contact settings, identical for the graphical and terminal executor.
+ * bypassPermissions stays a selectable mode (the allow flag never enables it by
+ * itself), so both the Dili settings and the TUI's Shift+Tab can reach it live. */
+export function effectiveClaudeSettings(session: Pick<Session, 'nativeSettings' | 'executionMode'>): NativeSettings {
+  const permission = session.nativeSettings?.permission ?? (session.executionMode === 'auto' ? 'auto' : undefined);
+  const model = session.nativeSettings?.model;
+  return { ...(model ? { model } : {}), ...(permission ? { permission } : {}) };
+}
+function claudeSettingsArgs(session: Session, capabilities?: BackendInfo['capabilities']): string[] {
+  const { model, permission } = effectiveClaudeSettings(session);
+  return [
+    ...(permission ? ['--permission-mode', permission] : []),
+    // `default` is the native alias for "whatever Claude would pick"; omit it.
+    ...(model && model !== 'default' ? ['--model', model] : []),
+    ...(capabilities?.bypassOption || permission === 'bypassPermissions' ? ['--allow-dangerously-skip-permissions'] : []),
+  ];
 }
