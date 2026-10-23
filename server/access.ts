@@ -39,6 +39,7 @@ export const ROUTES: Route[] = [
   { method: 'GET', path: '/api/sessions/:id/input', access: 'read' },
   { method: 'GET', path: '/api/sessions/:id/workspace/tree', access: 'read' },
   { method: 'GET', path: '/api/sessions/:id/workspace/file', access: 'read' },
+  { method: 'GET', path: '/api/sessions/:id/workspace/raw/*path', access: 'read' },
   { method: 'GET', path: '/api/sessions/:id/workspace/git/status', access: 'read' },
   { method: 'GET', path: '/api/sessions/:id/workspace/git/diff', access: 'read' },
   { method: 'GET', path: '/api/sessions/:id/attachments/:attachmentId', access: 'read' },
@@ -94,7 +95,13 @@ export const ROUTES: Route[] = [
 
 const compiled = ROUTES.map(route => ({
   ...route,
-  pattern: new RegExp(`^${route.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\/:([a-zA-Z]+)/g, '/(?<$1>[^/]+)')}$`),
+  // `:id` is one segment; `*path` keeps nested workspace previews addressable so
+  // relative HTML/CSS/JS URLs resolve under the same raw prefix.
+  pattern: new RegExp(`^${route.path.split('/').map(part => {
+    if (part.startsWith('*')) return `(?<${part.slice(1)}>.+)`;
+    if (part.startsWith(':')) return `(?<${part.slice(1)}>[^/]+)`;
+    return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }).join('/')}$`),
 }));
 
 export function matchRoute(method: string, path: string) {

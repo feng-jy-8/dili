@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { Braces, ChevronDown, ChevronRight, Columns2, File, FileCode2, FileDiff, FileImage, FileText, Folder, LoaderCircle, RefreshCw, Rows3, X } from 'lucide-react';
+import { Braces, ChevronDown, ChevronRight, Code2, Columns2, Eye, File, FileCode2, FileDiff, FileImage, FileText, Folder, LoaderCircle, RefreshCw, Rows3, X } from 'lucide-react';
 import type { Session } from '../shared/types';
 import { api } from './api';
 import Markdown from './Markdown';
 import DiffView, { DiffStats, type DiffMode } from './DiffView';
 import { readLocalPreference, writeLocalPreference } from './ui';
+import { appUrl } from './urls';
 import { interfaceScale, viewportWidth } from './zoom';
 
 type Entry = { name: string; path: string; kind: 'file' | 'directory'; size?: number };
@@ -12,9 +13,25 @@ type Tree = { path: string; entries: Entry[]; truncated: boolean };
 type FileResult = { path: string; content: string; truncated: boolean; binary: boolean; size: number };
 type DiffResult = { path: string; diff: string; truncated?: boolean; available: boolean };
 type GitStatus = { entries: { path: string; status: string }[]; available: boolean };
-type Preview = { kind: 'file'; result: FileResult } | { kind: 'diff'; result: DiffResult };
+type MediaKind = 'image' | 'video' | 'audio';
+type HtmlMode = 'preview' | 'source';
+type Preview =
+  | { kind: 'file'; result: FileResult }
+  | { kind: 'diff'; result: DiffResult }
+  | { kind: 'html'; result: FileResult; mode: HtmlMode; generation: number }
+  | { kind: 'media'; path: string; media: MediaKind };
 
 function markdownPath(path: string) { return /\.(?:md|markdown|mdx)$/i.test(path); }
+function htmlPath(path: string) { return /\.html?$/i.test(path); }
+function mediaKind(path: string): MediaKind | null {
+  if (/\.(?:png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(path)) return 'image';
+  if (/\.(?:mp4|webm|mov|ogv)$/i.test(path)) return 'video';
+  if (/\.(?:mp3|wav|ogg|m4a|aac)$/i.test(path)) return 'audio';
+  return null;
+}
+function workspaceRawUrl(sessionId: string, path: string) {
+  return appUrl(`/api/sessions/${encodeURIComponent(sessionId)}/workspace/raw/${path.split('/').filter(Boolean).map(encodeURIComponent).join('/')}`);
+}
 function formatSize(size?: number) { if (size === undefined) return ''; if (size < 1024) return `${size} B`; if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`; return `${(size / 1024 / 1024).toFixed(1)} MB`; }
 function fileIconClass(path: string) {
   const name = path.split('/').pop() ?? path;
@@ -22,12 +39,13 @@ function fileIconClass(path: string) {
   if (/\.(?:tsx?|jsx?|mjs|cjs|vue|svelte|py|rb|go|rs|java|kt|swift|c|cpp|h|hpp|css|scss|less|html|xml)$/i.test(name)) return 'workspace-file-icon-code';
   if (/\.(?:json|ya?ml|toml|ini|env)$/i.test(name) || /^(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/i.test(name)) return 'workspace-file-icon-config';
   if (/\.(?:png|jpe?g|gif|webp|svg|ico|bmp)$/i.test(name)) return 'workspace-file-icon-image';
+  if (/\.(?:mp4|webm|mov|ogv|mp3|wav|ogg|m4a|aac)$/i.test(name)) return 'workspace-file-icon-media';
   return 'workspace-file-icon-file';
 }
 function EntryIcon({ entry }: { entry: Entry }) {
   if (entry.kind === 'directory') return <Folder size={14} className="workspace-entry-icon workspace-folder-icon" />;
   const className = fileIconClass(entry.path);
-  const Icon = className.endsWith('-markdown') ? FileText : className.endsWith('-config') ? Braces : className.endsWith('-image') ? FileImage : className.endsWith('-code') ? FileCode2 : File;
+  const Icon = className.endsWith('-markdown') ? FileText : className.endsWith('-config') ? Braces : className.endsWith('-image') || className.endsWith('-media') ? FileImage : className.endsWith('-code') ? FileCode2 : File;
   return <Icon size={14} className={`workspace-entry-icon ${className}`} />;
 }
 function gitStatusClass(status: string) {
@@ -164,7 +182,15 @@ function WorkspaceExplorerPanel({ session, close, picker }: { session: Session; 
   };
   const openFile = (path: string) => {
     setSelectedPath(path); setPreview(null);
-    void request<FileResult>('preview', `${base}/file?path=${encodeURIComponent(path)}`, result => setPreview({ kind: 'file', result }), '无法读取文件');
+    const media = mediaKind(path);
+    if (media) {
+      setPreview({ kind: 'media', path, media });
+      return;
+    }
+    void request<FileResult>('preview', `${base}/file?path=${encodeURIComponent(path)}`, result => {
+      if (htmlPath(path) && !result.binary) setPreview({ kind: 'html', result, mode: 'preview', generation: 0 });
+      else setPreview({ kind: 'file', result });
+    }, '无法读取文件');
   };
   const openDiff = (path: string) => {
     setSelectedPath(path); setPreview(null);
@@ -212,6 +238,8 @@ function WorkspaceExplorerPanel({ session, close, picker }: { session: Session; 
   };
   const loading = pending.size > 0;
   const file = preview?.kind === 'file' ? preview.result : null;
+  const html = preview?.kind === 'html' ? preview : null;
+  const media = preview?.kind === 'media' ? preview : null;
   const diff = preview?.kind === 'diff' ? preview.result : null;
   const gitEntries = useMemo(() => [...(git?.entries ?? [])].sort((a, b) => a.path.localeCompare(b.path, 'zh-CN', { numeric: true, sensitivity: 'base' })), [git]);
   const visibleErrors = Object.entries(errors).filter(([scope]) => scope === 'preview' || (tab === 'git' ? scope === 'git' : scope.startsWith('tree:')));
@@ -224,6 +252,10 @@ function WorkspaceExplorerPanel({ session, close, picker }: { session: Session; 
   const previewMax = Math.max(PREVIEW.min, viewport - MAIN_RESERVE - shownTree);
   const shownPreview = Math.max(PREVIEW.min, Math.min(previewWidth, previewMax));
   const chooseDiffMode = (mode: DiffMode) => { setDiffMode(mode); writeLocalPreference('sessiondeck.diff-mode', mode); };
+  const setHtmlMode = (mode: HtmlMode) => setPreview(current => current?.kind === 'html' ? { ...current, mode } : current);
+  const refreshHtml = () => setPreview(current => current?.kind === 'html' ? { ...current, generation: current.generation + 1 } : current);
+  const rawUrl = (path: string) => workspaceRawUrl(session.id, path);
+  const previewReady = !!(file || html || media || diff);
 
   return <aside className={`workspace-explorer ${previewOpen ? 'preview-open' : ''}`} aria-label="资源管理器" style={{ '--workspace-tree-width': `${shownTree}px`, '--workspace-preview-width': `${shownPreview}px` } as CSSProperties}>
     <div className="workspace-list-pane">
@@ -243,8 +275,10 @@ function WorkspaceExplorerPanel({ session, close, picker }: { session: Session; 
     {previewOpen && <><div className="workspace-preview-pane">
       {visibleErrors.filter(([scope]) => scope === 'preview').map(([scope, message]) => <div key={scope} className="workspace-error" role="alert">{message}</div>)}
       {file && <section className="workspace-preview"><header><EntryIcon entry={{ name: file.path, path: file.path, kind: 'file' }} /><strong title={file.path}><bdi>{file.path}</bdi></strong><button className="icon-button" aria-label="关闭文件预览" onClick={clearPreview}><X size={14} /></button></header>{file.binary ? <p className="workspace-note">二进制文件不支持预览。</p> : markdownPath(file.path) ? <Markdown text={file.content} /> : <pre>{file.content}</pre>}{file.truncated && <p className="workspace-note">文件过大，预览已截断。</p>}</section>}
+      {html && <section className="workspace-preview workspace-html-preview"><header><EntryIcon entry={{ name: html.result.path, path: html.result.path, kind: 'file' }} /><strong title={html.result.path}><bdi>{html.result.path}</bdi></strong><div className="diff-mode-switch" role="group" aria-label="网页显示方式"><button className="icon-button" aria-label="预览网页" title="预览" aria-pressed={html.mode === 'preview'} onClick={() => setHtmlMode('preview')}><Eye size={14} /></button><button className="icon-button" aria-label="查看源码" title="源码" aria-pressed={html.mode === 'source'} onClick={() => setHtmlMode('source')}><Code2 size={14} /></button></div>{html.mode === 'preview' && <button className="icon-button" aria-label="刷新网页预览" title="刷新预览" onClick={refreshHtml}><RefreshCw size={14} /></button>}<button className="icon-button" aria-label="关闭文件预览" onClick={clearPreview}><X size={14} /></button></header>{html.mode === 'preview' ? <iframe key={html.generation} className="workspace-html-frame" title={`预览 ${html.result.path}`} src={rawUrl(html.result.path)} sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer" /> : <pre>{html.result.content}</pre>}{html.result.truncated && html.mode === 'source' && <p className="workspace-note">文件过大，预览已截断。</p>}</section>}
+      {media && <section className="workspace-preview workspace-media-preview"><header><EntryIcon entry={{ name: media.path, path: media.path, kind: 'file' }} /><strong title={media.path}><bdi>{media.path}</bdi></strong><button className="icon-button" aria-label="关闭文件预览" onClick={clearPreview}><X size={14} /></button></header><div className="workspace-media-stage">{media.media === 'image' ? <img src={rawUrl(media.path)} alt={media.path} /> : media.media === 'video' ? <video src={rawUrl(media.path)} controls playsInline preload="metadata" /> : <audio src={rawUrl(media.path)} controls preload="metadata" />}</div></section>}
       {diff && <section className="workspace-preview workspace-diff"><header><FileDiff size={14} className="workspace-entry-icon" /><strong title={diff.path}><bdi>{diff.path}</bdi></strong>{diff.available && diff.diff && <DiffStats diff={diff.diff} />}<div className="diff-mode-switch" role="group" aria-label="差异显示方式"><button className="icon-button" aria-label="并排显示" title="并排显示" aria-pressed={diffMode === 'split'} onClick={() => chooseDiffMode('split')}><Columns2 size={14} /></button><button className="icon-button" aria-label="内联显示" title="内联显示" aria-pressed={diffMode === 'inline'} onClick={() => chooseDiffMode('inline')}><Rows3 size={14} /></button></div><button className="icon-button" aria-label="关闭 diff 预览" onClick={clearPreview}><X size={14} /></button></header>{!diff.available ? <p className="workspace-note">Git diff 不可用。</p> : !diff.diff ? <p className="workspace-note">此文件没有可显示的文本差异。</p> : <DiffView diff={diff.diff} mode={diffMode} />}{diff.truncated && <p className="workspace-note">差异过大，预览已截断。</p>}</section>}
-      {!file && !diff && pending.has('preview') && <div className="workspace-preview workspace-preview-empty"><LoaderCircle size={18} className="spin" /><p>正在打开 {selectedPath}</p></div>}
+      {!previewReady && pending.has('preview') && <div className="workspace-preview workspace-preview-empty"><LoaderCircle size={18} className="spin" /><p>正在打开 {selectedPath}</p></div>}
     </div>
     <Splitter label="调整预览宽度" value={shownPreview} min={PREVIEW.min} max={previewMax} onChange={setPreviewWidth} onCommit={value => writeLocalPreference(PREVIEW.key, String(value))} /></>}
   </aside>;

@@ -391,6 +391,11 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .workspace-preview>pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .workspace-preview-empty { align-items: center; justify-content: center; gap: 8px; padding: 20px; text-align: center; color: var(--muted); }
 .workspace-preview-empty p { margin: 0; font-size: 12px; }
+.workspace-file-icon-media { color: #c45c26; }
+.workspace-html-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+.workspace-media-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: auto; background: var(--subtle); }
+.workspace-media-stage img, .workspace-media-stage video { max-width: 100%; max-height: 100%; object-fit: contain; background: #00000008; }
+.workspace-media-stage audio { width: min(420px, 100%); }
 
 /* ——— Diff: VS Code light diff editor colors and layout ——— */
 .diff-stats { display: inline-flex; flex-shrink: 0; gap: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }

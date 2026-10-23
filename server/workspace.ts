@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
-import { realpath, opendir, stat, lstat, open } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path';
+import { constants, createReadStream, type ReadStream } from 'node:fs';
+import { realpath, opendir, stat, lstat, open, type FileHandle } from 'node:fs/promises';
+import { dirname, extname, isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { promisify } from 'node:util';
 
@@ -10,6 +10,34 @@ const MAX_ENTRIES = 600;
 const MAX_SCANNED_ENTRIES = 3000;
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_DIFF_BYTES = 512 * 1024;
+
+/** MIME types served for in-app HTML/media preview and relative asset loads. */
+const PREVIEW_MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.map': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.bmp': 'image/bmp',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.ogv': 'video/ogg',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf',
+  '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8',
+};
+export type WorkspaceContentKind = 'html' | 'image' | 'video' | 'audio' | 'asset' | 'other';
+export type WorkspaceContent = { path: string; size: number; mime: string; kind: WorkspaceContentKind; handle: FileHandle };
+
+export function workspaceMime(path: string): string {
+  return PREVIEW_MIME[extname(path).toLowerCase()] ?? 'application/octet-stream';
+}
+export function workspaceContentKind(path: string): WorkspaceContentKind {
+  const mime = workspaceMime(path);
+  if (mime.startsWith('text/html')) return 'html';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime !== 'application/octet-stream') return 'asset';
+  return 'other';
+}
 
 type GitCommandResult = { stdout: string; code: number | null; truncated: boolean; failed: boolean };
 type GitEntry = { path: string; status: string };
@@ -121,6 +149,56 @@ export async function readWorkspaceFile(cwd: string, value: unknown): Promise<Wo
     }
     return { path: target.relativePath, content, truncated, binary, size: metadata.size };
   } finally { await handle.close(); }
+}
+
+/** Open a workspace file for streaming preview. Caller must close the handle. */
+export async function openWorkspaceContent(cwd: string, value: unknown): Promise<WorkspaceContent> {
+  const target = await inside(cwd, value, 'file');
+  const handle = await open(target.canonical, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.dev !== target.metadata?.dev || metadata.ino !== target.metadata?.ino) fail('文件已变化，请刷新后重试');
+    if (process.platform === 'linux') {
+      const opened = await realpath(`/proc/self/fd/${handle.fd}`);
+      if (!contained(target.root, opened)) fail('文件路径超出工作目录', 403);
+    }
+    return { path: target.relativePath, size: metadata.size, mime: workspaceMime(target.relativePath), kind: workspaceContentKind(target.relativePath), handle };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
+export function parseByteRange(header: string | undefined, size: number): { start: number; end: number } | 'invalid' | undefined {
+  if (!header) return undefined;
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
+  if (!match || (match[1] === '' && match[2] === '')) return 'invalid';
+  if (match[1] === '') {
+    const suffix = Number(match[2]);
+    if (!Number.isInteger(suffix) || suffix <= 0) return 'invalid';
+    return { start: Math.max(0, size - suffix), end: Math.max(0, size - 1) };
+  }
+  const start = Number(match[1]);
+  const end = match[2] === '' ? size - 1 : Number(match[2]);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) return 'invalid';
+  if (size === 0) return start === 0 && (match[2] === '' || end === 0) ? { start: 0, end: 0 } : 'invalid';
+  if (start >= size) return 'invalid';
+  return { start, end: Math.min(end, size - 1) };
+}
+
+/** Stream an already-opened workspace file; closes the handle when the stream ends. */
+export function streamWorkspaceContent(content: WorkspaceContent, range?: { start: number; end: number }): ReadStream {
+  const start = range?.start ?? 0;
+  const end = range?.end ?? Math.max(0, content.size - 1);
+  // autoClose is false so we close the already-opened O_NOFOLLOW handle ourselves.
+  // fs.ReadStream does not emit `close` for that mode after a normal end.
+  const stream = createReadStream('', { fd: content.handle.fd, start, end, autoClose: false });
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; void content.handle.close().catch(() => {}); };
+  stream.on('end', close);
+  stream.on('error', close);
+  stream.on('close', close);
+  return stream;
 }
 
 function gitEnvironment(): NodeJS.ProcessEnv {
