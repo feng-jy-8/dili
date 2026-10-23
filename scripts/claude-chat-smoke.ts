@@ -16,17 +16,19 @@ const executable = await findExecutable('claude'); assert.ok(executable, 'Instal
 const root = await mkdtemp(join(tmpdir(), 'dili-claude-stream-')), home = join(root, 'claude'), cwd = join(root, 'workspace');
 await mkdir(home); await mkdir(cwd);
 await writeFile(join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true }));
-const bridge = new ClaudeChatBridge(), reader = new ConversationReader({ claudeHome: home, cacheMs: 0 });
+const reader = new ConversationReader({ claudeHome: home, cacheMs: 0 });
+const bridge = new ClaudeChatBridge((id, cursor) => reader.readClaudePage(id, cursor));
 let release: (() => void) | undefined, failure: Error | undefined;
 const held = new Set<ServerResponse>();
 const requests: string[] = [];
+const requestedModels: string[] = [];
 const provider = createServer(async (req, res) => {
   try {
     let body = ''; for await (const data of req) body += data;
     if (req.method === 'HEAD') { res.end(); return; }
     if (req.url?.includes('count_tokens')) { res.setHeader('content-type', 'application/json'); res.end('{"input_tokens":10}'); return; }
     assert.equal(new URL(req.url!, 'http://localhost').pathname, '/v1/messages'); assert.equal(req.headers['x-api-key'], 'dili-loopback-fixture');
-    const input = JSON.parse(body); requests.push(JSON.stringify(input.messages));
+    const input = JSON.parse(body); requests.push(JSON.stringify(input.messages)); requestedModels.push(input.model);
     res.writeHead(200, { 'content-type': 'text/event-stream' }); held.add(res); res.once('close', () => held.delete(res));
     const event = (type: string, fields: object) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...fields })}\n\n`);
     event('message_start', { message: { id: `msg_fixture_${requests.length}`, type: 'message', role: 'assistant', model: input.model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } } });
@@ -65,15 +67,26 @@ try {
   const args = ['--model', 'claude-sonnet-4-6', '--setting-sources', '', '--strict-mcp-config', '--no-chrome', '--tools', ''];
   const id = randomUUID();
   await bridge.start(id, cwd, { file: executable, args: ['--session-id', id, ...args], env }, { messages: [], truncated: false });
+  let settings = await bridge.readChatSettings(id);
+  assert.ok(settings.models.length, 'Native initialize did not supply model choices');
+  settings = await bridge.updateChatSettings(id, { version: settings.version, field: 'permission', value: 'plan' });
+  assert.equal(settings.permission, 'plan');
+  settings = await bridge.updateChatSettings(id, { version: settings.version, field: 'permission', value: 'default' });
+  settings = await bridge.updateChatSettings(id, { version: settings.version, field: 'model', value: settings.models.find(model => model.id !== 'default')!.id });
   await bridge.sendPrompt(id, 'DILI_STREAM_FIRST');
   await until(() => bridge.chatSnapshot(id)?.items.some(item => item.text === 'Hello **') === true, 'No real native partial text');
   assert.ok(bridge.chatSnapshot(id)?.activeTurnId, 'Partial must be visible while the turn is active');
+  assert.equal(requestedModels.at(-1), settings.model, 'Next real provider request must use the native model selection');
+  await assert.rejects(bridge.updateChatSettings(id, { version: settings.version, field: 'permission', value: 'plan' }), /任务|审批/);
   assert.ok(release); release();
   await until(() => bridge.chatSnapshot(id)?.activeTurnId === null, 'Native turn did not finish');
   assert.deepEqual(bridge.chatSnapshot(id)?.items.filter(item => item.type === 'assistant').map(item => item.text), ['Hello **world**']);
-  const history = await reader.read({ backend: 'claude', nativeSessionId: id, cwd, forkPending: false });
+  const history = await reader.readLatest({ backend: 'claude', nativeSessionId: id, cwd, forkPending: false });
   assert.ok(history.messages.some(item => item.text === 'DILI_STREAM_FIRST'));
+  const stableIds = bridge.chatSnapshot(id)!.items.filter(item => ['user', 'assistant'].includes(item.type)).map(item => item.id);
+  assert.deepEqual(stableIds, history.messages.map(item => item.id), 'Native stream UUIDs must match persisted history');
   await bridge.closeSession(id);
+  assert.deepEqual((await bridge.readChat(id)).items.map(item => item.id), stableIds, 'Stopped read must preserve message identity without launching a CLI');
   await bridge.start(id, cwd, { file: executable, args: ['--resume', id, ...args], env }, history);
   const image = join(root, 'image.png');
   await writeFile(image, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
@@ -85,6 +98,11 @@ try {
   await bridge.closeSession(id);
   const child = randomUUID(), parentHistory = await reader.readLatest({ backend: 'claude', nativeSessionId: id, cwd, forkPending: false });
   await bridge.start(child, cwd, { file: executable, args: ['--resume', id, '--fork-session', '--session-id', child, ...args], env }, parentHistory);
+  assert.ok(bridge.chatSnapshot(child)?.items.some(item => item.text === 'DILI_STREAM_FIRST'), 'Forked GUI must show inherited history before the first new prompt');
+  const inheritedIds = bridge.chatSnapshot(child)!.items.map(item => item.id);
+  await bridge.closeSession(child);
+  assert.deepEqual((await bridge.readChat(child)).items.map(item => item.id), inheritedIds, 'An unused stopped fork must retain its bounded inherited view');
+  await bridge.start(child, cwd, { file: executable, args: ['--resume', id, '--fork-session', '--session-id', child, ...args], env });
   await bridge.sendPrompt(child, 'DILI_STREAM_FORK');
   await until(() => !!release, 'Forked Claude did not reach the provider');
   assert.ok(requests.at(-1)?.includes('DILI_STREAM_FIRST'), 'Fork lost source context');
@@ -92,6 +110,7 @@ try {
   await bridge.closeSession(child);
   const childHistory = await reader.readLatest({ backend: 'claude', nativeSessionId: child, cwd, forkPending: false });
   assert.ok(childHistory.messages.some(item => item.text === 'DILI_STREAM_FORK'));
+  assert.deepEqual(childHistory.messages.slice(0, inheritedIds.length).map(item => item.id), inheritedIds, 'Inherited GUI IDs must match the native fork log once saved');
   const blank = randomUUID();
   await bridge.start(blank, cwd, { file: executable, args: ['--session-id', blank, ...args], env }, { messages: [], truncated: false });
   await bridge.closeSession(blank);
@@ -115,7 +134,7 @@ try {
   await bridge.stopSession(approvalId);
   await until(() => bridge.chatSnapshot(approvalId)?.activeTurnId === null, 'Native interrupt did not finish');
   release = undefined;
-  console.log('Real Claude stream-json: streaming, Markdown, images, resume, fork, empty-chat reopening, tool approval and interrupt passed.');
+  console.log('Real Claude stream-json: native model list/switch and next-request effect, permission switch, busy guard, streaming, Markdown, images, resume, fork, empty-chat reopening, tool approval and interrupt passed.');
 } finally {
   await bridge.close(); for (const res of held) res.destroy();
   await new Promise<void>(resolve => provider.close(() => resolve()));
