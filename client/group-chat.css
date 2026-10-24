@@ -97,3 +97,5 @@
 .placement-picker span { display: flex; flex-direction: column; gap: 2px; }
 .placement-picker small { color: var(--muted); font-size: 12px; }
 .placement-warning { color: var(--warning, #b7791f); }
+.group-message.failed .bubble { border: 1px solid var(--danger, #d64545); background: var(--danger-bg, #fdecec); }
+.group-message.failed .message-kind, .delivery-failed { color: var(--danger, #d64545); }

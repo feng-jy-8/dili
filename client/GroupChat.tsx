@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { FolderGit2, FolderOpen, GitMerge, Trash2, ArrowLeft, ArrowRight, AtSign, Check, ChevronDown, ChevronUp, Columns3, LoaderCircle, MessageSquare, Plus, Quote, Send, Settings2, Share2, UserMinus, UsersRound, X } from 'lucide-react';
+import { FolderGit2, FolderOpen, GitMerge, RotateCcw, Trash2, ArrowLeft, ArrowRight, AtSign, Check, ChevronDown, ChevronUp, Columns3, LoaderCircle, MessageSquare, Plus, Quote, Send, Settings2, Share2, UserMinus, UsersRound, X } from 'lucide-react';
 import type { AgentChatSnapshot } from '../shared/chat';
 import type { Delivery, Group, GroupDetail, GroupMessage, Session, WorktreeStatus } from '../shared/types';
 import { api } from './api';
@@ -152,7 +152,8 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
   // Viewing the group reads its member replies.
-  useEffect(() => { if ((group.unread ?? 0) > 0) markRead(); }, [group.unread, markRead]);
+  const staleReminders = activeMembers.filter(member => member.unread > 0 && member.status !== 'waiting_approval' && member.status !== 'error').length;
+  useEffect(() => { if ((group.unread ?? 0) > 0 || staleReminders > 0) markRead(); }, [group.unread, staleReminders, markRead]);
 
   const jumpToMessage = useCallback((id: string) => {
     const element = document.getElementById(`group-message-${id}`);
@@ -201,6 +202,17 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
     if (current.text.trim() || current.recipients.length || current.sourceMessageId) confirmReplace(message, current.text, proceed);
     else proceed();
   }, [confirmReplace]);
+  /** A failed task goes back to the same member: original text and references, edited before sending. */
+  const reassign = useCallback((failure: GroupMessage) => {
+    const task = failure.sourceMessageId ? messagesById.get(failure.sourceMessageId) : undefined;
+    const proceed = () => {
+      setText(task?.text ?? ''); setRecipients(failure.senderId ? [failure.senderId] : []); setSourceMessageId(null); setReferences(task?.references ?? []); setLocalError('');
+      requestAnimationFrame(() => { composerRef.current?.focus(); composerRef.current?.scrollIntoView({ block: 'center' }); });
+    };
+    const current = JSON.parse(currentDraftRef.current) as GroupDraft;
+    if (current.text.trim() || current.recipients.length || current.sourceMessageId) confirmReplace(failure, current.text, proceed);
+    else proceed();
+  }, [messagesById, confirmReplace]);
   const quote = useCallback((message: GroupMessage) => {
     setReferences(current => current.includes(message.id) ? current : [...current, message.id].slice(-20));
     requestAnimationFrame(() => composerRef.current?.focus());
@@ -266,7 +278,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
     const reply = delivery.replyMessageId ? messagesById.get(delivery.replyMessageId) : undefined;
     return <div className="delivery-item" key={delivery.id}><span>{member ? <BackendAvatar backend={member.backend} small /> : <Send size={13} />}{member?.title || '群组成员'}</span>{delivery.status === 'pending' ? <div><span className="delivery-pending-note" title={delivery.lastError}>{delivery.lastError || '未发送'}</span><button className="text-button" disabled={!!busy || !member || member.archived} onClick={() => deliver(delivery.id, delivery.sessionId)}>{busy === `deliver:${delivery.id}` ? <LoaderCircle size={13} className="spin" /> : <ArrowRight size={13} />}{!demo && (member?.backend === 'dsh' || !!member && ['codex', 'claude'].includes(member.backend) && member.interactionMode === 'chat') ? '发送到会话' : '填入会话'}</button><button className="icon-button" disabled={!!busy} aria-label="取消投递" title="取消投递" onClick={() => cancel(delivery.id)}><X size={13} /></button></div>
       : delivery.status === 'unknown' ? <div className="delivery-uncertain"><span title={delivery.lastError}>结果待确认，请核对原生会话</span><button className="text-button" onClick={() => open(delivery.sessionId, true)}>进入核对</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'confirmed')}>已核对，已收到</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'not_received')}>已核对，未收到</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'cancelled')}>关闭投递</button></div>
-      : <span className="delivery-state">{reply ? <button className="text-button" onClick={() => jumpToMessage(reply.id)}>已回复 <ArrowRight size={12} /></button> : delivery.status === 'sending' ? '投递中…' : delivery.status === 'sent' ? member?.status === 'running' ? '执行中…' : '已发送' : delivery.status === 'staged' ? '已填入 · 在私聊按回车发送' : '已取消'}{delivery.status === 'staged' && !reply && <button className="text-button" onClick={() => open(delivery.sessionId, true)}>进入 <ArrowRight size={12} /></button>}</span>}</div>;
+      : <span className="delivery-state">{reply ? <button className={`text-button${reply.failed ? ' delivery-failed' : ''}`} onClick={() => jumpToMessage(reply.id)}>{reply.failed ? '回复失败' : '已回复'} <ArrowRight size={12} /></button> : delivery.status === 'sending' ? '投递中…' : delivery.status === 'sent' ? member?.status === 'running' ? '执行中…' : '已发送' : delivery.status === 'staged' ? '已填入 · 在私聊按回车发送' : '已取消'}{delivery.status === 'staged' && !reply && <button className="text-button" onClick={() => open(delivery.sessionId, true)}>进入 <ArrowRight size={12} /></button>}</span>}</div>;
   };
 
   const messageList = useMemo(() => <div ref={historyRef} className="message-list group-timeline" onScroll={event => { const element = event.currentTarget; followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}>
@@ -275,10 +287,10 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
       const sender = message.senderId ? membersById.get(message.senderId) : undefined;
       const open_ = expanded.has(message.id);
       const isMember = message.kind === 'reply' || message.kind === 'result';
-      return <article id={`group-message-${message.id}`} tabIndex={-1} key={message.id} className={`group-message kind-${message.kind} ${message.senderId ? '' : 'mine'}`}>
+      return <article id={`group-message-${message.id}`} tabIndex={-1} key={message.id} className={`group-message kind-${message.kind} ${message.senderId ? '' : 'mine'}${message.failed ? ' failed' : ''}`}>
         <span className="message-avatar">{sender ? <BackendAvatar backend={sender.backend} small /> : message.senderId ? <MessageSquare size={16} /> : '我'}</span>
         <div className="message-body">
-          <div className="message-heading"><strong>{message.senderName || '我'}</strong><span className="message-kind">{message.kind === 'task' ? '任务' : message.kind === 'reply' ? '回复' : message.kind === 'result' ? '结果' : '记录'}</span><time>{relativeTime(message.createdAt)}</time></div>
+          <div className="message-heading"><strong>{message.senderName || '我'}</strong><span className="message-kind">{message.kind === 'task' ? '任务' : message.failed ? '回复失败' : message.kind === 'reply' ? '回复' : message.kind === 'result' ? '结果' : '记录'}</span><time>{relativeTime(message.createdAt)}</time></div>
           <div className="bubble">
             {message.sourceMessageId && <button className="message-source-link" onClick={() => jumpToMessage(message.sourceMessageId!)}><ArrowRight size={12} />{message.kind === 'reply' ? '回复' : '来源'}：{messagesById.get(message.sourceMessageId)?.senderName || '原消息'}<span>查看原消息</span></button>}
             {message.recipientIds.length > 0 && <div className="message-recipients">{message.recipientIds.map(id => <button key={id} onClick={() => open(id)}>@{membersById.get(id)?.title || '已归档成员'}</button>)}</div>}
@@ -290,7 +302,8 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
           </div>
           <div className="delivery-list">{(deliveriesByMessage.get(message.id) ?? []).map(deliveryRow)}</div>
           <div className="message-actions">
-            {isMember && <button className="text-button" disabled={posting} aria-pressed={references.includes(message.id)} onClick={() => quote(message)}><Quote size={13} />引用</button>}
+            {message.failed && message.senderId && message.sourceMessageId && <button className="text-button" disabled={posting || !!busy} onClick={() => reassign(message)}><RotateCcw size={13} />重新指派</button>}
+            {isMember && !message.failed && <button className="text-button" disabled={posting} aria-pressed={references.includes(message.id)} onClick={() => quote(message)}><Quote size={13} />引用</button>}
             {message.kind === 'reply' && message.senderId && <button className="text-button" onClick={() => open(message.senderId!, true)}><MessageSquare size={13} />在私聊中查看</button>}
             <button className="text-button" disabled={posting || !!busy} onClick={() => forwardMessage(message)}><ArrowRight size={13} />转交为任务</button>
           </div>
@@ -299,7 +312,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
     }) : <div className="board-empty"><p>{only ? '这位成员在当前加载的消息里还没有发言。' : '还没有群聊消息。@ 成员指派任务，他们的回复会自动出现在这里。'}</p></div>}
     {!only && streaming.map(member => <div className="group-live" key={member.id} aria-live="polite"><span className="message-avatar"><BackendAvatar backend={member.backend} small /></span><div className="message-body"><div className="message-heading"><strong>{member.title}</strong><span className="message-kind">正在回复…</span></div>{live[member.id] ? <div className="bubble group-live-text"><Markdown text={live[member.id]} /></div> : <div className="bubble group-typing"><i /><i /><i /></div>}</div></div>)}
     {!only && activeMembers.filter(member => member.status === 'running' && member.interactionMode !== 'chat' && detail.deliveries.some(delivery => delivery.sessionId === member.id && (delivery.status === 'sent' || delivery.status === 'staged') && !delivery.replyMessageId)).map(member => <div className="group-live" key={member.id}><span className="message-avatar"><BackendAvatar backend={member.backend} small /></span><div className="message-body"><div className="message-heading"><strong>{member.title}</strong><span className="message-kind">正在执行…</span></div><div className="bubble group-typing"><i /><i /><i /></div></div></div>)}
-  </div>, [totalMessages, earlierCount, loadingOlder, visibleMessages, messagesById, membersById, deliveriesByMessage, busy, posting, demo, open, deliver, cancel, resolveDelivery, jumpToMessage, forwardMessage, quote, showEarlier, expanded, references, only, streaming, live, activeMembers, detail.deliveries]);
+  </div>, [totalMessages, earlierCount, loadingOlder, visibleMessages, messagesById, membersById, deliveriesByMessage, busy, posting, demo, open, deliver, cancel, resolveDelivery, jumpToMessage, forwardMessage, quote, reassign, showEarlier, expanded, references, only, streaming, live, activeMembers, detail.deliveries]);
 
   const splitMembers = activeMembers;
   const sharedMember = activeMembers.find(member => !member.worktree && (!group.workspace || member.cwd === group.workspace));

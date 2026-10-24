@@ -701,7 +701,7 @@ export class CodexBridge {
       this.nativeAttention.delete(threadId);
       this.emitStatus(threadId, { status: 'running', detail: 'Codex 原生会话正在执行', timestamp: now() });
     } else if (message.method === 'turn/completed' && threadId) {
-      const turn = params.turn as { id?: string; status?: string } | undefined;
+      const turn = params.turn as { id?: string; status?: string; error?: unknown } | undefined;
       if (!turn?.id || !UUID.test(turn.id)) return;
       const activeId = this.turnIds.get(threadId);
       if (activeId && activeId !== turn.id) return;
@@ -710,7 +710,10 @@ export class CodexBridge {
       const event = this.completionEvent(threadId, turn as { id: string; status?: string });
       this.emitStatus(threadId, event);
     } else if (message.method === 'error' && threadId) {
-      this.emitStatus(threadId, { status: 'error', detail: 'Codex 报告执行错误，请进入原生会话查看', timestamp: now() });
+      // A retried error is not the end of the turn; the native client keeps going.
+      if (params.willRetry === true) return;
+      const reason = nativeErrorText(params.error);
+      this.emitStatus(threadId, { status: 'error', detail: reason ? `Codex 执行错误：${reason}` : 'Codex 报告执行错误，请进入原生会话查看', timestamp: now() });
     }
   }
 
@@ -721,7 +724,7 @@ export class CodexBridge {
     const event: CodexStatusEvent = turn.status === 'completed'
       ? { status: 'waiting_input', detail: 'Codex 本轮已结束，可以继续或验收', timestamp: now(), attentionKey }
       : turn.status === 'interrupted' ? { status: 'idle', detail: 'Codex 当前轮次已中断', timestamp: now(), attentionKey }
-      : turn.status === 'failed' ? { status: 'error', detail: 'Codex 当前轮次执行失败，请进入原生会话查看', timestamp: now(), attentionKey }
+      : turn.status === 'failed' ? { status: 'error', detail: nativeErrorText((turn as { error?: unknown }).error) ? `Codex 当前轮次失败：${nativeErrorText((turn as { error?: unknown }).error)}` : 'Codex 当前轮次执行失败，请进入原生会话查看', timestamp: now(), attentionKey }
       : { status: 'unknown', detail: 'Codex 返回了未知的轮次结束状态', timestamp: now(), attentionKey };
     this.completed.set(threadId, event);
     this.nativeAttention.delete(threadId);
@@ -989,4 +992,10 @@ export class CodexBridge {
       env: { [TOKEN_ENV]: this.token, ...(cwd ? { PWD: resolve(cwd) } : {}) },
     };
   }
+}
+
+/** The native error message, bounded, for status details and group failure notes. */
+export function nativeErrorText(error: unknown): string {
+  const message = typeof error === 'string' ? error : error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message : '';
+  return message.replace(/\s+/g, ' ').trim().slice(0, 300);
 }

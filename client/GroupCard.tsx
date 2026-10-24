@@ -1,7 +1,7 @@
 import { Ellipsis, Pin, PinOff, Settings2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Group, Session } from '../shared/types';
-import { BackendAvatar, pending, relativeTime } from './App';
+import { BackendAvatar, relativeTime } from './App';
 import './group-chat.css';
 
 /** WeChat-style group avatar: member avatars tiled 2×2 or 3×3, with a group mark. */
@@ -16,7 +16,10 @@ export function GroupAvatar({ members, small = false }: { members: Session[]; sm
   </span>;
 }
 
-export const groupNeedsAttention = (group: Group, members: Session[]) => (group.unread ?? 0) > 0 || members.some(member => !member.archived && pending(member));
+/** Member replies plus members blocked on the user (approval or error). A finished
+ * turn is already counted as its reply, so it does not add a second reminder. */
+export const memberNeedsAction = (member: Session) => !member.archived && member.unread > 0 && (member.status === 'waiting_approval' || member.status === 'error');
+export const groupNeedsAttention = (group: Group, members: Session[]) => (group.unread ?? 0) > 0 || members.some(memberNeedsAction);
 
 export default function GroupCard({ group, members, active, onOpen, onPin, onEdit }: {
   group: Group; members: Session[]; active: boolean; onOpen: () => void; onPin: () => void; onEdit: () => void;
@@ -30,7 +33,7 @@ export default function GroupCard({ group, members, active, onOpen, onPin, onEdi
     return () => document.removeEventListener('mousedown', close);
   }, [menu]);
   const live = members.filter(member => !member.archived);
-  const unread = (group.unread ?? 0) + live.filter(pending).length;
+  const unread = (group.unread ?? 0) + live.filter(memberNeedsAction).length;
   const running = live.filter(member => member.status === 'running').length;
   const preview = group.lastMessage ? `${group.lastMessage.senderName}：${group.lastMessage.text}` : group.goal || `${live.length} 位成员`;
   return <article className={`session-card group-card${active ? ' active' : ''}`} onClick={event => { if (!(event.target as Element).closest('button, .dropdown-menu')) onOpen(); }}>

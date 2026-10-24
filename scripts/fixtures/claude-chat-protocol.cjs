@@ -61,6 +61,8 @@ if (!process.argv.includes('--print')) {
       // Group tasks get a reply with the conclusion section the group prompt asks for.
       replyText = text.includes('【群聊任务】') ? `已处理任务。\n\n## 结论\n登录页通过验证（${text.includes('## 引用的结论') ? '参考了引用' : '独立完成'}）。` : '第一段 **完成**';
       if (text === 'EXIT') process.exit(1);
+      // A provider failure mid-turn: an error result with no assistant text.
+      if (text.includes('FAIL-TURN')) { active = true; out({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['unexpected status 526: origin SSL certificate invalid'] }); active = false; return; }
       if (text === 'BURST') {
         for (let i = 0; i < 240; i++) {
           const uuid = randomUUID(), content = [{ type: 'text', text: `progress ${i}` }];

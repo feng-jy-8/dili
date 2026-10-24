@@ -397,7 +397,7 @@ test('Claude graphical execution streams once, handles approvals/questions, and 
   assert.equal((await snapshot(source.id)).connected, true);
   assert.ok((await snapshot(source.id)).items.some(item => item.text === payload.text));
   // The fake TUI records its launch asynchronously after the PTY starts.
-  await until(async () => !!(await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8').catch(() => '')), 'Claude terminal launch was not recorded');
+  await until(async () => !!(await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8').catch(() => '')), 'Claude terminal launch was not recorded', 30_000);
   assert.equal((await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8')).trim().split('\n').length, 1);
 });
 
@@ -522,7 +522,7 @@ test('Claude contact settings align graphical and terminal executors, including 
   await request(path, 'PATCH', { status: 'waiting_input' });
   const terminal = await request<Session>(path + '/start', 'POST', { mode: 'terminal', handoff: true });
   assert.equal(terminal.executionTransport, 'pty');
-  const ptyLaunch = async (count: number) => { await until(async () => (await launches('claude-launches.jsonl')).length >= count, 'Claude terminal did not launch'); return (await launches('claude-launches.jsonl')).at(-1)!; };
+  const ptyLaunch = async (count: number) => { await until(async () => (await launches('claude-launches.jsonl')).length >= count, 'Claude terminal did not launch', 30_000); return (await launches('claude-launches.jsonl')).at(-1)!; };
   let ptyArgs = await ptyLaunch(1);
   for (const pair of [['--permission-mode', 'auto'], ['--model', 'fixture-alternative']]) assert.equal(ptyArgs[ptyArgs.indexOf(pair[0]) + 1], pair[1]);
   assert.ok(ptyArgs.includes('--allow-dangerously-skip-permissions'));
@@ -611,6 +611,16 @@ test('group @-tasks send at once, member replies flow back once with conclusions
   const second = (await readFile(join(f.directory, 'claude-calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'user').at(-1).message.content.map((block: { text?: string }) => block.text ?? '').join('');
   assert.match(second, /## 引用的结论\n\n### 验证员 的结论\n登录页通过验证（独立完成）。/);
   assert.doesNotMatch(second, /私聊补充/);
+
+  // A turn that fails without an answer is reported in the group once, with the native reason.
+  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: 'FAIL-TURN 请处理', recipientIds: [member.id], deliverNow: true }, 201);
+  await until(async () => (await replies()).length === 3, 'Failed turn was not reported in the group');
+  const failure = (await detail()).messages.filter(message => message.kind === 'reply').at(-1)! as { failed?: boolean; conclusion?: string; text: string };
+  assert.equal(failure.failed, true);
+  assert.match(failure.conclusion ?? '', /^回复失败：本轮任务未完成：unexpected status 526/);
+  assert.match(failure.text, /原任务不会自动重发/);
+  await delay(1500);
+  assert.equal((await replies()).length, 3, 'A failure is reported once');
 
   // Leaving the group keeps the contact.
   await request(`/api/sessions/${member.id}`, 'PATCH', { groupId: null });

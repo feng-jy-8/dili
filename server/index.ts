@@ -1466,6 +1466,8 @@ server.once('error', error => {
 });
 server.listen(port, host, () => {
   console.log(`Dili${demo ? ' [演示模式，不调用真实模型]' : ''} → http://${host.includes(':') ? `[${host}]` : host}:${port}\n本地数据：${dataDir}`);
+  // Tasks whose member already finished or failed before this start are collected now.
+  if (!demo) for (const item of store.sessions()) groupReplies.statusChanged(item);
   void applyRemote().then(() => {
     if (remoteServer.listening) console.log(`远程访问监听 → http://127.0.0.1:${remoteSettings().localPort}（需要登录）`);
   }).catch(error => console.error(`远程访问未启动：${error instanceof Error ? error.message : String(error)}`));

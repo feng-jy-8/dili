@@ -87,7 +87,7 @@ SESSIONDECK_CLIENT_DIR="$dili_demo_root/client" npm run dev
 | `SESSIONDECK_DATA_DIR` | 本地元数据目录，同一目录只允许一个服务实例 |
 | `SESSIONDECK_CLIENT_DIR` | 默认仓库下的 `dist/client`；前端构建输出及生产静态资源目录，构建与启动须使用同一值；浏览器测试自动使用临时目录 |
 | `SESSIONDECK_TEST_PORT` | `4337`，仅用于浏览器验收；需为未占用端口，不能为 `4317` |
-| `SESSIONDECK_DSH_PORT` | `4318`，按需启动的 dsh 原生 Web 服务 |
+| `SESSIONDECK_DSH_PORT` | 未设置时每次启动自动选择空闲端口；按需启动的 dsh 原生 Web 服务 |
 | `SESSIONDECK_CODEX_PORT` | `4319`，按需启动的 Codex app-server；`0` 自动选择空闲端口 |
 | `SESSIONDECK_CLAUDE_BIN` / `SESSIONDECK_CODEX_BIN` / `SESSIONDECK_DSH_BIN` | 可选原生程序绝对路径，未设置则从 `PATH` 查找 |
 

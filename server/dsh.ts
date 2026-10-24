@@ -70,7 +70,11 @@ export function dshDeepLinkClient(moduleId: string): string {
 }
 
 export class DshBridge {
-  readonly baseUrl: string;
+  private url: string;
+  get baseUrl(): string { return this.url; }
+  /** No configured port: pick a free one at each boot. A fixed default (4318)
+   * collided with the remote-access listener, which also defaults to Web port + 1. */
+  private readonly dynamicPort: boolean;
   private process: ChildProcess | null = null;
   private owners = new WeakMap<ChildProcess, OwnedProcess>();
   private starting: Promise<void> | null = null;
@@ -96,10 +100,12 @@ export class DshBridge {
   onStatusChange(listener: () => void) { this.statusListeners.add(listener); return () => { this.statusListeners.delete(listener); }; }
   private options: DshBridgeOptions;
   constructor(options: DshBridgeOptions = {}) {
-    const port = options.port ?? Number(process.env.SESSIONDECK_DSH_PORT ?? 4318);
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('无效的 DSH 端口');
+    const configured = options.port ?? (process.env.SESSIONDECK_DSH_PORT ? Number(process.env.SESSIONDECK_DSH_PORT) : undefined);
+    this.dynamicPort = configured === undefined;
+    const port = configured ?? 0;
+    if (!this.dynamicPort && (!Number.isInteger(port) || port < 1024 || port > 65535)) throw new Error('无效的 DSH 端口');
     if (options.startupTimeoutMs !== undefined && (!Number.isSafeInteger(options.startupTimeoutMs) || options.startupTimeoutMs <= 0)) throw new Error('无效的 DSH 启动超时');
-    this.baseUrl = `http://127.0.0.1:${port}`;
+    this.url = `http://127.0.0.1:${port}`;
     this.options = options;
   }
 
@@ -139,6 +145,15 @@ export class DshBridge {
     const file = await findExecutable('dsh');
     assertActive();
     if (!file) throw new Error('未找到 dsh 命令，请安装 DeepSeek Harness');
+    if (this.dynamicPort) {
+      const free = await new Promise<number>((resolvePort, reject) => {
+        const probe = createServer();
+        probe.once('error', reject);
+        probe.listen(0, '127.0.0.1', () => { const address = probe.address(); probe.close(() => resolvePort(address && typeof address === 'object' ? address.port : 0)); });
+      });
+      assertActive();
+      this.url = `http://127.0.0.1:${free}`;
+    }
     const port = Number(new URL(this.baseUrl).port);
     await new Promise<void>((resolveCheck, reject) => {
       const probe = createServer();

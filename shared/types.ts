@@ -132,6 +132,8 @@ export interface GroupMessage {
   deliveryId?: string;
   conclusion?: string;
   nativeMessageId?: string;
+  /** reply only: the member's task turn ended in an error without an answer. */
+  failed?: boolean;
   createdAt: string;
   /** Persistent change cursor and chronological page position. */
   revision?: number;

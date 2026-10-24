@@ -5,6 +5,9 @@ import { dirname } from 'node:path';
 import type { Session, Group, GroupMessage, Delivery, DeliveryAttempt, Activity, GroupDetail } from '../shared/types.ts';
 import { buildGroupTask } from '../shared/group-prompt.ts';
 
+/** A member state the group view cannot resolve: the user must act in its chat. */
+export const needsAction = (member: Pick<Session, 'status' | 'unread' | 'archived'>) => !member.archived && member.unread > 0 && (member.status === 'waiting_approval' || member.status === 'error');
+
 const now = () => new Date().toISOString();
 type Table = 'sessions' | 'groups' | 'messages' | 'deliveries' | 'activities';
 export type StoreChange = { table: 'sessions'; data: Session } | { table: 'groups'; data: Group } | { table: 'activities'; data: Activity };
@@ -199,22 +202,28 @@ export class Store {
     });
   }
   /** Records a member's collected reply exactly once per delivery. */
-  addReply(deliveryId: string, reply: { text: string; conclusion: string; nativeMessageId?: string }): GroupMessage | null {
+  addReply(deliveryId: string, reply: { text: string; conclusion: string; nativeMessageId?: string; failed?: boolean }): GroupMessage | null {
     return this.transaction(() => {
       const delivery = this.delivery(deliveryId);
       if (!delivery || delivery.replyMessageId) return null;
       const task = this.get<GroupMessage>('messages', delivery.messageId);
       const member = this.session(delivery.sessionId);
       if (!task || !member || member.groupId !== task.groupId) return null;
-      const message = this.insertMessage({ groupId: task.groupId, kind: 'reply', senderId: member.id, senderName: member.title, recipientIds: [], text: reply.text, conclusion: reply.conclusion, sourceMessageId: task.id, deliveryId, ...(reply.nativeMessageId ? { nativeMessageId: reply.nativeMessageId } : {}) });
+      const message = this.insertMessage({ groupId: task.groupId, kind: 'reply', senderId: member.id, senderName: member.title, recipientIds: [], text: reply.text, conclusion: reply.conclusion, sourceMessageId: task.id, deliveryId, ...(reply.nativeMessageId ? { nativeMessageId: reply.nativeMessageId } : {}), ...(reply.failed ? { failed: true } : {}) });
       this.put('deliveries', { ...this.delivery(deliveryId)!, replyMessageId: message.id });
       return message;
     });
   }
+  /** Viewing a group reads its replies and the members' finished-turn reminders,
+   * which the group already shows as replies. Approval and error reminders still
+   * need action and stay until the member's chat is opened. */
   markGroupRead(id: string): Group {
-    const group = this.group(id);
-    if (!group) throw new Error('群组不存在');
-    return group.unread ? this.updateGroup(id, { unread: 0 }) : group;
+    return this.transaction(() => {
+      const group = this.group(id);
+      if (!group) throw new Error('群组不存在');
+      for (const member of this.sessions()) if (member.groupId === id && member.unread > 0 && !needsAction(member)) this.updateSession(member.id, { unread: 0 });
+      return group.unread ? this.updateGroup(id, { unread: 0 }) : group;
+    });
   }
   private saveDelivery(delivery: Delivery): Delivery {
     const message = this.get<GroupMessage>('messages', delivery.messageId);

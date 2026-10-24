@@ -185,3 +185,15 @@ test('group handoffs preserve a local result source and reject foreign or missin
   assert.ok(store.delivery(detail.deliveries[0].id)!.text.includes(member.title));
   assert.ok(store.delivery(detail.deliveries[0].id)!.text.includes('根据这份结果继续验证。'));
 });
+
+test('viewing a group clears replies and finished-turn reminders but keeps approval and error reminders', t => {
+  const store = memory(t);
+  const group = store.addGroup('提醒', '');
+  const done = store.addSession({ backend: 'claude', title: '完成', cwd: '/tmp', groupId: group.id, status: 'waiting_input', unread: 2 });
+  const approval = store.addSession({ backend: 'codex', title: '审批', cwd: '/tmp', groupId: group.id, status: 'waiting_approval', unread: 1 });
+  const failed = store.addSession({ backend: 'codex', title: '出错', cwd: '/tmp', groupId: group.id, status: 'error', unread: 1 });
+  const outsider = store.addSession({ backend: 'claude', title: '群外', cwd: '/tmp', status: 'waiting_input', unread: 3 });
+  store.updateGroup(group.id, { unread: 4 });
+  assert.equal(store.markGroupRead(group.id).unread, 0);
+  assert.deepEqual([done, approval, failed, outsider].map(item => store.session(item.id)!.unread), [0, 1, 1, 3]);
+});

@@ -354,8 +354,9 @@ export class ClaudeChatBridge {
       const turnId = run.snapshot.activeTurnId;
       const failed = row.is_error === true || row.subtype !== 'success';
       this.finish(run, failed);
-      if (failed) this.upsert(run, { id: randomUUID(), type: 'notice', text: String(row.errors?.join('\n') || row.result || '本轮任务未完成'), status: 'failed' });
-      this.status(id, failed ? 'error' : 'waiting_input', failed ? '本轮任务未完成，可继续对话' : '本轮回复已结束，可以继续或验收', { attentionKey: `claude:${turnId}` });
+      const reason = failed ? String(row.errors?.join('\n') || row.result || '').replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+      if (failed) this.upsert(run, { id: randomUUID(), type: 'notice', text: reason || '本轮任务未完成', status: 'failed' });
+      this.status(id, failed ? 'error' : 'waiting_input', failed ? reason ? `本轮任务未完成：${reason}` : '本轮任务未完成，可继续对话' : '本轮回复已结束，可以继续或验收', { attentionKey: `claude:${turnId}` });
     } else if (row.type === 'control_request') {
       const request = object(row.request), nativeId = row.request_id;
       if (!request || typeof nativeId !== 'string' || run.requests.size >= 50) return;

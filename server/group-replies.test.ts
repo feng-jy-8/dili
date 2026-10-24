@@ -49,3 +49,13 @@ test('members are told whether they share the group workspace or work in their o
   assert.match(custom, /只有自定义说明\n\n工作区：所有成员共用/, 'A custom prompt without the placeholder still gets the workspace rule');
   assert.doesNotMatch(buildGroupTask({ group, member: 'A', task: 't', tag: 'T-000005' }), /\{\{workspace\}\}|\n\n\n/);
 });
+
+test('failure notes carry the native reason, bounded and never empty', async () => {
+  const { failureReply } = await import('./group-replies.ts');
+  const { nativeErrorText } = await import('./codex.ts');
+  assert.deepEqual(failureReply('Codex 执行错误：unexpected status 526').conclusion, '回复失败：Codex 执行错误：unexpected status 526');
+  assert.equal(failureReply('  ').conclusion, '回复失败：原生会话报告错误');
+  assert.equal(nativeErrorText({ message: 'unexpected status 526\n  error code: 526' }), 'unexpected status 526 error code: 526');
+  assert.equal(nativeErrorText('x'.repeat(400)).length, 300);
+  assert.equal(nativeErrorText(undefined), '');
+});
