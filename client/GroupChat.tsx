@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { FolderGit2, FolderOpen, GitMerge, RotateCcw, Trash2, ArrowLeft, ArrowRight, AtSign, Check, ChevronDown, ChevronUp, Columns3, LoaderCircle, MessageSquare, Plus, Quote, Send, Settings2, Share2, UserMinus, UsersRound, X } from 'lucide-react';
+import { Maximize2, Minimize2, FolderGit2, FolderOpen, GitMerge, RotateCcw, Trash2, ArrowLeft, ArrowRight, AtSign, Check, ChevronDown, ChevronUp, Columns3, LoaderCircle, MessageSquare, Plus, Quote, Send, Settings2, Share2, UserMinus, UsersRound, X } from 'lucide-react';
 import type { AgentChatSnapshot } from '../shared/chat';
 import type { Delivery, Group, GroupDetail, GroupMessage, Session, WorktreeStatus } from '../shared/types';
 import { api } from './api';
@@ -123,6 +123,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   const [references, setReferences] = useState<string[]>(draft.references);
   const [only, setOnly] = useState<string | null>(null);
   const [split, setSplit] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [phoneMember, setPhoneMember] = useState<string | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -327,7 +328,12 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   const splitMembers = activeMembers;
   const sharedMember = activeMembers.find(member => !member.worktree && (!group.workspace || member.cwd === group.workspace));
   const shownPhone = splitMembers.find(member => member.id === phoneMember) ?? splitMembers[0];
-  return <section className="group-board group-chat">
+  // Same as private chats: Esc or Ctrl/⌘+Shift+Enter leaves fullscreen.
+  return <section className={`group-board group-chat${fullscreen ? ' group-fullscreen' : ''}`} onKeyDown={event => {
+    if (event.nativeEvent.isComposing || event.defaultPrevented) return;
+    if (event.key === 'Escape' && fullscreen && !mention) { event.preventDefault(); setFullscreen(false); }
+    else if (event.key === 'Enter' && event.shiftKey && (event.ctrlKey || event.metaKey)) { event.preventDefault(); setFullscreen(value => !value); }
+  }}>
     <header className="group-chat-header">
       <button className="icon-button group-chat-back" aria-label="返回联系人列表" onClick={back}><ArrowLeft size={18} /></button>
       <div className="group-chat-title"><strong title={group.title}>{group.title}</strong>{group.goal && <p className="group-goal-line" title={group.goal}>目标：{group.goal}</p>}</div>
@@ -336,6 +342,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
         <button className="icon-button" aria-label="添加成员" title="新建成员或 Fork 联系人入群" onClick={addMember}><Plus size={15} /></button>
       </div>
       <div className="group-chat-actions">
+        <button className={`icon-button${fullscreen ? ' active' : ''}`} aria-pressed={fullscreen} aria-label={fullscreen ? '退出群聊全屏' : '全屏群聊'} title={fullscreen ? '退出全屏（Esc）' : '全屏群聊（Ctrl/⌘ + Shift + Enter）'} onClick={() => setFullscreen(value => !value)}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         <button className="icon-button" aria-label="打开群工作区" title={group.workspace ? `群工作区：${group.workspace}` : '还没有群工作区'} disabled={!sharedMember} onClick={() => sharedMember && openWorkspace(sharedMember)}><FolderOpen size={16} /></button>
         <button className={`icon-button${split ? ' active' : ''}`} aria-pressed={split} aria-label={split ? '退出分栏' : '一键分栏'} title={split ? '退出分栏' : '每个成员一栏，同时查看'} disabled={!activeMembers.length} onClick={() => setSplit(value => !value)}><Columns3 size={16} /></button>
         <button className={`icon-button${membersOpen ? ' active' : ''}`} aria-expanded={membersOpen} aria-label="群成员" title="群成员" onClick={() => setMembersOpen(value => !value)}><UsersRound size={16} /></button>

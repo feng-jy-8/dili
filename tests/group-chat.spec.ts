@@ -84,6 +84,12 @@ test('only-one-member filter, @ mention, quote chips and split columns', async (
   await expect(page.getByText('一条记录', { exact: true })).toBeVisible();
   await expect(composer).toHaveValue('');
 
+  await page.getByRole('button', { name: '全屏群聊' }).click();
+  await expect(page.locator('.group-chat.group-fullscreen')).toBeVisible();
+  expect((await page.locator('.group-chat').boundingBox())!.width).toBe(1600);
+  await composer.press('Escape');
+  await expect(page.locator('.group-fullscreen')).toHaveCount(0);
+
   await page.getByRole('button', { name: '一键分栏' }).click();
   await expect(page.locator('.group-split-pane')).toHaveCount(3);
   await page.screenshot({ path: 'artifacts/group-split.png' });
