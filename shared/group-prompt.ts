@@ -1,15 +1,16 @@
 import type { Group, GroupMessage } from './types.ts';
 
-/** Placeholders: {{group}} {{goal}} {{member}} {{workspace}}. Each group may override it. */
+/** Placeholders: {{group}} {{goal}} {{member}} {{workspace}}. Sent in full once,
+ * when a member joins (and again after the group settings change). */
 export const DEFAULT_GROUP_PROMPT = `你是群聊「{{group}}」中的成员「{{member}}」。群目标：{{goal}}
 
 {{workspace}}
 
 协作规则：
-- 只处理下面指派给你的任务；你在本会话中的其他上下文仍然有效。
-- 群内只共享任务和结论。不要假设其他成员已经完成任务里没有写明的工作；需要依据时，以下方引用的结论为准，并先核对当前文件状态。
-- 不要尝试联系其他成员；需要协作时，在结论中写明需要谁做什么。
-- 完成后，在回复最后用「## 结论」小节总结：做了什么、结果如何、遗留问题。这一节会自动分享到群里。`;
+- 群聊里的消息以「【群聊任务】」开头时，就是用户在群里指派给你的任务；你在本会话中的其他上下文仍然有效。
+- 群内只共享任务和回答。不要假设其他成员已经完成任务里没有写明的工作；需要依据时，以任务中引用的回答为准，并先核对当前文件状态。
+- 不要尝试联系其他成员；需要协作时，在回答中写明需要谁做什么。
+- 你对任务的最后回答会自动显示在群里。`;
 
 const TAG = /^T-[0-9a-f]{4,8}$/;
 export const isTaskTag = (value: string) => TAG.test(value);
@@ -25,53 +26,80 @@ export function workspaceRule(workspace?: MemberWorkspace): string {
   return `工作区：所有成员共用工作目录 ${workspace.cwd}。开始前先查看当前文件和 git 状态，其他成员可能已经修改了文件；不要覆盖或回退他人未提交的改动。`;
 }
 
+type GroupSettings = Pick<Group, 'title' | 'goal' | 'prompt'>;
+
+/** The group prompt with placeholders filled. A custom prompt without the
+ * workspace placeholder still tells the member where it works. */
+export function groupRules(group: GroupSettings, member: string, workspace?: MemberWorkspace): string {
+  const template = group.prompt?.trim() || DEFAULT_GROUP_PROMPT;
+  const rule = workspaceRule(workspace);
+  return (template.includes('{{workspace}}') ? template : rule ? `${template}\n\n{{workspace}}` : template)
+    .replaceAll('{{group}}', group.title).replaceAll('{{goal}}', group.goal.trim() || '见群聊讨论').replaceAll('{{member}}', member)
+    .replaceAll('{{workspace}}', rule).replace(/\n{3,}/g, '\n\n');
+}
+
+/** Identifies the rules a member last received; a change triggers a full resend. */
+export function briefingVersion(group: GroupSettings & Pick<Group, 'workspace'>, workspace?: MemberWorkspace): string {
+  const value = JSON.stringify([group.title, group.goal, group.prompt ?? '', group.workspace ?? '', workspace?.cwd ?? '', workspace?.branch ?? '']);
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) hash = (Math.imul(hash, 31) + value.charCodeAt(index)) | 0;
+  return (hash >>> 0).toString(16);
+}
+
+export interface RosterEntry { name: string; backend: string; status: string }
+export interface RecentAnswer { senderName: string; task: string; text: string }
+
+const MAX_RECENT = 1200;
+const clip = (text: string, max: number) => { const value = text.trim(); return value.length > max ? value.slice(0, max - 1) + '…' : value; };
+
+/** The one-time join message: full rules, members, and recent answers that are
+ * explicitly other members' finished work, not tasks for this member. */
+export function buildJoinBriefing({ group, member, workspace, roster, recent, tag, greet }: {
+  group: GroupSettings; member: string; workspace?: MemberWorkspace; roster: RosterEntry[]; recent: RecentAnswer[]; tag: string; greet: boolean;
+}): string {
+  const members = roster.length ? roster.map(entry => `- ${entry.name}（${entry.backend}，${entry.status}）`).join('\n') : '- 暂无其他成员';
+  const history = recent.length
+    ? ['## 群里最近的回答（仅供了解背景）', '以下是其他成员对他们各自任务的回答，**不是给你的任务，不需要你执行**。', ...recent.map(answer => `### ${answer.senderName} 回答了任务「${clip(answer.task, 80)}」\n${clip(answer.text, MAX_RECENT)}`)]
+    : [];
+  return [
+    `【群聊入群说明】${taskTagLine(tag)}`,
+    groupRules(group, member, workspace),
+    '## 当前成员', members,
+    ...history,
+    '## 现在请你做的事',
+    greet ? '通读以上信息，不要开始任何开发工作。用两三句话在群里打个招呼：说明你是谁、你在这个群里的定位，以及你擅长或能承担的工作。' : '通读以上信息，不要开始任何开发工作，简短确认你已了解。',
+  ].join('\n\n');
+}
+
 export interface GroupTaskInput {
-  group: Pick<Group, 'title' | 'goal' | 'prompt'>;
+  group: GroupSettings & Pick<Group, 'workspace'>;
   member: string;
   workspace?: MemberWorkspace;
   task: string;
   tag: string;
-  /** Referenced member conclusions, oldest first. */
-  references?: Pick<GroupMessage, 'senderName' | 'conclusion' | 'text'>[];
+  /** Referenced member answers, oldest first. */
+  references?: Pick<GroupMessage, 'senderName' | 'text'>[];
+  /** The member never received the current rules (new format, or settings changed). */
+  includeRules?: boolean;
 }
 
-const MAX_REFERENCE = 4000;
+const MAX_REFERENCE = 8000;
 
-/** The exact text a member receives when @-assigned: group prompt, the
- * referenced conclusions only, then the task. Nothing else from the group. */
-export function buildGroupTask({ group, member, task, tag, references = [], workspace }: GroupTaskInput): string {
-  const template = group.prompt?.trim() || DEFAULT_GROUP_PROMPT;
-  const rule = workspaceRule(workspace);
-  // A custom prompt without the placeholder still tells the member where it works.
-  const prompt = (template.includes('{{workspace}}') ? template : rule ? `${template}\n\n{{workspace}}` : template)
-    .replaceAll('{{group}}', group.title).replaceAll('{{goal}}', group.goal.trim() || '见群聊讨论').replaceAll('{{member}}', member)
-    .replaceAll('{{workspace}}', rule).replace(/\n{3,}/g, '\n\n');
-  const quoted = references.map(reference => {
-    const body = (reference.conclusion || reference.text).trim();
-    return `### ${reference.senderName} 的结论\n${body.length > MAX_REFERENCE ? body.slice(0, MAX_REFERENCE - 1) + '…' : body}`;
-  });
-  return [`【群聊任务】${taskTagLine(tag)}`, prompt, ...(quoted.length ? ['## 引用的结论', ...quoted] : []), '## 你的任务', task.trim()].join('\n\n');
+/** What a member receives when @-assigned: a short task header, the quoted
+ * answers and the task. The full rules ride along only when they changed. */
+export function buildGroupTask({ group, member, task, tag, references = [], workspace, includeRules = false }: GroupTaskInput): string {
+  const header = [`【群聊任务】${taskTagLine(tag)} · 群「${group.title}」`];
+  // Members working outside the shared workspace get reminded every time.
+  if (!includeRules && workspace && (workspace.branch || (workspace.shared && workspace.shared !== workspace.cwd))) header.push(workspaceRule(workspace));
+  const quoted = references.map(reference => `### ${reference.senderName} 的回答\n${clip(reference.text, MAX_REFERENCE)}${reference.text.trim().length > MAX_REFERENCE ? '\n（内容过长已截断，完整回答见群聊）' : ''}`);
+  return [
+    header.join('\n'),
+    ...(includeRules ? ['## 群说明（已更新）', groupRules(group, member, workspace)] : []),
+    ...(quoted.length ? ['## 引用的回答', ...quoted] : []),
+    '## 你的任务', task.trim(),
+  ].join('\n\n');
 }
 
-const CONCLUSION_HEADING = /^#{1,6}\s*(?:结论|conclusion)\s*[:：]?\s*$/im;
-const MAX_CONCLUSION = 2000;
-
-/** True once the member wrote the conclusion section the group prompt asks for. */
-export const hasConclusion = (reply: string) => CONCLUSION_HEADING.test(reply);
-
-/** The member's own "## 结论" section; otherwise a bounded head of the reply. */
-export function extractConclusion(reply: string): string {
-  const text = reply.trim();
-  const lines = text.split('\n');
-  let start = -1;
-  lines.forEach((line, index) => { if (CONCLUSION_HEADING.test(line.trim())) start = index; });
-  let body = start >= 0 ? lines.slice(start + 1) : lines;
-  if (start >= 0) {
-    // Stop at the next heading of the same or higher level.
-    const level = lines[start].match(/^#+/)![0].length;
-    const end = body.findIndex(line => { const match = line.match(/^(#{1,6})\s/); return !!match && match[1].length <= level; });
-    if (end >= 0) body = body.slice(0, end);
-  }
-  const result = body.join('\n').trim() || text;
-  return result.length > MAX_CONCLUSION ? result.slice(0, MAX_CONCLUSION - 1) + '…' : result;
-}
+const MAX_PREVIEW = 160;
+/** A one-line preview for the group card. */
+export function replyPreview(text: string): string { return clip(text.replace(/\s+/g, ' '), MAX_PREVIEW); }

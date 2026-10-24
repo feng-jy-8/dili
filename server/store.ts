@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Session, Group, GroupMessage, Delivery, DeliveryAttempt, Activity, GroupDetail } from '../shared/types.ts';
-import { buildGroupTask } from '../shared/group-prompt.ts';
+import { briefingVersion, buildGroupTask, buildJoinBriefing, replyPreview } from '../shared/group-prompt.ts';
 
 /** A member state the group view cannot resolve: the user must act in its chat. */
+const newTag = () => `T-${randomUUID().replace(/-/g, '').slice(0, 6)}`;
+
 export const needsAction = (member: Pick<Session, 'status' | 'unread' | 'archived'>) => !member.archived && member.unread > 0 && (member.status === 'waiting_approval' || member.status === 'error');
 
 const now = () => new Date().toISOString();
@@ -138,13 +140,13 @@ export class Store {
       const recipientIds = [...new Set(input.recipientIds)];
       const references = [...new Set(input.references ?? [])].map(id => {
         const quoted = this.get<GroupMessage>('messages', id);
-        if (quoted?.groupId !== input.groupId || (quoted.kind !== 'reply' && quoted.kind !== 'result')) throw new Error('只能引用这个群聊中的成员结论');
+        if (quoted?.groupId !== input.groupId || (quoted.kind !== 'reply' && quoted.kind !== 'result') || quoted.failed) throw new Error('只能引用这个群聊中的成员回答');
         return quoted;
       });
       for (const id of recipientIds) {
         if (this.session(id)?.groupId !== input.groupId || this.session(id)?.archived) throw new Error('接收成员无效或已归档');
       }
-      const preview = (input.kind === 'reply' ? input.conclusion || input.text : input.text).replace(/\s+/g, ' ').trim().slice(0, 160);
+      const preview = replyPreview(input.text);
       const group = this.updateGroup(input.groupId, {
         lastMessage: { text: preview, senderName: input.senderName, at: now() },
         // Only member replies are new to the user; their own messages are already read.
@@ -152,17 +154,46 @@ export class Store {
       });
       const message = this.put('messages', { ...input, recipientIds, ...(references.length ? { references: references.map(item => item.id) } : { references: undefined }), id: randomUUID(), createdAt: now(), revision: Date.parse(group.updatedAt) });
       const quoted = [...(source && (source.kind === 'reply' || source.kind === 'result') && !references.some(item => item.id === source.id) ? [source] : []), ...references];
-      const recipient = (id: string) => this.session(id)!;
       for (const sessionId of recipientIds) {
-        const tag = `T-${randomUUID().replace(/-/g, '').slice(0, 6)}`;
+        const member = this.session(sessionId)!;
+        const workspace = { shared: group.workspace, cwd: member.cwd, branch: member.worktree?.branch };
+        const version = briefingVersion(group, workspace);
+        const tag = newTag();
+        // The full rules go out once per version: on join, or when settings changed.
+        const includeRules = member.groupBriefing !== version;
         this.put<Delivery>('deliveries', {
           id: randomUUID(), messageId: message.id, sessionId, tag,
-          text: buildGroupTask({ group, member: recipient(sessionId).title, task: input.text, tag, references: quoted, workspace: { shared: group.workspace, cwd: recipient(sessionId).cwd, branch: recipient(sessionId).worktree?.branch } }),
+          text: buildGroupTask({ group, member: member.title, task: input.text, tag, references: quoted, workspace, includeRules }),
           status: 'pending', createdAt: now(), sentAt: null,
         });
+        if (includeRules) this.updateSession(sessionId, { groupBriefing: version });
       }
       return message;
     }
+  }
+  /** Queues the one-time join briefing for a new member: full rules, the roster,
+   * and the five latest answers marked as other members' work. */
+  addJoinBriefing(groupId: string, sessionId: string, greet: boolean): Delivery {
+    return this.transaction(() => {
+      const group = this.group(groupId);
+      const member = this.session(sessionId);
+      if (!group || member?.groupId !== groupId) throw new Error('成员不属于这个群聊');
+      const workspace = { shared: group.workspace, cwd: member.cwd, branch: member.worktree?.branch };
+      const roster = this.sessions().filter(item => item.groupId === groupId && !item.archived && item.id !== sessionId).map(item => ({ name: item.title, backend: item.backend, status: item.status }));
+      const messages = this.db.prepare("SELECT data FROM messages WHERE json_extract(data, '$.groupId') = ? ORDER BY rowid DESC LIMIT 200").all(groupId).map(row => JSON.parse(String(row.data)) as GroupMessage);
+      // Collected answers and manually shared results are both other members' finished work.
+      const recent = messages.filter(item => (item.kind === 'reply' || item.kind === 'result') && !item.failed && !item.briefing).slice(0, 5).reverse()
+        .map(item => ({ senderName: item.senderName, text: item.text, task: messages.find(task => task.id === item.sourceMessageId)?.text ?? '' }));
+      const tag = newTag();
+      const notice = this.insertMessage({ groupId, kind: 'note', senderId: null, senderName: '群聊', recipientIds: [], text: `${member.title} 加入了群聊${greet ? '，正在阅读群说明后打招呼' : ''}` });
+      const delivery = this.put<Delivery>('deliveries', {
+        id: randomUUID(), messageId: notice.id, sessionId, tag, briefing: true,
+        text: buildJoinBriefing({ group, member: member.title, workspace, roster, recent, tag, greet }),
+        status: 'pending', createdAt: now(), sentAt: null,
+      });
+      this.updateSession(sessionId, { groupBriefing: briefingVersion(group, workspace) });
+      return delivery;
+    });
   }
   updateDelivery(id: string, status: 'sent' | 'staged' | 'cancelled') {
     const delivery = this.delivery(id);
@@ -202,30 +233,38 @@ export class Store {
     });
   }
   /** Records a member's collected reply exactly once per delivery. */
-  addReply(deliveryId: string, reply: { text: string; conclusion: string; nativeMessageId?: string; failed?: boolean; pending?: boolean }): GroupMessage | null {
+  addReply(deliveryId: string, reply: { text: string; nativeMessageId?: string; failed?: boolean; pending?: boolean; closed?: boolean }): GroupMessage | null {
     return this.transaction(() => {
       const delivery = this.delivery(deliveryId);
       if (!delivery || delivery.replyMessageId) return null;
       const task = this.get<GroupMessage>('messages', delivery.messageId);
       const member = this.session(delivery.sessionId);
       if (!task || !member || member.groupId !== task.groupId) return null;
-      const message = this.insertMessage({ groupId: task.groupId, kind: 'reply', senderId: member.id, senderName: member.title, recipientIds: [], text: reply.text, conclusion: reply.conclusion, sourceMessageId: task.id, deliveryId, ...(reply.nativeMessageId ? { nativeMessageId: reply.nativeMessageId } : {}), ...(reply.failed ? { failed: true } : {}), ...(reply.pending ? { pending: true } : {}) });
+      const message = this.insertMessage({ groupId: task.groupId, kind: 'reply', senderId: member.id, senderName: member.title, recipientIds: [], text: reply.text, sourceMessageId: task.id, deliveryId, ...(reply.nativeMessageId ? { nativeMessageId: reply.nativeMessageId } : {}), ...(reply.failed ? { failed: true } : {}), ...(reply.pending ? { pending: true } : {}), ...(reply.closed || reply.failed ? { closedAt: now() } : {}), ...(delivery.briefing ? { briefing: true } : {}) });
       this.put('deliveries', { ...this.delivery(deliveryId)!, replyMessageId: message.id });
       return message;
     });
   }
-  /** Grows an open reply as the member keeps working; finalizing clears pending. */
-  updateReply(messageId: string, reply: { text: string; conclusion: string; failed?: boolean; pending: boolean }): GroupMessage | null {
+  /** Updates a member's answer in place: new text when it kept working, and
+   * the working / settled / closed state. Unchanged answers are not rewritten. */
+  updateReply(messageId: string, reply: { text: string; failed?: boolean; pending: boolean; closed?: boolean }): GroupMessage | null {
     return this.transaction(() => {
       const message = this.get<GroupMessage>('messages', messageId);
-      if (!message || message.kind !== 'reply' || !message.pending) return null;
-      // Still working and nothing new: no write, no change notification.
-      if (reply.pending && message.text === reply.text) return null;
-      const group = this.updateGroup(message.groupId, {
-        ...(!reply.pending ? { lastMessage: { text: (reply.conclusion || reply.text).replace(/\s+/g, ' ').trim().slice(0, 160), senderName: message.senderName, at: now() } } : {}),
-      });
+      if (!message || message.kind !== 'reply' || message.closedAt) return null;
+      const closing = !!(reply.closed || reply.failed);
+      if (message.text === reply.text && !!message.pending === reply.pending && !!message.failed === !!reply.failed && !closing) return null;
+      const group = this.updateGroup(message.groupId, reply.pending ? {} : { lastMessage: { text: replyPreview(reply.text), senderName: message.senderName, at: now() } });
       const { pending: _pending, failed: _failed, ...rest } = message;
-      return this.put('messages', { ...rest, text: reply.text, conclusion: reply.conclusion, ...(reply.failed ? { failed: true } : {}), ...(reply.pending ? { pending: true } : {}), revision: Date.parse(group.updatedAt) });
+      return this.put('messages', { ...rest, text: reply.text, ...(reply.failed ? { failed: true } : {}), ...(reply.pending ? { pending: true } : {}), ...(closing ? { closedAt: now() } : {}), revision: Date.parse(group.updatedAt) });
+    });
+  }
+  /** The member resumed on its own: its settled answer is shown as working again. */
+  reopenReply(messageId: string): GroupMessage | null {
+    return this.transaction(() => {
+      const message = this.get<GroupMessage>('messages', messageId);
+      if (!message || message.kind !== 'reply' || message.pending || message.closedAt || message.failed) return null;
+      const group = this.updateGroup(message.groupId, {});
+      return this.put('messages', { ...message, pending: true, revision: Date.parse(group.updatedAt) });
     });
   }
   /** Viewing a group reads its replies and the members' finished-turn reminders,

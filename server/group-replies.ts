@@ -1,5 +1,5 @@
 import type { ConversationTranscript, Delivery, Session } from '../shared/types.ts';
-import { extractConclusion, hasConclusion, taskTagLine } from '../shared/group-prompt.ts';
+import { taskTagLine } from '../shared/group-prompt.ts';
 import type { Store } from './store.ts';
 
 export interface GroupReplyOptions {
@@ -19,20 +19,20 @@ const FINISHED = new Set(['idle', 'waiting_input', 'error', 'stopped']);
  * the same task; only a person's next message ends it. */
 const automaticTurn = (text: string) => /^\s*<(?:task-notification|system-reminder)\b/.test(text);
 
-/** The member's reply to one task: assistant text after the user turn that
- * carries the task number, up to the next human turn. `closed` means that
- * human turn exists, so nothing more belongs to this task. Null until text exists. */
+/** The member's final answer to one task: its last assistant message after the
+ * user turn carrying the task number, before the next human turn. Interim
+ * progress messages are not shown. `closed` means that human turn exists, so
+ * nothing more belongs to this task. Null until an answer exists. */
 export function replyFor(transcript: ConversationTranscript, tag: string): { text: string; nativeMessageId: string; closed: boolean } | null {
   const start = taskTurn(transcript, tag);
   if (start < 0) return null;
-  const replies = [];
+  let last = '';
   let closed = false;
   for (const message of transcript.messages.slice(start + 1)) {
     if (message.role === 'user') { if (automaticTurn(message.text)) continue; closed = true; break; }
-    replies.push(message);
+    if (message.text.trim()) last = message.text.trim();
   }
-  const text = replies.map(message => message.text.trim()).filter(Boolean).join('\n\n');
-  return text ? { text, nativeMessageId: transcript.messages[start].id, closed } : null;
+  return last ? { text: last, nativeMessageId: transcript.messages[start].id, closed } : null;
 }
 
 /** Index of the user turn carrying the task number, or -1. */
@@ -42,9 +42,9 @@ export function taskTurn(transcript: ConversationTranscript, tag: string): numbe
 }
 
 /** The member's failure note when its task turn ended in an error without an answer. */
-export function failureReply(detail: string): { text: string; conclusion: string; failed: true } {
+export function failureReply(detail: string): { text: string; failed: true } {
   const reason = detail.trim() || '原生会话报告错误';
-  return { text: `回复失败：${reason}\n\n这一轮没有产生回复。处理原因后，可以在群里重新指派这个任务；原任务不会自动重发。`, conclusion: `回复失败：${reason}`, failed: true };
+  return { text: `回复失败：${reason}\n\n这一轮没有产生回复。处理原因后，可以在群里重新指派这个任务；原任务不会自动重发。`, failed: true };
 }
 
 /** Collects replies to group tasks only. Private turns never carry a task
@@ -55,16 +55,28 @@ export class GroupReplies {
   private closed = false;
   constructor(private readonly options: GroupReplyOptions) {}
 
-  /** Not yet answered, or answered by a reply that is still open (no conclusion yet). */
+  /** Not yet answered, or answered by a reply that is still open (member still working). */
   private outstanding(sessionId: string): Delivery[] {
     return this.options.store.deliveries().filter(item => item.sessionId === sessionId && !!item.tag && (item.status === 'sent' || item.status === 'staged')
-      && (!item.replyMessageId || this.options.store.message(item.replyMessageId)?.pending === true));
+      && (!item.replyMessageId || (() => { const reply = this.options.store.message(item.replyMessageId!); return !!reply && !reply.closedAt && !reply.failed; })()));
   }
 
-  /** Called on every member status change; cheap when nothing is outstanding. */
+  /** Called on every member status change; cheap when nothing is outstanding.
+   * A member that resumes on its own reopens its latest settled reply. */
   statusChanged(session: Session) {
-    if (this.closed || !session.groupId || !FINISHED.has(session.status) || !this.outstanding(session.id).length) return;
+    if (this.closed || !session.groupId) return;
+    if (session.status === 'running') { this.reopen(session.id); return; }
+    if (!FINISHED.has(session.status) || !this.outstanding(session.id).length) return;
     this.schedule(session.id, 0);
+  }
+
+  /** The member started working again without a new human turn (e.g. a
+   * background job notification): its latest answer is not final after all. */
+  private reopen(sessionId: string) {
+    const latest = this.options.store.deliveries().filter(item => item.sessionId === sessionId && item.replyMessageId && (item.status === 'sent' || item.status === 'staged')).at(-1);
+    const reply = latest?.replyMessageId ? this.options.store.message(latest.replyMessageId) : undefined;
+    if (!reply || reply.pending || reply.failed || reply.closedAt) return;
+    if (this.options.store.reopenReply(reply.id)) this.options.onReply();
   }
 
   private schedule(sessionId: string, attempt: number) {
@@ -91,12 +103,10 @@ export class GroupReplies {
         const reply = replyFor(transcript, delivery.tag!);
         const open = delivery.replyMessageId ? this.options.store.message(delivery.replyMessageId) : undefined;
         if (reply) {
-          // A turn end is not the task end: the member may continue on its own
-          // (background work). The reply stays open until it writes the conclusion
-          // or the user speaks next, and grows meanwhile.
-          // An error after partial output also ends the task; the partial reply is final.
-          const final = reply.closed || hasConclusion(reply.text) || session.status === 'error';
-          const content = { text: reply.text, conclusion: extractConclusion(reply.text), pending: !final };
+          // The member stopped: its last answer is shown as settled. If it later
+          // resumes on its own, reopen() marks it working again and this updates it.
+          // A human turn after it closes the task for good.
+          const content = { text: reply.text, pending: false, closed: reply.closed };
           const changed = open ? this.options.store.updateReply(open.id, content) : this.options.store.addReply(delivery.id, { ...content, nativeMessageId: reply.nativeMessageId });
           if (changed) this.options.onReply();
           continue;
@@ -106,7 +116,7 @@ export class GroupReplies {
         const started = taskTurn(transcript, delivery.tag!) >= 0;
         if (session.status === 'error' && (started || lastAttempt)) {
           const failure = failureReply(session.statusDetail);
-          if (open ? this.options.store.updateReply(open.id, { ...failure, pending: false }) : this.options.store.addReply(delivery.id, failure)) this.options.onReply();
+          if (open ? this.options.store.updateReply(open.id, { ...failure, pending: false, closed: true }) : this.options.store.addReply(delivery.id, failure)) this.options.onReply();
           continue;
         }
         if (!open) missing = true;

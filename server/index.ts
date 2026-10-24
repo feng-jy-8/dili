@@ -783,6 +783,15 @@ function claudeSettingsInput(value: unknown): NativeSettings | undefined {
   if (!(info('claude').capabilities.permissionModes ?? []).includes(mode)) fail('当前 Claude CLI 不支持该权限模式，请重新检测后端');
   return { permission: mode };
 }
+/** A new member reads the group rules once and (by default) greets the group.
+ * Delivery failures leave the briefing pending in the group; joining still succeeds. */
+async function briefNewMember(member: Session, value: unknown) {
+  if (value === false || value === 'none') return;
+  const delivery = store.addJoinBriefing(member.groupId!, member.id, value !== 'silent');
+  broadcast();
+  if (demo) return;
+  await deliverNow(delivery.id, { autoStart: true }).catch(() => {});
+}
 /** Where a new or forked group member works: the group workspace, a directory
  * the user picked (or the fork source's), or an isolated worktree of the group repository. */
 async function memberPlacement(targetGroup: string | null, value: unknown, member: string, chosen?: string): Promise<{ cwd: string; worktree?: MemberWorktree }> {
@@ -808,7 +817,9 @@ app.post('/api/sessions', async (req, res) => {
   const title = text(req.body.title, '名称');
   const placed = await memberPlacement(targetGroup, req.body.placement, title, req.body.cwd ? directory(req.body.cwd) : undefined);
   const item = store.addSession({ backend: id, title, cwd: placed.cwd, ...(placed.worktree ? { worktree: placed.worktree } : {}), groupId: targetGroup, executionMode: executionMode(req.body.executionMode), ...(nativeSettings ? { nativeSettings } : {}) });
-  store.activity(item.id, 'create', `创建了 ${item.title}`); broadcast(); res.status(201).json(item);
+  store.activity(item.id, 'create', `创建了 ${item.title}`); broadcast();
+  if (item.groupId) await briefNewMember(item, req.body.briefing);
+  res.status(201).json(session(item.id));
 });
 app.patch('/api/sessions/:id', (req, res) => {
   const item = session(String(req.params.id));
@@ -879,7 +890,9 @@ app.post('/api/sessions/:id/fork', async (req, res) => {
   }
   } catch (error) { if (placed.worktree) await removeWorktree(placed.worktree).catch(() => {}); throw error; }
   if (placed.worktree) child = store.updateSession(child.id, { worktree: placed.worktree });
-  store.activity(child.id, 'fork', `从 ${parent.title} 分叉为 ${child.title}`); broadcast(); res.status(201).json(child);
+  store.activity(child.id, 'fork', `从 ${parent.title} 分叉为 ${child.title}`); broadcast();
+  if (child.groupId) await briefNewMember(child, req.body.briefing);
+  res.status(201).json(session(child.id));
 });
 
 app.post('/api/sessions/:id/handoff', async (req, res) => {

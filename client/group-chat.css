@@ -104,3 +104,9 @@
 /* Fullscreen like private chats; on touch screens it follows the visible viewport. */
 .group-chat.group-fullscreen { position: fixed; inset: 0; z-index: 90; width: 100%; height: var(--ui-viewport-height, 100dvh); margin: 0; background: var(--bg); }
 @media (pointer: coarse) { .group-chat.group-fullscreen { top: var(--ui-viewport-top, 0px); bottom: auto; } }
+.group-reply-answer.folded { max-height: 18em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent); mask-image: linear-gradient(to bottom, #000 75%, transparent); }
+.group-reply-answer .chat-markdown { font-size: 14px; }
+.checkbox-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
+.checkbox-row input { margin-top: 3px; }
+.checkbox-row span { display: flex; flex-direction: column; gap: 2px; }
+.checkbox-row small { color: var(--muted); font-size: 12px; line-height: 1.5; }

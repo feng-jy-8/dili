@@ -18,13 +18,14 @@ if (!process.argv.includes('--print')) {
   const out = row => process.stdout.write(JSON.stringify({ ...row, session_id: id }) + '\n');
   const saved = (role, content, uuid = randomUUID()) => fs.appendFileSync(file, JSON.stringify({ type: role, uuid, sessionId: id, timestamp: new Date().toISOString(), message: { role, content } }) + '\n');
   const event = payload => out({ type: 'stream_event', event: payload, parent_tool_use_id: null });
-  let replyText = '第一段 **完成**', timer, messageId, active = false, pending, model = process.argv.includes('--model') ? arg('--model') : 'fixture-claude', mode = process.argv.includes('--permission-mode') ? arg('--permission-mode').replace(/^manual$/, 'default') : 'default';
+  let replyText = '第一段 **完成**', groupInterim = '', timer, messageId, active = false, pending, model = process.argv.includes('--model') ? arg('--model') : 'fixture-claude', mode = process.argv.includes('--permission-mode') ? arg('--permission-mode').replace(/^manual$/, 'default') : 'default';
   const bypassAllowed = process.argv.includes('--allow-dangerously-skip-permissions') || process.argv.includes('--dangerously-skip-permissions');
   function finish(error = false) {
     clearTimeout(timer);
     if (!active) return;
     active = false;
     if (!error) {
+      if (groupInterim) { const uuid = randomUUID(), interim = [{ type: 'text', text: groupInterim }]; out({ type: 'assistant', uuid, message: { id: 'interim_' + uuid, role: 'assistant', content: interim } }); saved('assistant', interim, uuid); groupInterim = ''; }
       const content = [{ type: 'text', text: replyText }];
       const uuid = randomUUID();
       out({ type: 'assistant', uuid, message: { id: messageId, role: 'assistant', content } });
@@ -59,7 +60,9 @@ if (!process.argv.includes('--print')) {
       saved('user', row.message.content, row.uuid);
       const text = row.message.content.filter(block => block.type === 'text').map(block => block.text).join('');
       // Group tasks get a reply with the conclusion section the group prompt asks for.
-      replyText = text.includes('PARTIAL') ? '还在处理，等待后台任务结果。' : text.includes('【群聊任务】') ? `已处理任务。\n\n## 结论\n登录页通过验证（${text.includes('## 引用的结论') ? '参考了引用' : '独立完成'}）。` : '第一段 **完成**';
+      // Group turns: a join greeting, or an interim note then (in the same turn) a final answer.
+      replyText = text.includes('【群聊入群说明】') ? '大家好，我是验证员，负责验证。' : text.includes('【群聊任务】') ? `登录页通过验证（${text.includes('## 引用的回答') ? '参考了引用' : '独立完成'}）。` : '第一段 **完成**';
+      groupInterim = text.includes('【群聊任务】') && !text.includes('PARTIAL') ? '正在检查…' : '';
       if (text === 'EXIT') process.exit(1);
       // A provider failure mid-turn: an error result with no assistant text.
       if (text.includes('FAIL-TURN')) { active = true; out({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['unexpected status 526: origin SSL certificate invalid'] }); active = false; return; }

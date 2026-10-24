@@ -204,7 +204,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
 
   const forwardMessage = useCallback((message: GroupMessage) => {
     const proceed = () => {
-      setText(message.kind === 'reply' ? message.conclusion || message.text : message.text); setRecipients([]); setSourceMessageId(message.id); setLocalError('');
+      setText(message.text); setRecipients([]); setSourceMessageId(message.id); setLocalError('');
       requestAnimationFrame(() => { composerRef.current?.focus(); composerRef.current?.scrollIntoView({ block: 'center' }); });
     };
     const current = JSON.parse(currentDraftRef.current) as GroupDraft;
@@ -297,18 +297,20 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
     {visibleMessages.length ? visibleMessages.map(message => {
       const sender = message.senderId ? membersById.get(message.senderId) : undefined;
       const open_ = expanded.has(message.id);
+      // Long agent answers fold to their first lines; the rest expands in place.
+      const long = message.kind === 'reply' && (message.text.length > 900 || message.text.split('\n').length > 14);
       const isMember = message.kind === 'reply' || message.kind === 'result';
       return <article id={`group-message-${message.id}`} tabIndex={-1} key={message.id} className={`group-message kind-${message.kind} ${message.senderId ? '' : 'mine'}${message.failed ? ' failed' : ''}${message.pending ? ' pending' : ''}`}>
         <span className="message-avatar">{sender ? <BackendAvatar backend={sender.backend} small /> : message.senderId ? <MessageSquare size={16} /> : '我'}</span>
         <div className="message-body">
-          <div className="message-heading"><strong>{message.senderName || '我'}</strong><span className="message-kind">{message.kind === 'task' ? '任务' : message.failed ? '回复失败' : message.pending ? sender?.status === 'running' ? '回复中 · 仍在工作…' : '回复中 · 尚未写结论' : message.kind === 'reply' ? '回复' : message.kind === 'result' ? '结果' : '记录'}</span><time>{relativeTime(message.createdAt)}</time></div>
+          <div className="message-heading"><strong>{message.senderName || '我'}</strong><span className="message-kind">{message.kind === 'task' ? '任务' : message.failed ? '回复失败' : message.briefing ? '入群招呼' : message.pending ? '仍在工作…' : message.kind === 'reply' ? '回复' : message.kind === 'result' ? '结果' : '记录'}</span><time>{relativeTime(message.createdAt)}</time></div>
           <div className="bubble">
             {message.sourceMessageId && <button className="message-source-link" onClick={() => jumpToMessage(message.sourceMessageId!)}><ArrowRight size={12} />{message.kind === 'reply' ? '回复' : '来源'}：{messagesById.get(message.sourceMessageId)?.senderName || '原消息'}<span>查看原消息</span></button>}
             {message.recipientIds.length > 0 && <div className="message-recipients">{message.recipientIds.map(id => <button key={id} onClick={() => open(id)}>@{membersById.get(id)?.title || '已归档成员'}</button>)}</div>}
-            {!!message.references?.length && <div className="message-references">{message.references.map(id => <button key={id} className="text-button" onClick={() => jumpToMessage(id)}><Quote size={12} />引用 {messagesById.get(id)?.senderName || '结论'}</button>)}</div>}
+            {!!message.references?.length && <div className="message-references">{message.references.map(id => <button key={id} className="text-button" onClick={() => jumpToMessage(id)}><Quote size={12} />引用 {messagesById.get(id)?.senderName || '回答'}</button>)}</div>}
             {message.kind === 'reply'
-              ? <div className="group-reply"><div className="group-reply-conclusion"><Markdown text={open_ ? message.text : message.conclusion || message.text} /></div>
-                {message.conclusion && message.conclusion !== message.text && <button className="text-button" aria-expanded={open_} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(message.id)) next.delete(message.id); else next.add(message.id); return next; })}>{open_ ? <ChevronUp size={13} /> : <ChevronDown size={13} />}{open_ ? '只看结论' : '展开完整回复'}</button>}</div>
+              ? <div className="group-reply"><div className={`group-reply-answer${long && !open_ ? ' folded' : ''}`}><Markdown text={message.text} /></div>
+                {long && <button className="text-button" aria-expanded={open_} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(message.id)) next.delete(message.id); else next.add(message.id); return next; })}>{open_ ? <ChevronUp size={13} /> : <ChevronDown size={13} />}{open_ ? '收起' : '展开全文'}</button>}</div>
               : <p>{message.text}</p>}
           </div>
           <div className="delivery-list">{(deliveriesByMessage.get(message.id) ?? []).map(deliveryRow)}</div>
@@ -363,7 +365,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
       {sourcePreview && <ModalShell title="来源消息" subtitle={sourcePreview.senderName} close={() => setSourcePreview(null)}><div className="modal-fields"><p className="draft-replace-preview">{sourcePreview.text}</p></div><div className="modal-footer"><button className="button secondary" onClick={() => { forwardMessage(sourcePreview); setSourcePreview(null); }}>转交为任务</button><button className="button primary" onClick={() => setSourcePreview(null)}>返回群组</button></div></ModalShell>}
       <form className="message-composer group-composer" onSubmit={submit}>
         <div className="recipient-picker"><span><AtSign size={13} />指派给</span>{activeMembers.map(member => <button type="button" disabled={posting} aria-pressed={recipients.includes(member.id)} key={member.id} className={recipients.includes(member.id) ? 'selected' : ''} onClick={() => toggleRecipient(member.id)}>{recipients.includes(member.id) && <Check size={12} />}<BackendAvatar backend={member.backend} small />{member.title}</button>)}{!activeMembers.length && <small>添加成员后，即可 @ 指派任务</small>}</div>
-        {references.length > 0 && <div className="composer-references">{references.map(id => { const quoted = messagesById.get(id); return <span key={id} className="reference-chip"><Quote size={12} />{quoted?.senderName || '结论'}：{(quoted?.conclusion || quoted?.text || '').slice(0, 40)}<button type="button" className="icon-button" aria-label="取消引用" onClick={() => setReferences(current => current.filter(item => item !== id))}><X size={12} /></button></span>; })}</div>}
+        {references.length > 0 && <div className="composer-references">{references.map(id => { const quoted = messagesById.get(id); return <span key={id} className="reference-chip"><Quote size={12} />{quoted?.senderName || '回答'}：{(quoted?.text || '').slice(0, 40)}<button type="button" className="icon-button" aria-label="取消引用" onClick={() => setReferences(current => current.filter(item => item !== id))}><X size={12} /></button></span>; })}</div>}
         {sourceMessageId && <div className="composer-source"><button type="button" className="text-button" onClick={() => jumpToMessage(sourceMessageId)}><Share2 size={13} />来源：{sourceMessage?.senderName || '原消息'}<span>查看原消息</span></button><button type="button" className="icon-button" disabled={posting} aria-label="解除转交来源" title="解除来源，保留内容" onClick={() => setSourceMessageId(null)}><X size={13} /></button></div>}
         {mentionChoices.length > 0 && <div className="mention-menu" role="listbox" aria-label="选择要 @ 的成员">{mentionChoices.map(member => <button type="button" role="option" aria-selected={false} key={member.id} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(member)}><BackendAvatar backend={member.backend} small />{member.title}</button>)}</div>}
         <textarea ref={composerRef} disabled={posting} aria-label="群组消息" onKeyDown={event => {

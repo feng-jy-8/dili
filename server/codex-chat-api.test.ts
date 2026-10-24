@@ -184,7 +184,7 @@ test('a lost native submit response stays unknown and the same request ID never 
 test('a graphical group member stops and resumes its exact history, then receives a task without terminal staging', { timeout: 30_000 }, async t => {
   const fixture = await launch(t), { request, calls, snapshot, current } = fixture;
   const group = await request<Group>('/api/groups', 'POST', { title: 'Graphical group lifecycle', goal: 'Preserve native context and deliver directly' }, 201);
-  const member = await request<Session>('/api/sessions', 'POST', { backend: 'codex', title: 'Graphical group member', cwd: fixture.directory, groupId: group.id }, 201);
+  const member = await request<Session>('/api/sessions', 'POST', { backend: 'codex', title: 'Graphical group member', cwd: fixture.directory, groupId: group.id, briefing: false }, 201);
   const started = await request<Session>(`/api/sessions/${member.id}/start`, 'POST', { mode: 'chat' });
   assert.ok(started.nativeSessionId);
   await request(`/api/sessions/${member.id}/chat/messages`, 'POST', { requestId: randomUUID(), text: 'Remember the original graphical context' });
@@ -569,69 +569,81 @@ test('Claude contact settings align graphical and terminal executors, including 
   assert.deepEqual(fork.nativeSettings, { permission: 'dontAsk', model: 'fixture-alternative' });
 });
 
-test('group @-tasks send at once, member replies flow back once with conclusions, private turns stay private', { timeout: 40_000 }, async t => {
+test('members get the rules once on join and greet; tasks carry a short header; the final answer flows back', { timeout: 60_000 }, async t => {
   const f = await launch(t), { request, snapshot } = f;
   const group = await request<{ id: string }>('/api/groups', 'POST', { title: '登录协作', goal: '完成登录页' }, 201);
-  const member = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '验证员', cwd: f.directory, groupId: group.id }, 201);
-  const detail = () => request<{ group: { unread?: number; lastMessage?: { text: string } }; messages: { id: string; kind: string; senderId: string | null; conclusion?: string; sourceMessageId?: string | null; text: string }[]; deliveries: { status: string; replyMessageId?: string; tag?: string }[] }>(`/api/groups/${group.id}`);
-  const replies = async () => (await detail()).messages.filter(message => message.kind === 'reply');
+  const earlier = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '老成员', cwd: f.directory, groupId: group.id, briefing: false }, 201);
+  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'result', text: '老成员此前完成了接口设计', senderId: earlier.id }, 201);
+  type Message = { id: string; kind: string; senderId: string | null; text: string; sourceMessageId?: string | null; failed?: boolean; pending?: boolean; briefing?: boolean };
+  const detail = () => request<{ group: { unread?: number; lastMessage?: { text: string } }; messages: Message[]; deliveries: { status: string; replyMessageId?: string; tag?: string; briefing?: boolean }[] }>(`/api/groups/${group.id}`);
+  const replies = async () => (await detail()).messages.filter(message => message.kind === 'reply' && !message.briefing);
+  const sentTexts = async () => (await readFile(join(f.directory, 'claude-calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'user').map(row => row.message.content.map((block: { text?: string }) => block.text ?? '').join(''));
 
-  // @-assignment starts the stopped graphical member and sends in one request.
+  // Joining starts the member, sends the full briefing once, and the greeting flows back.
+  const member = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '验证员', cwd: f.directory, groupId: group.id }, 201);
+  await until(async () => (await detail()).messages.some(message => message.briefing), 'Join greeting did not flow back');
+  const greeting = (await detail()).messages.find(message => message.briefing)!;
+  assert.equal(greeting.senderId, member.id);
+  assert.equal(greeting.text, '大家好，我是验证员，负责验证。');
+  const briefing = (await sentTexts()).at(-1)!;
+  assert.match(briefing, /^【群聊入群说明】任务编号：T-/);
+  assert.match(briefing, /群聊「登录协作」中的成员「验证员」/);
+  assert.match(briefing, /- 老成员（claude/);
+  assert.match(briefing, /以下是其他成员对他们各自任务的回答，\*\*不是给你的任务，不需要你执行\*\*/);
+  assert.match(briefing, /老成员此前完成了接口设计/);
+  assert.match(briefing, /打个招呼/);
+  await until(async () => !(await snapshot(member.id)).activeTurnId, 'Greeting turn did not finish');
+
+  // A task now carries only a short header, and the final answer (not the interim note) flows back.
   const task = await request<{ id: string; deliveryErrors?: unknown }>(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: '检查登录页', recipientIds: [member.id], deliverNow: true }, 201);
   assert.equal(task.deliveryErrors, undefined);
   await until(async () => (await replies()).length === 1, 'Member reply did not flow back to the group');
   let state = await detail();
-  const reply = state.messages.find(message => message.kind === 'reply')!;
+  const reply = state.messages.filter(message => message.kind === 'reply' && !message.briefing)[0];
   assert.equal(reply.senderId, member.id);
   assert.equal(reply.sourceMessageId, task.id);
-  assert.equal(reply.conclusion, '登录页通过验证（独立完成）。');
-  assert.match(reply.text, /## 结论/);
-  assert.match(state.deliveries[0].tag ?? '', /^T-[0-9a-f]{6}$/);
-  assert.equal(state.deliveries[0].replyMessageId, reply.id);
-  assert.equal(state.group.unread, 1);
+  assert.equal(reply.text, '登录页通过验证（独立完成）。', 'Only the final answer is shown, not the interim progress message');
+  assert.equal(reply.pending, undefined);
+  const header = (await sentTexts()).at(-1)!;
+  assert.match(header, /^【群聊任务】任务编号：T-[0-9a-f]{6} · 群「登录协作」\n\n## 你的任务\n\n检查登录页$/);
+  assert.doesNotMatch(header, /协作规则/);
   assert.match(state.group.lastMessage?.text ?? '', /登录页通过验证/);
-  const sent = (await readFile(join(f.directory, 'claude-calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'user').map(row => row.message.content.map((block: { text?: string }) => block.text ?? '').join(''));
-  assert.match(sent.at(-1)!, /【群聊任务】任务编号：T-/);
-  assert.match(sent.at(-1)!, /验证员/);
-  assert.match(sent.at(-1)!, /## 你的任务\n\n检查登录页/);
   await request(`/api/groups/${group.id}/read`, 'POST', {});
   assert.equal((await detail()).group.unread, 0);
 
-  // A private correction is not a group task: it never reaches the group.
+  // A private correction is not a group task: it never reaches the group, and it closes the task.
   await request(`/api/sessions/${member.id}/chat/messages`, 'POST', { requestId: randomUUID(), text: '私聊补充' });
   await until(async () => !(await snapshot(member.id)).activeTurnId, 'Private turn did not finish');
   await delay(1500);
   assert.equal((await replies()).length, 1);
 
-  // A quoted conclusion travels with the next task, and only that.
-  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: '基于结论继续', recipientIds: [member.id], references: [reply.id], deliverNow: true }, 201);
+  // A quoted answer travels with the next task, and only that.
+  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: '基于回答继续', recipientIds: [member.id], references: [reply.id], deliverNow: true }, 201);
   await until(async () => (await replies()).length === 2, 'Second reply did not flow back');
-  state = await detail();
-  assert.equal(state.messages.filter(message => message.kind === 'reply').at(-1)!.conclusion, '登录页通过验证（参考了引用）。');
-  const second = (await readFile(join(f.directory, 'claude-calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'user').at(-1).message.content.map((block: { text?: string }) => block.text ?? '').join('');
-  assert.match(second, /## 引用的结论\n\n### 验证员 的结论\n登录页通过验证（独立完成）。/);
+  assert.equal((await replies()).at(-1)!.text, '登录页通过验证（参考了引用）。');
+  const second = (await sentTexts()).at(-1)!;
+  assert.match(second, /## 引用的回答\n\n### 验证员 的回答\n登录页通过验证（独立完成）。/);
   assert.doesNotMatch(second, /私聊补充/);
 
-  // An answer without the conclusion stays open ("still working") and is not final
-  // until the member writes the conclusion or the user speaks to it next.
-  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: 'PARTIAL 请处理', recipientIds: [member.id], deliverNow: true }, 201);
-  await until(async () => (await replies()).length === 3, 'Partial reply was not shown');
-  const open = (await detail()).messages.filter(message => message.kind === 'reply').at(-1)! as { pending?: boolean; id: string };
-  assert.equal(open.pending, true);
-  assert.ok((await detail()).deliveries.some(item => item.replyMessageId === open.id));
-  await request(`/api/sessions/${member.id}/chat/messages`, 'POST', { requestId: randomUUID(), text: '继续' });
-  await until(async () => !((await detail()).messages.find(message => message.id === open.id) as { pending?: boolean }).pending, 'Reply did not finalize after the next user turn');
-  assert.equal((await replies()).length, 3, 'The open reply is updated in place, never duplicated');
+  // Changed group settings resend the full rules once, marked as updated.
+  await request(`/api/groups/${group.id}`, 'PATCH', { goal: '完成登录页与注册页' });
+  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: '再看注册页', recipientIds: [member.id], deliverNow: true }, 201);
+  await until(async () => (await replies()).length === 3, 'Third reply did not flow back');
+  const updated = (await sentTexts()).at(-1)!;
+  assert.match(updated, /## 群说明（已更新）\n\n你是群聊「登录协作」中的成员「验证员」。群目标：完成登录页与注册页/);
+  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: '最后一项', recipientIds: [member.id], deliverNow: true }, 201);
+  await until(async () => (await replies()).length === 4, 'Fourth reply did not flow back');
+  assert.doesNotMatch((await sentTexts()).at(-1)!, /群说明/);
 
   // A turn that fails without an answer is reported in the group once, with the native reason.
   await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: 'FAIL-TURN 请处理', recipientIds: [member.id], deliverNow: true }, 201);
-  await until(async () => (await replies()).length === 4, 'Failed turn was not reported in the group');
-  const failure = (await detail()).messages.filter(message => message.kind === 'reply').at(-1)! as { failed?: boolean; conclusion?: string; text: string };
+  await until(async () => (await replies()).length === 5, 'Failed turn was not reported in the group');
+  const failure = (await replies()).at(-1)!;
   assert.equal(failure.failed, true);
-  assert.match(failure.conclusion ?? '', /^回复失败：本轮任务未完成：unexpected status 526/);
+  assert.match(failure.text, /^回复失败：本轮任务未完成：unexpected status 526/);
   assert.match(failure.text, /原任务不会自动重发/);
   await delay(1500);
-  assert.equal((await replies()).length, 4, 'A failure is reported once');
+  assert.equal((await replies()).length, 5, 'A failure is reported once');
 
   // Leaving the group keeps the contact.
   await request(`/api/sessions/${member.id}`, 'PATCH', { groupId: null });
@@ -645,10 +657,10 @@ test('group workspace is shared by default; a worktree member branches, merges b
   await run(repo, 'init', '-q', '-b', 'main'); await run(repo, 'config', 'user.name', 't'); await run(repo, 'config', 'user.email', 't@t'); await writeFile(join(repo, 'README.md'), 'base\n'); await run(repo, 'add', '.'); await run(repo, 'commit', '-qm', 'base');
   const group = await request<{ id: string; workspace?: string }>('/api/groups', 'POST', { title: '工作区群', goal: 'g', workspace: repo }, 201);
   assert.equal(group.workspace, repo);
-  const shared = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '共享成员', groupId: group.id }, 201);
+  const shared = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '共享成员', groupId: group.id, briefing: false }, 201);
   assert.equal(shared.cwd, repo, 'Members default to the group workspace');
   assert.equal(shared.worktree, undefined);
-  const isolated = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '独立成员', groupId: group.id, placement: 'worktree' }, 201);
+  const isolated = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '独立成员', groupId: group.id, placement: 'worktree', briefing: false }, 201);
   assert.ok(isolated.worktree);
   assert.match(isolated.worktree!.branch, /^dili\/工作区群\/独立成员-[0-9a-f]{6}$/);
   assert.ok(isolated.cwd.startsWith(join(f.directory, 'data', 'worktrees')));
@@ -680,7 +692,7 @@ test('group workspace is shared by default; a worktree member branches, merges b
   assert.equal(await readFile(join(repo, 'feature.txt'), 'utf8'), 'member work\n');
 
   // A conflicting branch is aborted and the workspace stays exactly as it was.
-  const rival = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '冲突成员', groupId: group.id, placement: 'worktree' }, 201);
+  const rival = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '冲突成员', groupId: group.id, placement: 'worktree', briefing: false }, 201);
   await writeFile(join(rival.cwd, 'README.md'), 'rival\n'); await run(rival.cwd, 'add', '.'); await run(rival.cwd, 'commit', '-qm', 'rival');
   await writeFile(join(repo, 'README.md'), 'mainline\n'); await run(repo, 'commit', '-qam', 'mainline');
   const head = await run(repo, 'rev-parse', 'HEAD');

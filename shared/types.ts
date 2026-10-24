@@ -72,6 +72,8 @@ export interface Session {
   nativeSettings?: NativeSettings;
   /** Group member working in its own git worktree instead of the group workspace. */
   worktree?: MemberWorktree;
+  /** Group rules this member last received (briefingVersion); a change resends them. */
+  groupBriefing?: string;
   origin: 'created' | 'imported' | 'forked' | 'handoff';
 }
 
@@ -126,17 +128,19 @@ export interface GroupMessage {
   recipientIds: string[];
   /** Existing message this handoff continues; always from the same group. */
   sourceMessageId?: string | null;
-  /** Member conclusions quoted into a task; only these cross to the recipients. */
+  /** Member answers quoted into a task; only these cross to the recipients. */
   references?: string[];
-  /** reply only: the delivery it answers, its extracted conclusion and native message. */
+  /** reply only: the delivery it answers and the native message it came from. */
   deliveryId?: string;
-  conclusion?: string;
   nativeMessageId?: string;
   /** reply only: the member's task turn ended in an error without an answer. */
   failed?: boolean;
-  /** reply only: collected at a turn end, but the member is still working on the
-   * task (no conclusion yet); it keeps updating until final. */
+  /** reply only: the member is working on this task again; the answer may still change. */
   pending?: boolean;
+  /** reply only: a later human turn closed the task; the answer is final. */
+  closedAt?: string;
+  /** reply only: answer to the one-time join briefing (a greeting), not a task. */
+  briefing?: boolean;
   createdAt: string;
   /** Persistent change cursor and chronological page position. */
   revision?: number;
@@ -151,6 +155,8 @@ export interface Delivery {
   status: 'pending' | 'sending' | 'unknown' | 'staged' | 'sent' | 'cancelled';
   /** Short task number written into the text; locates the turn in native history. */
   tag?: string;
+  /** The one-time join briefing rather than a user task. */
+  briefing?: boolean;
   /** Set once the member's reply was collected into the group. */
   replyMessageId?: string;
   createdAt: string;
