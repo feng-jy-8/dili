@@ -134,6 +134,9 @@ export interface GroupMessage {
   nativeMessageId?: string;
   /** reply only: the member's task turn ended in an error without an answer. */
   failed?: boolean;
+  /** reply only: collected at a turn end, but the member is still working on the
+   * task (no conclusion yet); it keeps updating until final. */
+  pending?: boolean;
   createdAt: string;
   /** Persistent change cursor and chronological page position. */
   revision?: number;

@@ -612,15 +612,26 @@ test('group @-tasks send at once, member replies flow back once with conclusions
   assert.match(second, /## 引用的结论\n\n### 验证员 的结论\n登录页通过验证（独立完成）。/);
   assert.doesNotMatch(second, /私聊补充/);
 
+  // An answer without the conclusion stays open ("still working") and is not final
+  // until the member writes the conclusion or the user speaks to it next.
+  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: 'PARTIAL 请处理', recipientIds: [member.id], deliverNow: true }, 201);
+  await until(async () => (await replies()).length === 3, 'Partial reply was not shown');
+  const open = (await detail()).messages.filter(message => message.kind === 'reply').at(-1)! as { pending?: boolean; id: string };
+  assert.equal(open.pending, true);
+  assert.ok((await detail()).deliveries.some(item => item.replyMessageId === open.id));
+  await request(`/api/sessions/${member.id}/chat/messages`, 'POST', { requestId: randomUUID(), text: '继续' });
+  await until(async () => !((await detail()).messages.find(message => message.id === open.id) as { pending?: boolean }).pending, 'Reply did not finalize after the next user turn');
+  assert.equal((await replies()).length, 3, 'The open reply is updated in place, never duplicated');
+
   // A turn that fails without an answer is reported in the group once, with the native reason.
   await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: 'FAIL-TURN 请处理', recipientIds: [member.id], deliverNow: true }, 201);
-  await until(async () => (await replies()).length === 3, 'Failed turn was not reported in the group');
+  await until(async () => (await replies()).length === 4, 'Failed turn was not reported in the group');
   const failure = (await detail()).messages.filter(message => message.kind === 'reply').at(-1)! as { failed?: boolean; conclusion?: string; text: string };
   assert.equal(failure.failed, true);
   assert.match(failure.conclusion ?? '', /^回复失败：本轮任务未完成：unexpected status 526/);
   assert.match(failure.text, /原任务不会自动重发/);
   await delay(1500);
-  assert.equal((await replies()).length, 3, 'A failure is reported once');
+  assert.equal((await replies()).length, 4, 'A failure is reported once');
 
   // Leaving the group keeps the contact.
   await request(`/api/sessions/${member.id}`, 'PATCH', { groupId: null });

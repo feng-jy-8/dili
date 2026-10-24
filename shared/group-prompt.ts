@@ -56,6 +56,9 @@ export function buildGroupTask({ group, member, task, tag, references = [], work
 const CONCLUSION_HEADING = /^#{1,6}\s*(?:结论|conclusion)\s*[:：]?\s*$/im;
 const MAX_CONCLUSION = 2000;
 
+/** True once the member wrote the conclusion section the group prompt asks for. */
+export const hasConclusion = (reply: string) => CONCLUSION_HEADING.test(reply);
+
 /** The member's own "## 结论" section; otherwise a bounded head of the reply. */
 export function extractConclusion(reply: string): string {
   const text = reply.trim();

@@ -59,7 +59,7 @@ if (!process.argv.includes('--print')) {
       saved('user', row.message.content, row.uuid);
       const text = row.message.content.filter(block => block.type === 'text').map(block => block.text).join('');
       // Group tasks get a reply with the conclusion section the group prompt asks for.
-      replyText = text.includes('【群聊任务】') ? `已处理任务。\n\n## 结论\n登录页通过验证（${text.includes('## 引用的结论') ? '参考了引用' : '独立完成'}）。` : '第一段 **完成**';
+      replyText = text.includes('PARTIAL') ? '还在处理，等待后台任务结果。' : text.includes('【群聊任务】') ? `已处理任务。\n\n## 结论\n登录页通过验证（${text.includes('## 引用的结论') ? '参考了引用' : '独立完成'}）。` : '第一段 **完成**';
       if (text === 'EXIT') process.exit(1);
       // A provider failure mid-turn: an error result with no assistant text.
       if (text.includes('FAIL-TURN')) { active = true; out({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['unexpected status 526: origin SSL certificate invalid'] }); active = false; return; }

@@ -32,7 +32,7 @@ test('reply is matched by task number and stops at the next user turn', () => {
     { id: 'a1', role: 'assistant' as const, text: '第一段' }, { id: 'a2', role: 'assistant' as const, text: '## 结论\n好' },
     { id: 'u2', role: 'user' as const, text: '之后的私聊' }, { id: 'a3', role: 'assistant' as const, text: '不属于任务' },
   ];
-  assert.deepEqual(replyFor({ messages, truncated: false }, 'T-aaaaaa'), { text: '第一段\n\n## 结论\n好', nativeMessageId: 'u1' });
+  assert.deepEqual(replyFor({ messages, truncated: false }, 'T-aaaaaa'), { text: '第一段\n\n## 结论\n好', nativeMessageId: 'u1', closed: true });
   assert.equal(replyFor({ messages, truncated: false }, 'T-bbbbbb'), null);
   assert.equal(replyFor({ messages: messages.slice(0, 3), truncated: false }, 'T-aaaaaa'), null, 'No reply yet means retry later');
 });
@@ -58,4 +58,22 @@ test('failure notes carry the native reason, bounded and never empty', async () 
   assert.equal(nativeErrorText({ message: 'unexpected status 526\n  error code: 526' }), 'unexpected status 526 error code: 526');
   assert.equal(nativeErrorText('x'.repeat(400)).length, 300);
   assert.equal(nativeErrorText(undefined), '');
+});
+
+test('background continuation turns stay in the same task; only a human turn or the conclusion closes it', async () => {
+  const { hasConclusion } = await import('../shared/group-prompt.ts');
+  const messages = [
+    { id: 'u1', role: 'user' as const, text: `【群聊任务】${taskTagLine('T-cccccc')}\n任务` },
+    { id: 'a1', role: 'assistant' as const, text: '先跑测试，等待结果。' },
+    { id: 'n1', role: 'user' as const, text: '<task-notification>\n<task-id>x</task-id>' },
+    { id: 'a2', role: 'assistant' as const, text: '测试通过。\n\n## 结论\n全部完成' },
+  ];
+  const open = replyFor({ messages: messages.slice(0, 2), truncated: false }, 'T-cccccc')!;
+  assert.equal(open.closed, false);
+  assert.equal(hasConclusion(open.text), false);
+  const done = replyFor({ messages, truncated: false }, 'T-cccccc')!;
+  assert.equal(done.text, '先跑测试，等待结果。\n\n测试通过。\n\n## 结论\n全部完成');
+  assert.equal(hasConclusion(done.text), true);
+  assert.equal(done.closed, false);
+  assert.equal(replyFor({ messages: [...messages.slice(0, 2), { id: 'u2', role: 'user' as const, text: '你停一下' }], truncated: false }, 'T-cccccc')!.closed, true);
 });

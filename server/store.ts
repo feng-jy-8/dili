@@ -202,16 +202,30 @@ export class Store {
     });
   }
   /** Records a member's collected reply exactly once per delivery. */
-  addReply(deliveryId: string, reply: { text: string; conclusion: string; nativeMessageId?: string; failed?: boolean }): GroupMessage | null {
+  addReply(deliveryId: string, reply: { text: string; conclusion: string; nativeMessageId?: string; failed?: boolean; pending?: boolean }): GroupMessage | null {
     return this.transaction(() => {
       const delivery = this.delivery(deliveryId);
       if (!delivery || delivery.replyMessageId) return null;
       const task = this.get<GroupMessage>('messages', delivery.messageId);
       const member = this.session(delivery.sessionId);
       if (!task || !member || member.groupId !== task.groupId) return null;
-      const message = this.insertMessage({ groupId: task.groupId, kind: 'reply', senderId: member.id, senderName: member.title, recipientIds: [], text: reply.text, conclusion: reply.conclusion, sourceMessageId: task.id, deliveryId, ...(reply.nativeMessageId ? { nativeMessageId: reply.nativeMessageId } : {}), ...(reply.failed ? { failed: true } : {}) });
+      const message = this.insertMessage({ groupId: task.groupId, kind: 'reply', senderId: member.id, senderName: member.title, recipientIds: [], text: reply.text, conclusion: reply.conclusion, sourceMessageId: task.id, deliveryId, ...(reply.nativeMessageId ? { nativeMessageId: reply.nativeMessageId } : {}), ...(reply.failed ? { failed: true } : {}), ...(reply.pending ? { pending: true } : {}) });
       this.put('deliveries', { ...this.delivery(deliveryId)!, replyMessageId: message.id });
       return message;
+    });
+  }
+  /** Grows an open reply as the member keeps working; finalizing clears pending. */
+  updateReply(messageId: string, reply: { text: string; conclusion: string; failed?: boolean; pending: boolean }): GroupMessage | null {
+    return this.transaction(() => {
+      const message = this.get<GroupMessage>('messages', messageId);
+      if (!message || message.kind !== 'reply' || !message.pending) return null;
+      // Still working and nothing new: no write, no change notification.
+      if (reply.pending && message.text === reply.text) return null;
+      const group = this.updateGroup(message.groupId, {
+        ...(!reply.pending ? { lastMessage: { text: (reply.conclusion || reply.text).replace(/\s+/g, ' ').trim().slice(0, 160), senderName: message.senderName, at: now() } } : {}),
+      });
+      const { pending: _pending, failed: _failed, ...rest } = message;
+      return this.put('messages', { ...rest, text: reply.text, conclusion: reply.conclusion, ...(reply.failed ? { failed: true } : {}), ...(reply.pending ? { pending: true } : {}), revision: Date.parse(group.updatedAt) });
     });
   }
   /** Viewing a group reads its replies and the members' finished-turn reminders,

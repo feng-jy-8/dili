@@ -99,3 +99,5 @@
 .placement-warning { color: var(--warning, #b7791f); }
 .group-message.failed .bubble { border: 1px solid var(--danger, #d64545); background: var(--danger-bg, #fdecec); }
 .group-message.failed .message-kind, .delivery-failed { color: var(--danger, #d64545); }
+.group-message.pending .bubble { border: 1px dashed var(--line-strong); }
+.group-message.pending .message-kind { color: var(--accent-dark); }
