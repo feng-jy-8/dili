@@ -20,6 +20,16 @@ export interface BackendInfo {
 }
 
 export interface NativeSettings { model?: string; permission?: string }
+export interface MemberWorktree {
+  /** Worktree root created by Dili; cwd is this root or the same subdirectory as the group workspace. */
+  path: string;
+  branch: string;
+  /** Repository root of the group workspace the branch merges back into. */
+  repository: string;
+  /** Commit the branch started from. */
+  base: string;
+}
+export interface WorktreeStatus { branch: string; ahead: number; behind: number; uncommitted: number; workspaceDirty: number; merged: boolean }
 
 export interface Session {
   id: string;
@@ -60,6 +70,8 @@ export interface Session {
   /** Contact-scoped native settings shared by every executor of this contact
    * (Claude graphical and terminal). Absent fields follow native defaults. */
   nativeSettings?: NativeSettings;
+  /** Group member working in its own git worktree instead of the group workspace. */
+  worktree?: MemberWorktree;
   origin: 'created' | 'imported' | 'forked' | 'handoff';
 }
 
@@ -91,6 +103,14 @@ export interface Group {
   id: string;
   title: string;
   goal: string;
+  /** Custom group prompt; empty means DEFAULT_GROUP_PROMPT. */
+  prompt?: string;
+  /** Shared working directory for members; isolated worktrees branch from its repository. */
+  workspace?: string;
+  pinned?: boolean;
+  /** Member replies not yet seen by the user. */
+  unread?: number;
+  lastMessage?: { text: string; senderName: string; at: string } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -100,11 +120,18 @@ export interface GroupMessage {
   groupId: string;
   senderId: string | null;
   senderName: string;
-  kind: 'note' | 'task' | 'result';
+  /** reply: a member's answer to a group task, collected automatically. */
+  kind: 'note' | 'task' | 'result' | 'reply';
   text: string;
   recipientIds: string[];
   /** Existing message this handoff continues; always from the same group. */
   sourceMessageId?: string | null;
+  /** Member conclusions quoted into a task; only these cross to the recipients. */
+  references?: string[];
+  /** reply only: the delivery it answers, its extracted conclusion and native message. */
+  deliveryId?: string;
+  conclusion?: string;
+  nativeMessageId?: string;
   createdAt: string;
   /** Persistent change cursor and chronological page position. */
   revision?: number;
@@ -117,6 +144,10 @@ export interface Delivery {
   sessionId: string;
   text: string;
   status: 'pending' | 'sending' | 'unknown' | 'staged' | 'sent' | 'cancelled';
+  /** Short task number written into the text; locates the turn in native history. */
+  tag?: string;
+  /** Set once the member's reply was collected into the group. */
+  replyMessageId?: string;
   createdAt: string;
   sentAt: string | null;
   attempts?: DeliveryAttempt[];

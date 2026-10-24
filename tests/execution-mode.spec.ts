@@ -5,7 +5,7 @@ import type { AppState } from '../shared/types';
 test('new contacts on all platforms choose their native permission preset, persisted across page reloads', async ({ page, request }) => {
   for (const backend of ['claude', 'codex', 'dsh'] as const) {
     await page.goto('/#/contacts');
-    await page.getByRole('button', { name: '新建联系人', exact: true }).click();
+    await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '新建会话联系人' });
     await dialog.getByRole('button', { name: backend === 'claude' ? /Claude/ : backend === 'codex' ? /Codex/ : /DeepSeek/ }).click();
     if (backend === 'claude') {

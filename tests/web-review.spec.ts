@@ -17,20 +17,20 @@ test('a message completed after navigation clears its submitted draft and preser
   let intercepted = 0;
   await page.route(`**/api/groups/${first.id}/messages`, async route => { intercepted++; await held; await route.continue(); });
   await page.goto(`/#/groups/${first.id}`);
-  const navigate = (title: string) => page.getByRole('navigation', { name: '协作群组', exact: true }).getByRole('button', { name: new RegExp(title) }).click();
+  const navigate = (title: string) => page.getByRole('button', { name: new RegExp('进入群聊 ' + title) }).click();
   await page.getByLabel('群组消息').fill('第一条发布成功后应清掉原草稿');
-  await page.getByRole('button', { name: '发布', exact: true }).click();
+  await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect.poll(() => intercepted).toBe(1);
   await navigate(second.title);
   release();
-  await expect(page.getByRole('status').filter({ hasText: '已分享到群组' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: '已记录到群聊' })).toBeVisible();
   await navigate(first.title);
   await expect(page.getByRole('article').getByText('第一条发布成功后应清掉原草稿', { exact: true })).toBeVisible();
   await expect(page.getByLabel('群组消息')).toHaveValue('');
 
   held = new Promise<void>(resolve => { release = resolve; });
   await page.getByLabel('群组消息').fill('第二条也会成功发布');
-  await page.getByRole('button', { name: '发布', exact: true }).click();
+  await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect.poll(() => intercepted).toBe(2);
   await navigate(second.title);
   await navigate(first.title);

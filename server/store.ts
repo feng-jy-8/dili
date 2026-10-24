@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Session, Group, GroupMessage, Delivery, DeliveryAttempt, Activity, GroupDetail } from '../shared/types.ts';
+import { buildGroupTask } from '../shared/group-prompt.ts';
 
 const now = () => new Date().toISOString();
 type Table = 'sessions' | 'groups' | 'messages' | 'deliveries' | 'activities';
@@ -94,7 +95,7 @@ export class Store {
     const date = now();
     return this.put('groups', { id: randomUUID(), title, goal, createdAt: date, updatedAt: date });
   }
-  updateGroup(id: string, patch: Partial<Pick<Group, 'title' | 'goal'>>): Group {
+  updateGroup(id: string, patch: Partial<Pick<Group, 'title' | 'goal' | 'prompt' | 'workspace' | 'pinned' | 'unread' | 'lastMessage'>>): Group {
     const group = this.group(id);
     if (!group) throw new Error('群组不存在');
     // This timestamp also identifies the revision consumed by group viewers.
@@ -123,24 +124,42 @@ export class Store {
     return { group, messages, deliveries, page: { total, before: hasMore && messages.length ? messages[0].sequence! : null }, revision: nextSince ?? group.updatedAt, nextSince };
   }
   addMessage(input: Omit<GroupMessage, 'id' | 'createdAt'>): GroupMessage {
-    return this.transaction(() => {
+    return this.transaction(() => this.insertMessage(input));
+  }
+  private insertMessage(input: Omit<GroupMessage, 'id' | 'createdAt'>): GroupMessage {
+    {
       if (!this.group(input.groupId)) throw new Error('群组不存在');
       if (input.senderId && this.session(input.senderId)?.groupId !== input.groupId) throw new Error('发送者不属于这个群组');
       const source = input.sourceMessageId ? this.get<GroupMessage>('messages', input.sourceMessageId) : undefined;
       if (input.sourceMessageId && source?.groupId !== input.groupId) throw new Error('转交来源必须是这个群组中的消息');
       const recipientIds = [...new Set(input.recipientIds)];
+      const references = [...new Set(input.references ?? [])].map(id => {
+        const quoted = this.get<GroupMessage>('messages', id);
+        if (quoted?.groupId !== input.groupId || (quoted.kind !== 'reply' && quoted.kind !== 'result')) throw new Error('只能引用这个群聊中的成员结论');
+        return quoted;
+      });
       for (const id of recipientIds) {
         if (this.session(id)?.groupId !== input.groupId || this.session(id)?.archived) throw new Error('接收成员无效或已归档');
       }
-      const group = this.updateGroup(input.groupId, {});
-      const message = this.put('messages', { ...input, recipientIds, id: randomUUID(), createdAt: now(), revision: Date.parse(group.updatedAt) });
-      for (const sessionId of recipientIds) this.put<Delivery>('deliveries', {
-        id: randomUUID(), messageId: message.id, sessionId,
-        text: `【SessionDeck 群组：${group.title}】\n共同目标：${group.goal || '见群组讨论'}\n来自：${input.senderName}${source ? `\n转交来源：${source.senderName}的${source.kind === 'result' ? '结果' : source.kind === 'task' ? '任务' : '记录'}` : ''}\n\n${input.text}`,
-        status: 'pending', createdAt: now(), sentAt: null,
+      const preview = (input.kind === 'reply' ? input.conclusion || input.text : input.text).replace(/\s+/g, ' ').trim().slice(0, 160);
+      const group = this.updateGroup(input.groupId, {
+        lastMessage: { text: preview, senderName: input.senderName, at: now() },
+        // Only member replies are new to the user; their own messages are already read.
+        ...(input.kind === 'reply' ? { unread: (this.group(input.groupId)!.unread ?? 0) + 1 } : {}),
       });
+      const message = this.put('messages', { ...input, recipientIds, ...(references.length ? { references: references.map(item => item.id) } : { references: undefined }), id: randomUUID(), createdAt: now(), revision: Date.parse(group.updatedAt) });
+      const quoted = [...(source && (source.kind === 'reply' || source.kind === 'result') && !references.some(item => item.id === source.id) ? [source] : []), ...references];
+      const recipient = (id: string) => this.session(id)!;
+      for (const sessionId of recipientIds) {
+        const tag = `T-${randomUUID().replace(/-/g, '').slice(0, 6)}`;
+        this.put<Delivery>('deliveries', {
+          id: randomUUID(), messageId: message.id, sessionId, tag,
+          text: buildGroupTask({ group, member: recipient(sessionId).title, task: input.text, tag, references: quoted, workspace: { shared: group.workspace, cwd: recipient(sessionId).cwd, branch: recipient(sessionId).worktree?.branch } }),
+          status: 'pending', createdAt: now(), sentAt: null,
+        });
+      }
       return message;
-    });
+    }
   }
   updateDelivery(id: string, status: 'sent' | 'staged' | 'cancelled') {
     const delivery = this.delivery(id);
@@ -178,6 +197,24 @@ export class Store {
       return this.saveDelivery({ ...delivery, status, lastError: undefined, sentAt: resolution === 'confirmed' ? now() : null,
         attempts: [...delivery.attempts!.slice(0, -1), { ...attempt, resolution }] });
     });
+  }
+  /** Records a member's collected reply exactly once per delivery. */
+  addReply(deliveryId: string, reply: { text: string; conclusion: string; nativeMessageId?: string }): GroupMessage | null {
+    return this.transaction(() => {
+      const delivery = this.delivery(deliveryId);
+      if (!delivery || delivery.replyMessageId) return null;
+      const task = this.get<GroupMessage>('messages', delivery.messageId);
+      const member = this.session(delivery.sessionId);
+      if (!task || !member || member.groupId !== task.groupId) return null;
+      const message = this.insertMessage({ groupId: task.groupId, kind: 'reply', senderId: member.id, senderName: member.title, recipientIds: [], text: reply.text, conclusion: reply.conclusion, sourceMessageId: task.id, deliveryId, ...(reply.nativeMessageId ? { nativeMessageId: reply.nativeMessageId } : {}) });
+      this.put('deliveries', { ...this.delivery(deliveryId)!, replyMessageId: message.id });
+      return message;
+    });
+  }
+  markGroupRead(id: string): Group {
+    const group = this.group(id);
+    if (!group) throw new Error('群组不存在');
+    return group.unread ? this.updateGroup(id, { unread: 0 }) : group;
   }
   private saveDelivery(delivery: Delivery): Delivery {
     const message = this.get<GroupMessage>('messages', delivery.messageId);

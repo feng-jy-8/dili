@@ -18,14 +18,14 @@ if (!process.argv.includes('--print')) {
   const out = row => process.stdout.write(JSON.stringify({ ...row, session_id: id }) + '\n');
   const saved = (role, content, uuid = randomUUID()) => fs.appendFileSync(file, JSON.stringify({ type: role, uuid, sessionId: id, timestamp: new Date().toISOString(), message: { role, content } }) + '\n');
   const event = payload => out({ type: 'stream_event', event: payload, parent_tool_use_id: null });
-  let timer, messageId, active = false, pending, model = process.argv.includes('--model') ? arg('--model') : 'fixture-claude', mode = process.argv.includes('--permission-mode') ? arg('--permission-mode').replace(/^manual$/, 'default') : 'default';
+  let replyText = '第一段 **完成**', timer, messageId, active = false, pending, model = process.argv.includes('--model') ? arg('--model') : 'fixture-claude', mode = process.argv.includes('--permission-mode') ? arg('--permission-mode').replace(/^manual$/, 'default') : 'default';
   const bypassAllowed = process.argv.includes('--allow-dangerously-skip-permissions') || process.argv.includes('--dangerously-skip-permissions');
   function finish(error = false) {
     clearTimeout(timer);
     if (!active) return;
     active = false;
     if (!error) {
-      const content = [{ type: 'text', text: '第一段 **完成**' }];
+      const content = [{ type: 'text', text: replyText }];
       const uuid = randomUUID();
       out({ type: 'assistant', uuid, message: { id: messageId, role: 'assistant', content } });
       saved('assistant', content, uuid);
@@ -58,6 +58,8 @@ if (!process.argv.includes('--print')) {
       active = true; messageId = 'msg_' + randomUUID();
       saved('user', row.message.content, row.uuid);
       const text = row.message.content.filter(block => block.type === 'text').map(block => block.text).join('');
+      // Group tasks get a reply with the conclusion section the group prompt asks for.
+      replyText = text.includes('【群聊任务】') ? `已处理任务。\n\n## 结论\n登录页通过验证（${text.includes('## 引用的结论') ? '参考了引用' : '独立完成'}）。` : '第一段 **完成**';
       if (text === 'EXIT') process.exit(1);
       if (text === 'BURST') {
         for (let i = 0; i < 240; i++) {

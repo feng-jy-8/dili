@@ -569,6 +569,113 @@ test('Claude contact settings align graphical and terminal executors, including 
   assert.deepEqual(fork.nativeSettings, { permission: 'dontAsk', model: 'fixture-alternative' });
 });
 
+test('group @-tasks send at once, member replies flow back once with conclusions, private turns stay private', { timeout: 40_000 }, async t => {
+  const f = await launch(t), { request, snapshot } = f;
+  const group = await request<{ id: string }>('/api/groups', 'POST', { title: '登录协作', goal: '完成登录页' }, 201);
+  const member = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '验证员', cwd: f.directory, groupId: group.id }, 201);
+  const detail = () => request<{ group: { unread?: number; lastMessage?: { text: string } }; messages: { id: string; kind: string; senderId: string | null; conclusion?: string; sourceMessageId?: string | null; text: string }[]; deliveries: { status: string; replyMessageId?: string; tag?: string }[] }>(`/api/groups/${group.id}`);
+  const replies = async () => (await detail()).messages.filter(message => message.kind === 'reply');
+
+  // @-assignment starts the stopped graphical member and sends in one request.
+  const task = await request<{ id: string; deliveryErrors?: unknown }>(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: '检查登录页', recipientIds: [member.id], deliverNow: true }, 201);
+  assert.equal(task.deliveryErrors, undefined);
+  await until(async () => (await replies()).length === 1, 'Member reply did not flow back to the group');
+  let state = await detail();
+  const reply = state.messages.find(message => message.kind === 'reply')!;
+  assert.equal(reply.senderId, member.id);
+  assert.equal(reply.sourceMessageId, task.id);
+  assert.equal(reply.conclusion, '登录页通过验证（独立完成）。');
+  assert.match(reply.text, /## 结论/);
+  assert.match(state.deliveries[0].tag ?? '', /^T-[0-9a-f]{6}$/);
+  assert.equal(state.deliveries[0].replyMessageId, reply.id);
+  assert.equal(state.group.unread, 1);
+  assert.match(state.group.lastMessage?.text ?? '', /登录页通过验证/);
+  const sent = (await readFile(join(f.directory, 'claude-calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'user').map(row => row.message.content.map((block: { text?: string }) => block.text ?? '').join(''));
+  assert.match(sent.at(-1)!, /【群聊任务】任务编号：T-/);
+  assert.match(sent.at(-1)!, /验证员/);
+  assert.match(sent.at(-1)!, /## 你的任务\n\n检查登录页/);
+  await request(`/api/groups/${group.id}/read`, 'POST', {});
+  assert.equal((await detail()).group.unread, 0);
+
+  // A private correction is not a group task: it never reaches the group.
+  await request(`/api/sessions/${member.id}/chat/messages`, 'POST', { requestId: randomUUID(), text: '私聊补充' });
+  await until(async () => !(await snapshot(member.id)).activeTurnId, 'Private turn did not finish');
+  await delay(1500);
+  assert.equal((await replies()).length, 1);
+
+  // A quoted conclusion travels with the next task, and only that.
+  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: '基于结论继续', recipientIds: [member.id], references: [reply.id], deliverNow: true }, 201);
+  await until(async () => (await replies()).length === 2, 'Second reply did not flow back');
+  state = await detail();
+  assert.equal(state.messages.filter(message => message.kind === 'reply').at(-1)!.conclusion, '登录页通过验证（参考了引用）。');
+  const second = (await readFile(join(f.directory, 'claude-calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)).filter(row => row.type === 'user').at(-1).message.content.map((block: { text?: string }) => block.text ?? '').join('');
+  assert.match(second, /## 引用的结论\n\n### 验证员 的结论\n登录页通过验证（独立完成）。/);
+  assert.doesNotMatch(second, /私聊补充/);
+
+  // Leaving the group keeps the contact.
+  await request(`/api/sessions/${member.id}`, 'PATCH', { groupId: null });
+});
+
+test('group workspace is shared by default; a worktree member branches, merges back on request and cleans up', { timeout: 60_000 }, async t => {
+  const f = await launch(t), { request } = f;
+  const repo = join(f.directory, 'repo');
+  await mkdir(repo, { recursive: true });
+  const run = (cwd: string, ...args: string[]) => new Promise<string>((resolve, reject) => { const child = spawn('git', args, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }); let out = ''; child.stdout.on('data', d => { out += d; }); child.on('close', code => code === 0 ? resolve(out.trim()) : reject(new Error(`git ${args.join(' ')} failed`))); });
+  await run(repo, 'init', '-q', '-b', 'main'); await run(repo, 'config', 'user.name', 't'); await run(repo, 'config', 'user.email', 't@t'); await writeFile(join(repo, 'README.md'), 'base\n'); await run(repo, 'add', '.'); await run(repo, 'commit', '-qm', 'base');
+  const group = await request<{ id: string; workspace?: string }>('/api/groups', 'POST', { title: '工作区群', goal: 'g', workspace: repo }, 201);
+  assert.equal(group.workspace, repo);
+  const shared = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '共享成员', groupId: group.id }, 201);
+  assert.equal(shared.cwd, repo, 'Members default to the group workspace');
+  assert.equal(shared.worktree, undefined);
+  const isolated = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '独立成员', groupId: group.id, placement: 'worktree' }, 201);
+  assert.ok(isolated.worktree);
+  assert.match(isolated.worktree!.branch, /^dili\/工作区群\/独立成员-[0-9a-f]{6}$/);
+  assert.ok(isolated.cwd.startsWith(join(f.directory, 'data', 'worktrees')));
+  assert.equal(await run(isolated.cwd, 'rev-parse', '--abbrev-ref', 'HEAD'), isolated.worktree!.branch);
+  await request('/api/sessions', 'POST', { backend: 'claude', title: '无群', placement: 'worktree', cwd: repo }, 400);
+
+  // Each member is told where it works.
+  await request(`/api/groups/${group.id}/messages`, 'POST', { kind: 'task', text: '看看', recipientIds: [shared.id, isolated.id] }, 201);
+  const deliveries = (await request<{ deliveries: { sessionId: string; id: string }[] }>(`/api/groups/${group.id}`)).deliveries;
+  assert.equal(deliveries.length, 2);
+  const texts = (await import('node:sqlite')).DatabaseSync;
+  const db = new texts(join(f.directory, 'data', 'sessiondeck.sqlite'), { readOnly: true });
+  const text = (sessionId: string) => (db.prepare('SELECT data FROM deliveries').all().map(row => JSON.parse(String(row.data))) as Delivery[]).find(item => item.sessionId === sessionId)!.text;
+  assert.match(text(shared.id), /所有成员共用工作目录/);
+  assert.match(text(isolated.id), new RegExp(`独立的 Git 工作树中工作.*分支 ${isolated.worktree!.branch.replace(/[/]/g, '\\/')}`));
+  db.close();
+
+  // Merge only on request, only with committed work, never touching a dirty workspace.
+  await request(`/api/sessions/${isolated.id}/worktree/merge`, 'POST', {}, 409);
+  await writeFile(join(isolated.cwd, 'feature.txt'), 'member work\n');
+  assert.equal((await request<{ uncommitted: number }>(`/api/sessions/${isolated.id}/worktree`)).uncommitted, 1);
+  await request(`/api/sessions/${isolated.id}/worktree/merge`, 'POST', {}, 409);
+  await run(isolated.cwd, 'add', '.'); await run(isolated.cwd, 'commit', '-qm', 'member');
+  await writeFile(join(repo, 'README.md'), 'dirty\n');
+  await request(`/api/sessions/${isolated.id}/worktree/merge`, 'POST', {}, 409);
+  await run(repo, 'checkout', '--', 'README.md');
+  const merged = await request<{ merged: boolean; ahead: number }>(`/api/sessions/${isolated.id}/worktree/merge`, 'POST', {});
+  assert.equal(merged.merged, true);
+  assert.equal(await readFile(join(repo, 'feature.txt'), 'utf8'), 'member work\n');
+
+  // A conflicting branch is aborted and the workspace stays exactly as it was.
+  const rival = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: '冲突成员', groupId: group.id, placement: 'worktree' }, 201);
+  await writeFile(join(rival.cwd, 'README.md'), 'rival\n'); await run(rival.cwd, 'add', '.'); await run(rival.cwd, 'commit', '-qm', 'rival');
+  await writeFile(join(repo, 'README.md'), 'mainline\n'); await run(repo, 'commit', '-qam', 'mainline');
+  const head = await run(repo, 'rev-parse', 'HEAD');
+  const conflict = await request<{ error: string }>(`/api/sessions/${rival.id}/worktree/merge`, 'POST', {}, 409);
+  assert.match(conflict.error, /合并冲突（1 个文件），已撤销/);
+  assert.equal(await run(repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(await run(repo, 'status', '--porcelain'), '');
+  assert.equal(await readFile(join(repo, 'README.md'), 'utf8'), 'mainline\n');
+
+  // Cleanup archives the member and keeps the branch.
+  const removed = await request<Session>(`/api/sessions/${isolated.id}/worktree/remove`, 'POST', {});
+  assert.equal(removed.archived, true); assert.equal(removed.worktree, undefined);
+  await assert.rejects(readFile(join(isolated.cwd, 'feature.txt')));
+  assert.match(await run(repo, 'branch', '--list', isolated.worktree!.branch), /dili\//);
+});
+
 test('Claude stopped history pages never launch a CLI; live and restored IDs agree and evicted messages stay reachable', { timeout: 30_000 }, async t => {
   const f = await launch(t), { request, snapshot } = f;
   const contact = await request<Session>('/api/sessions', 'POST', { backend: 'claude', title: 'Claude long history', cwd: f.directory }, 201);

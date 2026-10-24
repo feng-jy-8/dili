@@ -262,7 +262,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .conversation-welcome { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 32px; text-align: center; color: var(--faint); background: var(--welcome-bg); }
 .conversation-welcome h2 { font-size: 16px; font-weight: 500; color: var(--muted); }
 .conversation-welcome p { font-size: 12px; }
-.group-conversation { display: block; padding: 20px; }
+.group-conversation { display: flex; padding: 0; overflow: hidden; }
 .group-conversation .group-board { margin-top: 0; }
 .session-drawer { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); overflow: hidden; container-type: inline-size; }
 .session-back { display: none; }
@@ -679,8 +679,10 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
   .contacts-workspace { flex-direction: column; overflow-y: auto; }
   .contacts-pane { flex: 1; width: 100%; padding: 0; }
   .contacts-workspace>.workspace-splitter, .conversation-placeholder:not(.group-conversation) { display: none; }
-  .contacts-workspace:has(.group-conversation) .contacts-pane { flex: none; overflow: visible; }
-  .group-conversation { flex: none; padding: 16px 12px; overflow: visible; }
+  /* A group opens full screen like a private chat; its header has a back button. */
+  .contacts-workspace:has(.group-conversation) .contacts-pane { display: none; }
+  .group-conversation { flex: 1; padding: 0; overflow: hidden; }
+  .app-shell:has(.group-conversation) .topbar, .app-shell:has(.group-conversation) .rail { display: none; }
   .session-active .contacts-pane { display: none; }
   .session-back { display: inline-flex; }
   .card-pin { opacity: 1; }

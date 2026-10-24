@@ -13,7 +13,7 @@ test('create and Fork accept copied directory links containing spaces and Chines
   try {
     await mkdir(project); await mkdir(forkDirectory);
     await page.goto('/');
-    await page.getByRole('button', { name: '新建联系人', exact: true }).click();
+    await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
     const create = page.getByRole('dialog', { name: '新建会话联系人', exact: true });
     await create.getByLabel('联系人名称').fill('目录链接创建验收');
     await create.getByRole('button', { name: /Codex/ }).click();
@@ -44,7 +44,7 @@ test('directory explorer navigates real folders, reveals hidden names, selects p
     await mkdir(join(project, '.配置'));
     await writeFile(join(project, 'README.txt'), 'Only directories are shown.');
     await page.goto('/');
-    await page.getByRole('button', { name: '新建联系人', exact: true }).click();
+    await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
     const create = page.getByRole('dialog', { name: '新建会话联系人', exact: true });
     await create.getByLabel('联系人名称').fill('浏览目录时保留的名称');
     await create.getByLabel('工作目录', { exact: true }).fill(pathToFileURL(root).href);
@@ -133,7 +133,7 @@ test('directory explorer fits a 390px viewport with long folder names and paths'
     await mkdir(join(project, '很长的子目录名字 用来检查目录资源管理器不发生横向溢出'));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
-    await page.getByRole('button', { name: '新建联系人', exact: true }).click();
+    await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
     const create = page.getByRole('dialog', { name: '新建会话联系人', exact: true });
     await create.getByLabel('工作目录', { exact: true }).fill(project);
     await create.getByRole('button', { name: '浏览工作目录', exact: true }).click();
@@ -182,7 +182,7 @@ test('a delayed directory response preserves a newer pasted path until the user 
       await route.continue();
     });
     await page.goto('/');
-    await page.getByRole('button', { name: '新建联系人', exact: true }).click();
+    await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
     const create = page.getByRole('dialog', { name: '新建会话联系人', exact: true });
     await create.getByLabel('工作目录', { exact: true }).fill(root);
     await create.getByRole('button', { name: '浏览工作目录', exact: true }).click();

@@ -35,6 +35,9 @@ import { nativeHookPatch } from './native-events.ts';
 import { acquireInstanceLock } from './instance-lock.ts';
 import { CodexBridge } from './codex.ts';
 import { ClaudeChatBridge, probeClaudeModels } from './claude-chat.ts';
+import { GroupReplies } from './group-replies.ts';
+import { createWorktree, mergeWorktree, removeWorktree, worktreeStatus } from './worktrees.ts';
+import { sameDirectory } from './paths.ts';
 import { DeliveryNotAcceptedError, sendDelivery } from './delivery.ts';
 import { StatePublisher } from './state.ts';
 import { listDirectories, normalizeDirectoryInput } from './directories.ts';
@@ -45,7 +48,7 @@ import { ChatSubmissions } from './chat-submissions.ts';
 import { registerAgentChat } from './chat-api.ts';
 import { createAgentChatAdapters } from './agents/chat.ts';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES, type TerminalImageType } from '../shared/terminal-images.ts';
-import type { Backend, BackendInfo, NativeSettings, Session, AppState, SessionStatus, ConversationTranscript, DiscoveredSession } from '../shared/types.ts';
+import type { Backend, BackendInfo, MemberWorktree, NativeSettings, Session, AppState, SessionStatus, ConversationTranscript, DiscoveredSession } from '../shared/types.ts';
 import { normalizeClaudePermission } from '../shared/permissions.ts';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -132,6 +135,12 @@ const claudeBridge = new ClaudeChatBridge((id, cursor) => conversations.readClau
   probeModels: async () => { const file = await findExecutable('claude'); return file ? probeClaudeModels(file) : []; },
 });
 const claudeRuns = new Map<string, { nativeId: string; launchId: string }>();
+const groupReplies = new GroupReplies({
+  store,
+  read: item => conversations.readLatest(item),
+  turnOpen: item => !!item.nativeSessionId && item.executionTransport === 'structured' && !!(item.backend === 'claude' ? claudeBridge : item.backend === 'codex' ? codexBridge : undefined)?.chatSnapshot(item.nativeSessionId)?.activeTurnId,
+  onReply: () => broadcast(),
+});
 const app = express();
 const server = createServer(app);
 const remoteServer = createServer(app);
@@ -255,6 +264,7 @@ function status(id: string, patch: Partial<Session>, activity?: string) {
     && !(patch.status === 'waiting_approval' && old.status === 'waiting_approval');
   const updated = store.updateSession(id, { ...(patch.status && patch.status !== 'error' ? { errorCode: null } : {}), ...patch, ...(attention ? { unread: old.unread + 1 } : {}) });
   if (activity) store.activity(id, 'status', activity);
+  if (patch.status) groupReplies.statusChanged(updated);
   scheduleBroadcast();
   return updated;
 }
@@ -773,10 +783,31 @@ function claudeSettingsInput(value: unknown): NativeSettings | undefined {
   if (!(info('claude').capabilities.permissionModes ?? []).includes(mode)) fail('当前 Claude CLI 不支持该权限模式，请重新检测后端');
   return { permission: mode };
 }
-app.post('/api/sessions', (req, res) => {
+/** Where a new or forked group member works: the group workspace, a directory
+ * the user picked (or the fork source's), or an isolated worktree of the group repository. */
+async function memberPlacement(targetGroup: string | null, value: unknown, member: string, chosen?: string): Promise<{ cwd: string; worktree?: MemberWorktree }> {
+  const placement = value ?? (targetGroup && !chosen ? 'group' : 'directory');
+  if (!['group', 'directory', 'worktree'].includes(String(placement))) fail('成员工作位置无效');
+  const group = targetGroup ? store.group(targetGroup) : undefined;
+  if (placement === 'directory') {
+    const cwd = chosen ?? fail('请选择工作目录');
+    // A group's first member defines the shared workspace when none was chosen.
+    if (group && !group.workspace) store.updateGroup(group.id, { workspace: cwd });
+    return { cwd };
+  }
+  if (!group) fail('只有群聊成员可以使用群工作区');
+  const workspace = group!.workspace ? directory(group!.workspace) : chosen ?? fail('请先在群设置中选择群工作区');
+  if (placement === 'group') return { cwd: workspace };
+  if (demo) fail('演示模式不创建 Git 工作树');
+  return createWorktree({ dataDir, workspace, group: group!.title, member, id: randomUUID() });
+}
+app.post('/api/sessions', async (req, res) => {
   const id = backend(req.body.backend);
   const nativeSettings = id === 'claude' ? claudeSettingsInput(req.body.nativeSettings) : undefined;
-  const item = store.addSession({ backend: id, title: text(req.body.title, '名称'), cwd: directory(req.body.cwd), groupId: groupId(req.body.groupId), executionMode: executionMode(req.body.executionMode), ...(nativeSettings ? { nativeSettings } : {}) });
+  const targetGroup = groupId(req.body.groupId);
+  const title = text(req.body.title, '名称');
+  const placed = await memberPlacement(targetGroup, req.body.placement, title, req.body.cwd ? directory(req.body.cwd) : undefined);
+  const item = store.addSession({ backend: id, title, cwd: placed.cwd, ...(placed.worktree ? { worktree: placed.worktree } : {}), groupId: targetGroup, executionMode: executionMode(req.body.executionMode), ...(nativeSettings ? { nativeSettings } : {}) });
   store.activity(item.id, 'create', `创建了 ${item.title}`); broadcast(); res.status(201).json(item);
 });
 app.patch('/api/sessions/:id', (req, res) => {
@@ -789,6 +820,8 @@ app.patch('/api/sessions/:id', (req, res) => {
     if (key === 'archived' && req.body[key] && item.running) fail('请先停止会话，再归档');
     patch[key] = req.body[key];
   }
+  // Leaving a group keeps the contact and its private session; only membership ends.
+  if ('groupId' in req.body) { if (req.body.groupId !== null) fail('只支持移出群聊'); patch.groupId = null; }
   if ('status' in req.body) {
     const choice = req.body.status as SessionStatus;
     if (!['idle', 'waiting_input', 'waiting_approval', 'unknown'].includes(choice)) fail('不支持的手动状态');
@@ -823,9 +856,13 @@ app.post('/api/sessions/:id/fork', async (req, res) => {
   if (!info(parent.backend).capabilities.fork) fail('当前后端没有可用的原生 Fork 能力');
   if (!parent.nativeSessionId || parent.forkPending) fail('原生会话 ID 尚未确定，请先启动来源会话并完成初始化');
   const title = text(req.body.title || `${parent.title} · 分支`, '名称');
-  const cwd = req.body.cwd ? directory(req.body.cwd) : parent.cwd;
   const targetGroupId = groupId(req.body.groupId);
-  let child: Session;
+  const placed = await memberPlacement(targetGroupId, req.body.placement ?? 'directory', title, req.body.cwd ? directory(req.body.cwd) : parent.cwd);
+  const cwd = placed.cwd;
+  // DeepSeek Harness forks keep the source directory natively.
+  if (parent.backend === 'dsh' && !await sameDirectory(cwd, parent.cwd)) { if (placed.worktree) await removeWorktree(placed.worktree).catch(() => {}); fail('DeepSeek Harness 原生 Fork 保留原工作目录，不能放入群工作区或独立工作树'); }
+  let child!: Session;
+  try {
   if (dshWeb(parent)) {
     const native = await dsh.forkSession(parent.nativeSessionId, cwd);
     child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', ...(parent.nativeSettings ? { nativeSettings: parent.nativeSettings } : {}), origin: 'forked', ...native, running: true, status: 'idle', statusSource: 'native', statusDetail: '已通过原生能力 Fork，点击进入' });
@@ -840,6 +877,8 @@ app.post('/api/sessions/:id/fork', async (req, res) => {
   } else {
     child = store.addSession({ backend: parent.backend, title, cwd, groupId: targetGroupId, parentId: parent.id, executionMode: parent.executionMode ?? 'default', ...(parent.nativeSettings ? { nativeSettings: parent.nativeSettings } : {}), origin: 'forked', nativeSessionId: demo ? `demo-${randomUUID()}` : parent.nativeSessionId, forkPending: !demo, statusDetail: demo ? '演示分支已创建' : '待启动：将调用原生 Fork，原会话保持独立' });
   }
+  } catch (error) { if (placed.worktree) await removeWorktree(placed.worktree).catch(() => {}); throw error; }
+  if (placed.worktree) child = store.updateSession(child.id, { worktree: placed.worktree });
   store.activity(child.id, 'fork', `从 ${parent.title} 分叉为 ${child.title}`); broadcast(); res.status(201).json(child);
 });
 
@@ -856,10 +895,12 @@ app.post('/api/sessions/:id/handoff', async (req, res) => {
   res.status(201).json({ session: child, prompt, source: parent.id, target: target });
 });
 
-app.post('/api/sessions/:id/start', async (req, res) => {
-  let item = session(String(req.params.id));
-  const mode = req.body?.mode ?? 'terminal';
-  if (!['terminal', 'chat'].includes(mode)) fail('未知会话交互方式');
+/** Starts or switches a contact's executor; shared by the HTTP route and group @-delivery. */
+async function startSession(id: string, body: { mode?: unknown; restart?: unknown; handoff?: unknown } = {}): Promise<Session> {
+  let item = session(id);
+  const requested = body.mode ?? 'terminal';
+  if (requested !== 'terminal' && requested !== 'chat') fail('未知会话交互方式');
+  const mode = requested as 'terminal' | 'chat';
   if (mode === 'chat' && (demo || !['codex', 'claude'].includes(item.backend) || !info(item.backend).capabilities.graphicalChat)) fail('这个后端目前不支持原生图形化聊天');
   if (item.archived) fail('请先恢复归档联系人');
   if (stopping.has(item.id) || terminals.isStopping(item.id)) fail('会话正在停止，请稍后再启动', 409);
@@ -868,13 +909,13 @@ app.post('/api/sessions/:id/start', async (req, res) => {
   // closes the current writer completely before resuming the saved identity.
   if (item.running && !demo && item.backend === 'claude') {
     const structured = claudeRuns.has(item.id);
-    if ((mode === 'chat') === structured && req.body?.restart !== true) {
+    if ((mode === 'chat') === structured && body.restart !== true) {
       status(item.id, { interactionMode: mode, executionTransport: structured ? 'structured' : 'pty' });
-      broadcast(); return res.json(session(item.id));
+      broadcast(); return session(item.id);
     }
     const snapshot = structured ? claudeBridge.chatSnapshot(item.nativeSessionId!) : undefined;
     if (!['idle', 'waiting_input'].includes(item.status) || snapshot?.activeTurnId || snapshot?.requests.length || terminals.isSubmitting(item.id)) fail('请先完成或停止当前任务，并处理审批后再切换执行方式', 409);
-    if (req.body?.handoff !== true) fail(req.body?.restart === true ? '重启将退出当前 Claude 进程，并用联系人设置恢复同一份已保存的会话；需要确认' : '切换将退出当前 Claude 进程，并恢复同一份已保存的会话；需要确认交接', 409);
+    if (body.handoff !== true) fail(body.restart === true ? '重启将退出当前 Claude 进程，并用联系人设置恢复同一份已保存的会话；需要确认' : '切换将退出当前 Claude 进程，并恢复同一份已保存的会话；需要确认交接', 409);
     starting.add(item.id); stopping.add(item.id);
     try {
       if (structured) await claudeBridge.closeSession(item.nativeSessionId!);
@@ -892,7 +933,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
       if (!executable) fail('未找到 Codex 原生命令');
       terminals.start(item, codexBridge.remoteLaunch(item.nativeSessionId!, executable, item.cwd));
       status(item.id, { interactionMode: 'terminal' });
-      broadcast(); return res.json(session(item.id));
+      broadcast(); return session(item.id);
     } finally { starting.delete(item.id); }
   }
   if (item.running && !demo && item.backend === 'codex' && codexRuns.has(item.id)) {
@@ -900,9 +941,9 @@ app.post('/api/sessions/:id/start', async (req, res) => {
     // Switching the preferred interface must also update group routing. An
     // already attached terminal can stay connected to the same native thread.
     if (item.interactionMode !== mode) { status(item.id, { interactionMode: mode }); broadcast(); }
-    return res.json(session(item.id));
+    return session(item.id);
   }
-  if (item.running || starting.has(item.id)) return res.json(item);
+  if (item.running || starting.has(item.id)) return item;
   if (item.executionMode === 'auto' && !info(item.backend).capabilities.autoMode) fail('当前后端版本不支持原生 Auto，请更新后端并刷新检测');
   if (!info(item.backend).installed) fail(`${info(item.backend).label} 尚未安装或不可用`);
   directory(item.cwd);
@@ -956,7 +997,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
           claudeRuns.set(item.id, { nativeId: command.nativeSessionId!, launchId });
           status(item.id, { running: true, interactionMode: 'chat', executionTransport: 'structured', status: 'unknown', statusSource: 'process', statusDetail: '正在连接 Claude 流式图形会话', lastActivity: new Date().toISOString() });
           await claudeBridge.start(command.nativeSessionId!, item.cwd, command);
-          store.activity(item.id, 'start', `打开了 ${item.title}`); broadcast(); return res.json(session(item.id));
+          store.activity(item.id, 'start', `打开了 ${item.title}`); broadcast(); return session(item.id);
         }
         claudeTerminalSettings.set(item.id, effectiveClaudeSettings(item));
         const hookCommand = [process.execPath, join(root, 'server/native-hook.cjs'), `http://127.0.0.1:${port}/api/native-event/${item.id}?launch=${launchId}`, token, 'claude'].map(shellQuote).join(' ');
@@ -974,7 +1015,7 @@ app.post('/api/sessions/:id/start', async (req, res) => {
       observeNative(session(item.id));
       if (!demo) void resolveIdentity(item.id, new Date().toISOString(), launchId);
     }
-    store.activity(item.id, 'start', `打开了 ${item.title}`); broadcast(); res.json(session(item.id));
+    store.activity(item.id, 'start', `打开了 ${item.title}`); broadcast(); return session(item.id);
   } catch (error) {
     if (launchIds.get(item.id) === launchId) launchIds.delete(item.id);
     expectedNativeIds.delete(item.id);
@@ -990,7 +1031,9 @@ app.post('/api/sessions/:id/start', async (req, res) => {
     status(item.id, { running: false, status: 'error', errorCode, statusSource: 'process', statusDetail: error instanceof Error ? error.message : '启动失败' });
     throw error;
   } finally { starting.delete(item.id); }
-});
+}
+app.post('/api/sessions/:id/start', async (req, res) => { res.json(await startSession(String(req.params.id), req.body ?? {})); });
+
 app.post('/api/sessions/:id/stop', async (req, res) => {
   const item = session(String(req.params.id));
   if (starting.has(item.id)) fail('会话正在启动，请稍后再停止');
@@ -1027,16 +1070,41 @@ app.post('/api/sessions/:id/stop', async (req, res) => {
   } finally { stopping.delete(item.id); }
 });
 
+function memberWorktree(id: string) {
+  const item = session(id);
+  return { item, worktree: item.worktree ?? fail('这个成员没有独立工作树', 404) };
+}
+app.get('/api/sessions/:id/worktree', async (req, res) => { res.json(await worktreeStatus(memberWorktree(String(req.params.id)).worktree)); });
+app.post('/api/sessions/:id/worktree/merge', async (req, res) => {
+  const { item, worktree } = memberWorktree(String(req.params.id));
+  const result = await mergeWorktree(worktree, item.title);
+  store.activity(item.id, 'worktree', `已将 ${worktree.branch} 合并到群工作区`); broadcast(); res.json(result);
+});
+/** Finishing a worktree member: archive it and remove the directory; the branch stays. */
+app.post('/api/sessions/:id/worktree/remove', async (req, res) => {
+  const { item, worktree } = memberWorktree(String(req.params.id));
+  if (item.running || starting.has(item.id)) fail('请先停止这个成员，再清理工作树');
+  await removeWorktree(worktree);
+  const updated = store.updateSession(item.id, { archived: true, worktree: undefined, statusDetail: `工作树已清理，分支 ${worktree.branch} 保留` });
+  store.activity(item.id, 'worktree', `已清理工作树，保留分支 ${worktree.branch}`); broadcast(); res.json(updated);
+});
 app.post('/api/groups', (req, res) => {
-  const group = store.addGroup(text(req.body.title, '群组名称'), text(req.body.goal ?? '', '共同目标', 4000, false));
+  const created = store.addGroup(text(req.body.title, '群组名称'), text(req.body.goal ?? '', '共同目标', 4000, false));
+  const prompt = text(req.body.prompt ?? '', '群 prompt', 8000, false);
+  const workspace = req.body.workspace ? directory(req.body.workspace) : undefined;
+  const group = prompt || workspace ? store.updateGroup(created.id, { ...(prompt ? { prompt } : {}), ...(workspace ? { workspace } : {}) }) : created;
   store.activity(null, 'group', `创建了群组 ${group.title}`); broadcast(); res.status(201).json(group);
 });
 app.patch('/api/groups/:id', (req, res) => {
-  const patch: { title?: string; goal?: string } = {};
+  const patch: { title?: string; goal?: string; prompt?: string; workspace?: string; pinned?: boolean } = {};
   if ('title' in req.body) patch.title = text(req.body.title, '群组名称');
   if ('goal' in req.body) patch.goal = text(req.body.goal, '共同目标', 4000, false);
+  if ('prompt' in req.body) patch.prompt = text(req.body.prompt ?? '', '群 prompt', 8000, false);
+  if ('workspace' in req.body) patch.workspace = req.body.workspace ? directory(req.body.workspace) : '';
+  if ('pinned' in req.body) { if (typeof req.body.pinned !== 'boolean') fail('无效的布尔值'); patch.pinned = req.body.pinned; }
   const group = store.updateGroup(String(req.params.id), patch); broadcast(); res.json(group);
 });
+app.post('/api/groups/:id/read', (req, res) => { const group = store.markGroupRead(String(req.params.id)); broadcast(); res.json(group); });
 app.get('/api/groups/:id', (req, res) => {
   if (req.query.since !== undefined && typeof req.query.since !== 'string') fail('历史版本无效');
   if (req.query.before !== undefined && typeof req.query.before !== 'string') fail('历史游标无效');
@@ -1050,7 +1118,7 @@ app.get('/api/groups/:id/messages/:messageId', (req, res) => {
   if (!message || message.groupId !== String(req.params.id)) fail('来源消息不存在', 404);
   res.json(message);
 });
-app.post('/api/groups/:id/messages', (req, res) => {
+app.post('/api/groups/:id/messages', async (req, res) => {
   const id = String(req.params.id);
   const kind = req.body.kind ?? 'note';
   if (!['note', 'task', 'result'].includes(kind)) fail('消息类型无效');
@@ -1058,16 +1126,29 @@ app.post('/api/groups/:id/messages', (req, res) => {
   if (!Array.isArray(ids) || ids.length > 50 || ids.some(x => typeof x !== 'string')) fail('收件人无效');
   const senderId = req.body.senderId ? text(req.body.senderId, '来源会话') : null;
   const sourceMessageId = req.body.sourceMessageId ? text(req.body.sourceMessageId, '转交来源') : null;
-  const message = store.addMessage({ groupId: id, kind, text: text(req.body.text, '消息', 30_000), recipientIds: ids, senderId, senderName: senderId ? session(senderId).title : '你', sourceMessageId });
-  broadcast(); res.status(201).json(message);
+  const references = req.body.references ?? [];
+  if (!Array.isArray(references) || references.length > 20 || references.some(x => typeof x !== 'string')) fail('引用无效');
+  const message = store.addMessage({ groupId: id, kind, text: text(req.body.text, '消息', 30_000), recipientIds: ids, senderId, senderName: senderId ? session(senderId).title : '你', sourceMessageId, ...(references.length ? { references } : {}) });
+  broadcast();
+  // @-assignment sends immediately. Each recipient is independent: a failure
+  // leaves that delivery pending or awaiting confirmation, never retried here.
+  const errors: { sessionId: string; error: string }[] = [];
+  if (req.body.deliverNow === true && kind === 'task') {
+    const deliveries = store.deliveries().filter(item => item.messageId === message.id);
+    await Promise.all(deliveries.map(item => deliverNow(item.id, { autoStart: true }).catch(error => { errors.push({ sessionId: item.sessionId, error: error instanceof Error ? error.message : '投递失败' }); })));
+  }
+  res.status(201).json({ ...message, ...(errors.length ? { deliveryErrors: errors } : {}) });
 });
 const deliveryLocks = new Set<string>();
-app.post('/api/deliveries/:id/send', async (req, res) => {
-  const id = String(req.params.id);
+/** Sends one pending delivery. A stopped member that supports graphical chat is
+ * started first (the user explicitly @-assigned it); terminal members are staged. */
+async function deliverNow(id: string, options: { autoStart?: boolean } = {}) {
   const delivery = store.delivery(id) || fail('投递记录不存在', 404);
   if (delivery.status !== 'pending' || deliveryLocks.has(id)) fail('消息已处理或正在处理');
-  const target = session(delivery.sessionId);
-  if (!target.running || target.archived) fail('请先进入并启动目标会话');
+  let target = session(delivery.sessionId);
+  if (target.archived) fail('目标成员已归档');
+  if (!target.running && options.autoStart && !demo && info(target.backend).capabilities.graphicalChat && !starting.has(target.id)) target = await startSession(target.id, { mode: 'chat' });
+  if (!target.running) fail('请先进入并启动目标会话');
   if (stopping.has(target.id) || terminals.isStopping(target.id)) fail('目标会话正在停止');
   if (target.status === 'waiting_approval') fail('请先在原生会话中处理当前审批，再填入任务');
   const targetWeb = dshWeb(target);
@@ -1090,9 +1171,10 @@ app.post('/api/deliveries/:id/send', async (req, res) => {
     broadcast();
     const updated = await pending;
     store.activity(target.id, 'delivery', deliveryStatus === 'staged' ? '群组消息已填入终端，等待你按回车发送' : '群组消息已发送到原生会话');
-    broadcast(); res.json(updated);
+    return updated;
   } finally { deliveryLocks.delete(id); broadcast(); }
-});
+}
+app.post('/api/deliveries/:id/send', async (req, res) => { res.json(await deliverNow(String(req.params.id))); });
 app.post('/api/deliveries/:id/resolve', (req, res) => {
   const resolution = req.body.resolution;
   if (!['confirmed', 'not_received', 'cancelled'].includes(resolution)) fail('请选择核对后的投递结果');
@@ -1412,6 +1494,7 @@ function shutdown(exitCode = 0) {
   // Exiting directly in server.close used to orphan a slow native process and
   // let a replacement instance race it against the same native history.
   void (async () => {
+    groupReplies.close();
     const results = await Promise.allSettled([voiceClosed, httpClosed, tunnel.close(), frpTunnel.close(), terminals.close(), shells.close(), dsh.close(), codexBridge.close(), claudeBridge.close()]);
     for (const result of results) if (result.status === 'rejected') { console.error('关闭原生资源失败：', result.reason instanceof Error ? result.reason.message : String(result.reason)); exitCode = 1; }
     try { publisher.close(); store.close(); }

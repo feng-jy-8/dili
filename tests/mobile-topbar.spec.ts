@@ -6,7 +6,7 @@ test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true
 test('phone top bar is two IM rows and panel tools move to the bottom menu', async ({ page }) => {
   await page.goto('/#/contacts');
   const title = page.locator('.topbar-title');
-  const add = page.getByRole('button', { name: '新建联系人', exact: true });
+  const add = page.getByRole('button', { name: '新建', exact: true });
   const search = page.getByLabel('搜索联系人');
   await expect(add).toBeVisible();
   const [titleBox, addBox, searchBox] = await Promise.all([title.boundingBox(), add.boundingBox(), search.boundingBox()]);

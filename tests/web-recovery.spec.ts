@@ -194,12 +194,11 @@ test('directed group delivery stays pending on failure, retries once, and cancel
   const member = await createSession(page.request, '投递恢复成员', group.id);
   try {
     await page.goto(`/#/groups/${group.id}`);
-    await page.getByRole('button', { name: '分配任务', exact: true }).click();
     await page.locator('.recipient-picker').getByRole('button', { name: /投递恢复成员/ }).click();
     await page.getByLabel('群组消息').fill('RECOVERY-TASK-ONE');
-    await page.getByRole('button', { name: '创建任务', exact: true }).click();
-    await page.getByRole('button', { name: '填入会话', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('请先进入并启动目标会话');
+    // Immediate delivery fails for a stopped terminal member and stays pending.
+    await page.getByRole('button', { name: '发送任务', exact: true }).click();
+    await expect(page.locator('.error-banner')).toContainText('请先进入并启动目标会话');
     let detail = await (await page.request.get(`/api/groups/${group.id}`)).json() as GroupDetail;
     expect(detail.deliveries).toHaveLength(1); expect(detail.deliveries[0].status).toBe('pending');
     await mutate(page.request, `/sessions/${member.id}/start`);
@@ -216,9 +215,11 @@ test('directed group delivery stays pending on failure, retries once, and cancel
     await expect(page.getByRole('dialog', { name: `${member.title} 的私聊` })).toBeVisible();
     await page.getByRole('button', { name: '关闭会话', exact: true }).click();
     await expect(page.getByText('已填入 · 在私聊按回车发送')).toBeVisible();
+    // Stopped again, the next task stays pending and can be cancelled.
+    await mutate(page.request, `/sessions/${member.id}/stop`);
     await page.locator('.recipient-picker').getByRole('button', { name: /投递恢复成员/ }).click();
     await page.getByLabel('群组消息').fill('RECOVERY-TASK-CANCEL');
-    await page.getByRole('button', { name: '创建任务', exact: true }).click();
+    await page.getByRole('button', { name: '发送任务', exact: true }).click();
     await page.getByRole('button', { name: '取消投递', exact: true }).click();
     await expect(page.getByText('已取消', { exact: true })).toBeVisible();
     detail = await (await page.request.get(`/api/groups/${group.id}`)).json() as GroupDetail;
@@ -318,13 +319,12 @@ test('an unavailable initial service disables creation and gives a recoverable c
   await page.route('**/api/events', route => route.abort('connectionrefused'));
   await page.goto('/');
   await expect(page.locator('.connection-error')).toContainText('无法连接本地服务');
-  await expect(page.getByRole('button', { name: '新建联系人', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '新建', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '导入会话', exact: true })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '创建群组', exact: true })).toBeDisabled();
   await page.unroute('**/api/state');
   await page.getByRole('button', { name: '重试连接', exact: true }).click();
   await expect(page.locator('.connection-error')).not.toBeVisible();
-  await expect(page.getByRole('button', { name: '新建联系人', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '新建', exact: true })).toBeEnabled();
 });
 
 test('late snapshots cannot undo live attention, and a restarted service adopts a fresh revision sequence', async ({ page }) => {

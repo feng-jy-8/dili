@@ -28,7 +28,7 @@ test('contacts, native terminal, fork and directed group collaboration work in t
   await mkdir('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/contacts.png', fullPage: true });
 
-  await page.getByRole('button', { name: '新建联系人', exact: true }).click();
+  await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
   const create = page.getByRole('dialog', { name: '新建会话联系人' });
   await create.getByLabel('联系人名称').fill('浏览器验收联系人');
   await create.getByRole('button', { name: /Codex/ }).click();
@@ -49,7 +49,7 @@ test('contacts, native terminal, fork and directed group collaboration work in t
   await page.reload();
   await expect(page.getByRole('heading', { name: '浏览器验收 · 已改名', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: '创建群组', exact: true }).first().click();
+  await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '发起群聊', exact: true }).click();
   await page.getByRole('dialog').getByLabel('群组名称').fill('浏览器协作验收');
   await page.getByRole('dialog').getByLabel('共同目标').fill('验证联系人 Fork、单独纠正与结果共享。');
   await page.getByRole('dialog').getByRole('button', { name: '创建群组', exact: true }).click();
@@ -61,12 +61,13 @@ test('contacts, native terminal, fork and directed group collaboration work in t
   await expect(page.getByRole('dialog', { name: '群组实现成员 的私聊' })).toBeVisible();
   await expect(page.getByRole('button', { name: '停止进程', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '关闭会话', exact: true }).click();
-  await page.getByRole('button', { name: '分配任务', exact: true }).click();
+  // @-assignment sends at once; a running terminal member gets the task staged.
   await page.locator('.recipient-picker').getByRole('button', { name: /群组实现成员/ }).click();
   await page.getByLabel('群组消息').fill('请验证卡片改名，保留原始联系人。');
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await page.getByRole('button', { name: '发送任务', exact: true }).click();
   await expect(page.getByText('请验证卡片改名，保留原始联系人。', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '填入会话', exact: true }).click();
+  await expect(page.getByText('已填入 · 在私聊按回车发送')).toBeVisible();
+  await page.locator('.delivery-state').getByRole('button', { name: /进入/ }).click();
   await expect(page.getByRole('dialog', { name: '群组实现成员 的私聊' })).toBeVisible();
   await page.locator('.xterm-helper-textarea').press('Enter');
   await page.getByRole('button', { name: '分享结果到群组', exact: true }).click();
@@ -95,7 +96,7 @@ async function createTestGroup(page: import('@playwright/test').Page, title: str
 }
 
 async function openGroup(page: import('@playwright/test').Page, title: string) {
-  await page.getByRole('navigation', { name: '协作群组', exact: true }).getByRole('button', { name: new RegExp(title) }).click();
+  await page.getByRole('button', { name: new RegExp('进入群聊 ' + title) }).click();
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
   await expect(page.getByLabel('群组消息')).toBeVisible();
 }
@@ -105,8 +106,8 @@ test('keyboard navigation keeps modal focus, leaves the workbench interactive, a
   await expect(page.getByRole('heading', { name: '会话联系人', exact: true })).toBeVisible();
   await page.keyboard.press('Control+k');
   await expect(page.getByLabel('搜索联系人', { exact: true })).toBeFocused();
-  const createButton = page.getByRole('button', { name: '新建联系人', exact: true });
-  await createButton.click();
+  const createButton = page.getByRole('button', { name: '新建', exact: true });
+  await createButton.click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
   const create = page.getByRole('dialog', { name: '新建会话联系人' });
   await expect(create.getByLabel('联系人名称')).toBeFocused();
   await create.getByRole('button', { name: '创建联系人', exact: true }).focus();
@@ -158,7 +159,7 @@ test('group drafts survive navigation and reload, and failed sends preserve the 
   await expect(page.getByLabel('群组消息')).toHaveValue('这段草稿需要在导航与刷新后保留。');
 
   await page.route(`**/api/groups/${first.id}/messages`, route => route.fulfill({ status: 503, contentType: 'text/plain', body: 'temporary failure' }));
-  await page.getByRole('button', { name: '发布', exact: true }).click();
+  await page.getByRole('button', { name: '发送', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('本地服务暂时无法处理请求 (503)');
   await expect(page.getByLabel('群组消息')).toHaveValue('这段草稿需要在导航与刷新后保留。');
   await page.unroute(`**/api/groups/${first.id}/messages`);
@@ -175,7 +176,7 @@ test('group history failures have their own retry without losing the workspace',
   const group = await createTestGroup(page, '加载恢复回归');
   await page.route(`**/api/groups/${group.id}`, route => route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: '临时读取失败' }) }));
   await page.goto('/');
-  await page.getByRole('navigation', { name: '协作群组', exact: true }).getByRole('button', { name: /加载恢复回归/ }).click();
+  await page.getByRole('button', { name: /进入群聊 加载恢复回归/ }).click();
   await expect(page.getByRole('alert')).toContainText('群组动态加载失败：临时读取失败');
   await expect(page.getByRole('heading', { name: '加载恢复回归' })).toBeVisible();
   await page.unroute(`**/api/groups/${group.id}`);
@@ -190,20 +191,16 @@ test('mobile navigation and the dialog stay usable at narrow widths', async ({ p
   await page.getByRole('navigation', { name: '工作空间导航' }).getByRole('button', { name: '运行中', exact: true }).click();
   await expect(page.getByRole('heading', { name: '正在运行', exact: true })).toBeVisible();
   await expect(page.getByText('目前没有正在执行的任务')).toBeVisible();
-  await page.getByRole('button', { name: '新建联系人', exact: true }).click();
+  await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '新建会话联系人' });
   await expect(dialog.getByLabel('联系人名称')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   // On a phone the primary tabs sit in a bottom bar and "+" stays reachable;
-  // groups live in the desktop rail only.
+  // groups appear as cards in the contact list.
   await expect(page.getByRole('navigation', { name: '工作空间导航' }).getByRole('button', { name: '联系人', exact: true })).toBeInViewport();
-  await expect(page.getByRole('button', { name: '新建联系人', exact: true })).toBeInViewport();
-  await expect(page.getByRole('button', { name: '导入会话', exact: true })).toBeInViewport();
-  await expect(page.getByRole('navigation', { name: '协作群组', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: '新建', exact: true })).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(page.getByRole('navigation', { name: '协作群组', exact: true })).toBeVisible();
 });
 
 test('session bookmarks reload the same private context and browser history restores routes without starting a process', async ({ page }) => {
@@ -247,7 +244,7 @@ test('group bookmarks preserve members and unknown route IDs recover without tra
   await page.goto('/#/groups/missing-group?session=missing-session');
   await expect(page).toHaveURL(/#\/contacts$/);
   await expect(page.getByText('链接中的联系人已不存在，已返回会话列表')).toBeVisible();
-  await expect(page.getByRole('button', { name: '新建联系人', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '新建', exact: true })).toBeEnabled();
   await expect(page.locator('main')).not.toHaveAttribute('inert', '');
   expect(await page.evaluate(() => document.body.style.overflow)).not.toBe('hidden');
   await page.goto('/#/groups/%E0%A4%A?session=%20');
@@ -496,7 +493,7 @@ test('many cards and long names, paths and group titles remain within desktop an
   }
   await page.screenshot({ path: 'artifacts/long-contacts-mobile.png', animations: 'disabled' });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole('navigation', { name: '协作群组', exact: true }).getByRole('button', { name: new RegExp(longGroup) }).click();
+  await page.getByRole('button', { name: new RegExp('进入群聊 ' + longGroup) }).click();
   await expect(page.getByLabel('群组消息')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
 });
@@ -578,7 +575,7 @@ test('group messages become editable directed tasks with persistent source and e
   await replacement.getByRole('button', { name: '替换为转交任务', exact: true }).click();
   await page.locator('.recipient-picker').getByRole('button', { name: /转交来源成员/ }).click();
   await composer.fill(`${source.text}\n请由你完成第二轮验证。`);
-  await page.getByRole('button', { name: '创建任务', exact: true }).click();
+  await page.getByRole('button', { name: '发送任务', exact: true }).click();
   const task = page.locator('.group-message.kind-task').filter({ hasText: '第二轮验证' });
   await expect(task).toBeVisible();
   await expect(task.locator('.message-source-link')).toContainText('转交来源成员');
@@ -675,7 +672,7 @@ test('new group members inherit the group directory, while recent paths require 
   await member.getByRole('button', { name: '取消', exact: true }).click();
 
   await page.getByRole('navigation', { name: '工作空间导航' }).getByRole('button', { name: /^联系人/ }).click();
-  await page.getByRole('button', { name: '新建联系人', exact: true }).click();
+  await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
   const create = page.getByRole('dialog', { name: '新建会话联系人' });
   await expect(create.getByLabel('工作目录', { exact: true })).toHaveValue('/default/workspace');
   await create.getByText('最近使用的目录', { exact: true }).click();
@@ -690,7 +687,7 @@ test('new group members inherit the group directory, while recent paths require 
 
   state.sessions = [];
   await page.reload();
-  await page.getByRole('button', { name: '新建联系人', exact: true }).first().click();
+  await page.getByRole('button', { name: '新建', exact: true }).click(); await page.getByRole('menuitem', { name: '新建联系人', exact: true }).click();
   await expect(page.getByRole('dialog').getByLabel('工作目录', { exact: true })).toHaveValue('/default/workspace');
   await expect(page.locator('.recent-directories')).not.toBeVisible();
 });

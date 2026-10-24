@@ -1,5 +1,6 @@
 import { AUTO_MODE_NOTE, type ExecutionMode } from '../shared/execution';
 import { claudePermissionChoices, claudePermissionLabel } from '../shared/permissions';
+import { DEFAULT_GROUP_PROMPT } from '../shared/group-prompt';
 import ClaudeTerminalSettings from './ClaudeTerminalSettings';
 import { appUrl } from './urls';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
@@ -7,11 +8,11 @@ import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowRightLeft, Archive, Bell, BellOff, Check, CheckCheck,
   CircleHelp, Clock3, Command, Copy, Ellipsis, ExternalLink, Folder,
   GitFork, Globe2, LoaderCircle, MessageSquare, Pencil, Pin, PinOff, Play, Plus,
-  Radio, Search, Send, Settings2, Share2, SlidersHorizontal, Square, UsersRound, X,
+  Radio, Search, Settings2, Share2, SlidersHorizontal, Square, UsersRound, X,
   PanelBottomOpen, Volume2, VolumeX, TerminalSquare, Link2, PanelLeftOpen, PanelLeftClose,
   FilePenLine, Palette, Maximize2, Minimize2, PanelRightOpen,
 } from 'lucide-react';
-import type { AppState, StatePatch, Backend, DiscoveredSession, Delivery, Group, GroupDetail, GroupMessage, Session, SessionStatus } from '../shared/types';
+import type { AppState, StatePatch, Backend, DiscoveredSession, Group, GroupMessage, Session, SessionStatus } from '../shared/types';
 import { applyStatePatch } from './state';
 import { api, ApiError, getToken } from './api';
 import { useGroupHistory } from './group-history';
@@ -35,6 +36,8 @@ import { SessionChrome, SessionToolbarHost } from './SessionToolbar';
 import { useContactFilters, useContactSort, type ContactSort } from './preferences';
 import { readLocalPreference, writeLocalPreference, useDialog } from './ui';
 import ModalShell from './Modal';
+import GroupChat from './GroupChat';
+import GroupCard, { groupNeedsAttention } from './GroupCard';
 import { SecuritySettings, ShareDialog } from './Sharing';
 import type { AuthStatus } from '../shared/auth';
 
@@ -53,19 +56,11 @@ export const STATUS: Record<SessionStatus, { label: string; className: string }>
 type Modal = { type: 'create'; groupId?: string; backend?: Backend } | { type: 'import' } | { type: 'rename'; session: Session }
   | { type: 'fork'; session: Session; groupId?: string } | { type: 'handoff'; session: Session } | { type: 'group'; group?: Group }
   | { type: 'replaceDraft'; draft: string; sourceName: string; proceed: () => void } | { type: 'help' } | { type: 'appearance' } | { type: 'shareLink'; session: Session } | { type: 'addMember'; groupId: string } | { type: 'share'; session: Session; text: string } | null;
-type GroupDraft = { text: string; kind: GroupMessage['kind']; recipients: string[]; sourceMessageId: string | null };
-function readGroupDraft(groupId: string): GroupDraft {
-  try {
-    const draft = JSON.parse(sessionStorage.getItem(`sessiondeck.group-draft.${groupId}`) ?? 'null');
-    if (draft && typeof draft.text === 'string' && ['note', 'task', 'result'].includes(draft.kind) && Array.isArray(draft.recipients)) return { text: draft.text.slice(0, 30000), kind: draft.kind, recipients: draft.recipients.filter((id: unknown) => typeof id === 'string'), sourceMessageId: typeof draft.sourceMessageId === 'string' ? draft.sourceMessageId : null };
-  } catch { /* Unavailable or stale browser storage must not block the workspace. */ }
-  return { text: '', kind: 'note', recipients: [], sourceMessageId: null };
-}
 /** The agent is blocked on a person: waiting for input or approval, or failed. */
-const attention = (s: Session) => s.status === 'waiting_input' || s.status === 'waiting_approval' || s.status === 'error';
+export const attention = (s: Session) => s.status === 'waiting_input' || s.status === 'waiting_approval' || s.status === 'error';
 /** Red badge: blocked on a person AND not looked at since. Opening the session clears it. */
-const pending = (s: Session) => attention(s) && s.unread > 0;
-const relativeTime = (value: string) => {
+export const pending = (s: Session) => attention(s) && s.unread > 0;
+export const relativeTime = (value: string) => {
   const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
   if (!Number.isFinite(minutes)) return '—';
   if (minutes < 1) return '刚刚'; if (minutes < 60) return `${minutes} 分钟前`;
@@ -446,6 +441,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
     autoStartRef.current = { id: session.id, mode };
     setSelectedId(session.id); setSelection('');
   };
+  const markGroupRead = useCallback(() => { if (groupId) void api(`/groups/${groupId}/read`, {}).catch(() => {}); }, [groupId]);
   const openSessionForInput = (session: Session) => {
     const mode = ['codex', 'claude'].includes(session.backend) && session.interactionMode === 'chat' && !state?.demo ? 'chat' : 'terminal';
     if (session.backend !== 'dsh' || state?.demo || state?.backends.find(item => item.id === 'dsh')?.capabilities.terminal) selectPrivateView(session.backend, mode);
@@ -473,24 +469,45 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const needsAttention = sessions.filter((session) => !session.archived && pending(session));
   const running = sessions.filter((session) => !session.archived && session.status === 'running');
   const archived = sessions.filter((session) => session.archived);
-  const visible = sessions.filter((session) => {
-    if (groupId ? session.groupId !== groupId || session.archived : view === 'archive' ? !session.archived : view === 'attention' ? session.archived || !pending(session) : view === 'running' ? session.archived || session.status !== 'running' : session.archived || !!session.groupId) return false;
+  // Groups sit in the contact list like IM chats; opening one keeps the list.
+  const listMode = groupId ? 'contacts' : view;
+  const sessionsVisible = sessions.filter((session) => {
+    if (listMode === 'archive' ? !session.archived : listMode === 'attention' ? session.archived || !pending(session) : listMode === 'running' ? session.archived || session.status !== 'running' : session.archived || !!session.groupId) return false;
     return (backendFilter === 'all' || session.backend === backendFilter)
       && (statusFilter === 'all' || (statusFilter === 'attention' ? attention(session) : statusFilter === 'unread' ? session.unread > 0 : session.status === statusFilter))
       && `${session.title} ${session.cwd} ${session.lastUserInput || ''} ${BACKEND[session.backend].name}`.toLowerCase().includes(query.trim().toLowerCase());
-  }).sort((a, b) => {
-    // Each contact belongs to exactly one tier; an attached idle process
+  });
+  const membersOf = (id: string) => sessions.filter((session) => session.groupId === id);
+  const groupsVisible = (listMode === 'contacts' || listMode === 'attention') && ['all', 'attention', 'unread'].includes(statusFilter) ? (state?.groups ?? []).filter((group) => {
+    const members = membersOf(group.id);
+    if ((listMode === 'attention' || statusFilter !== 'all') && !groupNeedsAttention(group, members)) return false;
+    if (backendFilter !== 'all' && !members.some((member) => member.backend === backendFilter)) return false;
+    return `${group.title} ${group.goal} ${members.map((member) => member.title).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase());
+  }) : [];
+  type ListEntry = { kind: 'session'; id: string; session: Session } | { kind: 'group'; id: string; group: Group; members: Session[] };
+  const visible: ListEntry[] = [
+    ...sessionsVisible.map((session) => ({ kind: 'session' as const, id: session.id, session })),
+    ...groupsVisible.map((group) => ({ kind: 'group' as const, id: group.id, group, members: membersOf(group.id) })),
+  ].sort((a, b) => {
+    // Each entry belongs to exactly one tier; an attached idle process
     // is not an active task, and read errors/approvals no longer jump ahead.
-    const tier = (s: Session) => s.pinned ? 0 : pending(s) && !s.archived ? 1 : s.status === 'running' ? 2 : s.status === 'waiting_input' ? 3 : 4;
+    const tier = (entry: ListEntry) => {
+      if (entry.kind === 'group') { const live = entry.members.filter((member) => !member.archived); return entry.group.pinned ? 0 : groupNeedsAttention(entry.group, live) ? 1 : live.some((member) => member.status === 'running') ? 2 : 4; }
+      const s = entry.session; return s.pinned ? 0 : pending(s) && !s.archived ? 1 : s.status === 'running' ? 2 : s.status === 'waiting_input' ? 3 : 4;
+    };
     const priority = tier(a) - tier(b);
     if (priority) return priority;
-    if (contactSort === 'name') return a.title.localeCompare(b.title, 'zh-CN', { numeric: true, sensitivity: 'base' });
+    const name = (entry: ListEntry) => entry.kind === 'group' ? entry.group.title : entry.session.title;
+    if (contactSort === 'name') return name(a).localeCompare(name(b), 'zh-CN', { numeric: true, sensitivity: 'base' });
     const timestamp = (value?: string | null) => value ? Date.parse(value) || 0 : 0;
     if (contactSort === 'input') {
-      const inputOrder = timestamp(b.lastUserInputAt) - timestamp(a.lastUserInputAt);
+      // A group's latest message plays the role of a contact's latest input.
+      const input = (entry: ListEntry) => timestamp(entry.kind === 'group' ? entry.group.lastMessage?.at : entry.session.lastUserInputAt);
+      const inputOrder = input(b) - input(a);
       if (inputOrder) return inputOrder;
     }
-    return timestamp(b.createdAt) - timestamp(a.createdAt) || a.title.localeCompare(b.title, 'zh-CN', { numeric: true, sensitivity: 'base' });
+    const created = (entry: ListEntry) => timestamp(entry.kind === 'group' ? entry.group.createdAt : entry.session.createdAt);
+    return created(b) - created(a) || name(a).localeCompare(name(b), 'zh-CN', { numeric: true, sensitivity: 'base' });
   });
   const pageTitle = currentGroup?.title ?? ({ contacts: '会话联系人', attention: '需要你处理', running: '正在运行', activity: '最近活动', archive: '已归档', backends: '连接与能力' } as Record<string, string>)[view] ?? '会话联系人';
   // Invite links can point to several Dili devices. The remote auth status
@@ -556,15 +573,10 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         {tab('activity', <Clock3 size={18} />, '活动')}
         {tab('archive', <Archive size={18} />, '归档', archived.length)}
       </div>
-      <div className="rail-groups group-nav" role="navigation" aria-label="协作群组">
-        {state?.groups.map((group) => { const count = sessions.filter((session) => session.groupId === group.id && !session.archived).length; return <button key={group.id} title={group.goal ? `${group.title}\n${group.goal}` : group.title} aria-current={groupId === group.id ? 'page' : undefined} className={groupId === group.id ? 'active' : ''} onClick={() => navigate(`group:${group.id}`)}><span className="group-hash">#</span><span className="group-name">{group.title}</span>{sessions.some((session) => session.groupId === group.id && !session.archived && pending(session)) && <span className="group-unread-dot" aria-label="有未读提醒" title="群组成员有未读提醒" />}<span className="group-count">{count}</span></button>; })}
-        <button className="rail-add-group" disabled={!state} aria-label="创建群组" title="创建群组" onClick={() => setModal({ type: 'group' })}><Plus size={15} /><span className="group-name">新建群组</span></button>
-      </div>
       <div className="rail-footer">
         <button className="icon-button rail-toggle" aria-label={railOpen ? '收起侧栏' : '展开侧栏'} title={railOpen ? '收起侧栏' : '展开侧栏'} aria-expanded={railOpen} onClick={toggleRail}>{railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}</button>
         <span className="connection-indicator" title={connectionLabel}><span className={`connection-dot ${connected ? 'online' : ''}`} /><span className="sr-only">{connectionLabel}</span></span>
         <MoreMenu items={[
-          { label: '导入会话', icon: <ArrowDownToLine size={14} />, phoneOnly: true, disabled: !state, onSelect: () => setModal({ type: 'import' }) },
           { label: '资源管理器', icon: <Folder size={14} />, phoneOnly: true, disabled: !explorerSession, active: workspaceOpen, onSelect: () => { if (explorerSession) preview.openExplorer(explorerSession); } },
           { label: '底部终端', icon: <PanelBottomOpen size={14} />, phoneOnly: true, disabled: !state, active: terminalPanelOpen, onSelect: () => openTerminalPanel(selected?.id) },
           { label: '连接与能力', icon: <Settings2 size={14} />, active: view === 'backends', onSelect: () => navigate('backends') },
@@ -593,8 +605,11 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
           <button className={`icon-button ${scratchpadOpen ? 'active' : ''} topbar-tool`} aria-label="打开随手记" title="随手记" aria-expanded={scratchpadOpen} onClick={toggleScratchpad}><FilePenLine size={17} /></button>
           <button className="icon-button appearance-toggle topbar-tool" aria-label="切换主题" title="外观主题" onClick={() => setModal({ type: 'appearance' })}><Palette size={17} /></button>
           <div className="contact-actions">
-            <button className="button primary new-contact" aria-label="新建联系人" title="新建联系人" disabled={!state} onClick={() => setModal({ type: 'create' })}><Plus size={17} /></button>
-            <button className="button secondary import-contact" aria-label="导入会话" title="导入已有会话" disabled={!state} onClick={() => setModal({ type: 'import' })}><ArrowDownToLine size={17} /><span>导入</span></button>
+            <CreateMenu disabled={!state} items={[
+              { label: '新建联系人', icon: <MessageSquare size={14} />, onSelect: () => setModal({ type: 'create' }) },
+              { label: '发起群聊', icon: <UsersRound size={14} />, onSelect: () => setModal({ type: 'group' }) },
+              { label: '导入会话', icon: <ArrowDownToLine size={14} />, onSelect: () => setModal({ type: 'import' }) },
+            ]} />
           </div>
         </div>
       </div>
@@ -610,7 +625,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
 
       {!state && !connectionError && <div className="loading-state"><LoaderCircle className="spin" size={22} /><p>正在连接你的工作空间…</p></div>}
       {state && view === 'activity' ? <ActivityView activities={state.activities} sessions={state.sessions} open={openSession} /> : state && view === 'backends' ? <><section className="backend-setting-card zoom-settings-card" aria-label="外观设置"><InterfaceZoom /></section><BackendSettings state={state} local={!auth.remote} onTerminal={id => { setTerminalSessionId(undefined); setSetupShellId(id); setTerminalPanelOpen(true); }} refresh={() => void run('refresh', () => api('/backends/refresh', {}), '已重新检测本机后端')} onCreate={(backend) => { setBackendFilter(backend); setModal({ type: 'create', backend }); }} /><div className="backend-settings"><section className="backend-setting-card" aria-label="提醒方式"><div className="backend-setting-title"><Bell size={20} /><div><h2>提醒方式</h2><p>需要你输入、审批或出错时，卡片会亮红点；这里决定是否同时发声和弹系统通知。</p></div></div><div className="notify-toggles"><button className={`button secondary small-button ${soundEnabled ? 'active' : ''}`} aria-label={soundEnabled ? '关闭提示音' : '开启提示音'} aria-pressed={soundEnabled} onClick={() => { const enabled = !soundEnabled; setSoundEnabled(enabled); writeLocalPreference('sessiondeck.sound', enabled ? 'on' : 'off'); if (enabled) notificationSound(); }}>{soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}{soundEnabled ? '提示音已开' : '提示音已关'}</button><button className={`button secondary small-button ${notifications ? 'active' : ''}`} aria-label={notifications ? '关闭系统通知' : '开启系统通知'} aria-pressed={notifications} onClick={() => void toggleNotifications()}>{notifications ? <Bell size={14} /> : <BellOff size={14} />}{notifications ? '系统通知已开' : '系统通知已关'}</button></div></section><VoiceSettings local={!auth.remote} demo={state.demo} /><StartupSettings local={!auth.remote} /><SecuritySettings auth={auth} notify={notify} /></div></> : state && <>
-          {visible.length > 0 ? <div className="contact-grid">{visible.map((session) => <SessionCard key={session.id} session={session} active={session.id === selectedId} onShare={() => setModal({ type: 'shareLink', session })} canFork={state.backends.find((backend) => backend.id === session.backend)?.capabilities.fork && !!session.nativeSessionId && !session.forkPending || false} onOpen={(invoker) => openSession(session, invoker)} onRename={() => setModal({ type: 'rename', session })} onFork={() => setModal({ type: 'fork', session, groupId: session.groupId ?? undefined })} onPin={() => void patch(session, { pinned: !session.pinned })} onArchive={() => void patch(session, { archived: !session.archived })} onCopyDirectory={() => void copyText(session.cwd, '工作目录')} />)}{currentGroup && <button className="add-member-card" onClick={() => setModal({ type: 'addMember', groupId: currentGroup.id })}><Plus size={20} /><span>添加成员</span></button>}</div> : <EmptyState filtered={filtered} view={view} group={!!currentGroup} backendCount={state.backends.filter((backend) => backend.installed).length} connections={() => navigate('backends')} create={() => setModal(currentGroup ? { type: 'addMember', groupId: currentGroup.id } : { type: 'create' })} importSessions={() => setModal({ type: 'import' })} clear={clearFilters} />}
+          {visible.length > 0 ? <div className="contact-grid">{visible.map((entry) => entry.kind === 'group' ? <GroupCard key={entry.id} group={entry.group} members={entry.members} active={entry.id === groupId} onOpen={() => navigate(`group:${entry.id}`)} onPin={() => void run(`pin:${entry.id}`, () => api(`/groups/${entry.id}`, { pinned: !entry.group.pinned }, 'PATCH'))} onEdit={() => setModal({ type: 'group', group: entry.group })} /> : ((session) => <SessionCard key={session.id} session={session} active={session.id === selectedId} onShare={() => setModal({ type: 'shareLink', session })} canFork={state.backends.find((backend) => backend.id === session.backend)?.capabilities.fork && !!session.nativeSessionId && !session.forkPending || false} onOpen={(invoker) => openSession(session, invoker)} onRename={() => setModal({ type: 'rename', session })} onFork={() => setModal({ type: 'fork', session, groupId: session.groupId ?? undefined })} onPin={() => void patch(session, { pinned: !session.pinned })} onArchive={() => void patch(session, { archived: !session.archived })} onCopyDirectory={() => void copyText(session.cwd, '工作目录')} />)(entry.session))}</div> : <EmptyState filtered={filtered} view={view} group={false} backendCount={state.backends.filter((backend) => backend.installed).length} connections={() => navigate('backends')} create={() => setModal({ type: 'create' })} importSessions={() => setModal({ type: 'import' })} clear={clearFilters} />}
 
         </>}
     </main>
@@ -619,9 +634,22 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
       {currentGroup ? <>
           {currentGroup && groupError && <div className="error-banner" role="alert"><span>群组动态加载失败：{groupError}</span><button className="text-button" onClick={() => setGroupReload((value) => value + 1)}>重试群组动态</button></div>}
           {currentGroup && !groupError && (!detail || detail.group.id !== currentGroup.id) && <div className="loading-state" role="status"><LoaderCircle size={20} className="spin" /><p>正在读取群组动态…</p></div>}
-          {currentGroup && detail && detail.group.id === currentGroup.id && <GroupBoard key={currentGroup.id} detail={detail} loadOlder={loadOlder} loadingOlder={loadingOlder} readSource={readSource} resolveDelivery={(delivery, resolution) => void run(`resolve:${delivery.id}`, () => api(`/deliveries/${delivery.id}/resolve`, { attemptId: delivery.attempts?.at(-1)?.id, resolution }), '已记录核对结果')} members={sessions.filter((session) => session.groupId === groupId)} demo={state.demo} busy={busy} confirmReplace={(message, draft, proceed) => setModal({ type: 'replaceDraft', draft, sourceName: message.senderName || '我', proceed })} post={async (body) => {
-            const ok = await run('message', () => api(`/groups/${currentGroup.id}/messages`, body), body.kind === 'task' ? '任务已记录，请在任务下方选择填入对应会话' : '已分享到群组'); return ok;
-          }} deliver={(id, sessionId) => void run(`deliver:${id}`, async () => { await api(`/deliveries/${id}/send`, {}); const member = sessions.find((session) => session.id === sessionId); if (member) openSessionForInput(member); }, '已处理投递，请在成员私聊中查看')} cancel={(id) => void run(`cancel:${id}`, () => api(`/deliveries/${id}/cancel`, {}), '已取消投递')} open={(id, interactive) => { const session = sessions.find((item) => item.id === id); if (session) (interactive ? openSessionForInput : openSession)(session); }} />}
+          {currentGroup && detail && detail.group.id === currentGroup.id && <GroupChat key={currentGroup.id} group={currentGroup} detail={detail} loadOlder={loadOlder} loadingOlder={loadingOlder} readSource={readSource} resolveDelivery={(delivery, resolution) => void run(`resolve:${delivery.id}`, () => api(`/deliveries/${delivery.id}/resolve`, { attemptId: delivery.attempts?.at(-1)?.id, resolution }), '已记录核对结果')} members={sessions.filter((session) => session.groupId === groupId)} demo={state.demo} busy={busy}
+            chatCapable={(member) => !state.demo && ['codex', 'claude'].includes(member.backend) && !!state.backends.find((backend) => backend.id === member.backend)?.capabilities.graphicalChat}
+            confirmReplace={(message, draft, proceed) => setModal({ type: 'replaceDraft', draft, sourceName: message.senderName || '我', proceed })}
+            post={async (body) => {
+              let failures: { sessionId: string; error: string }[] = [];
+              const ok = await run('message', async () => { const result = await api<GroupMessage & { deliveryErrors?: { sessionId: string; error: string }[] }>(`/groups/${currentGroup.id}/messages`, body); failures = result.deliveryErrors ?? []; }, body.kind === 'task' ? '任务已发送，成员的回复会自动回到群里' : '已记录到群聊');
+              if (ok && failures.length) setError(failures.map((failure) => `${sessions.find((session) => session.id === failure.sessionId)?.title ?? '成员'}：${failure.error}`).join('；') + '。可在任务下方重试或取消。');
+              return ok;
+            }}
+            deliver={(id, sessionId) => void run(`deliver:${id}`, async () => { await api(`/deliveries/${id}/send`, {}); const member = sessions.find((session) => session.id === sessionId); if (member) openSessionForInput(member); }, '已处理投递，请在成员私聊中查看')}
+            cancel={(id) => void run(`cancel:${id}`, () => api(`/deliveries/${id}/cancel`, {}), '已取消投递')}
+            open={(id, interactive) => { const session = sessions.find((item) => item.id === id); if (session) (interactive ? openSessionForInput : openSession)(session); }}
+            addMember={() => setModal({ type: 'addMember', groupId: currentGroup.id })}
+            editGroup={() => setModal({ type: 'group', group: currentGroup })}
+            removeMember={(member) => { if (window.confirm(`将「${member.title}」移出群聊？联系人和它的私聊会话会保留，回到联系人列表。`)) void run(`leave:${member.id}`, () => api(`/sessions/${member.id}`, { groupId: null }, 'PATCH'), '已移出群聊'); }}
+            markRead={markGroupRead} back={() => navigate('contacts')} openWorkspace={(member) => preview.openExplorer(member)} notify={notify} />}
       </> : <div className="conversation-welcome"><BrandMark size={42} /><h2>选择一个联系人，继续会话</h2><p>你的 Agent、上下文和工作目录，都在左侧。</p></div>}
     </section>}
 
@@ -729,6 +757,21 @@ function SessionCard({ session, active, canFork, onOpen, onRename, onFork, onPin
   </article>;
 }
 
+/** WeChat-style "+": new contact, new group chat and import share one menu. */
+function CreateMenu({ items, disabled }: { items: { label: string; icon: ReactNode; onSelect: () => void }[]; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); ref.current?.querySelector<HTMLButtonElement>('button')?.focus(); } };
+    document.addEventListener('mousedown', outside); document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('mousedown', outside); document.removeEventListener('keydown', escape); };
+  }, [open]);
+  return <div className="create-menu" ref={ref}><button className="button primary new-contact" aria-label="新建" title="新建联系人、发起群聊或导入" aria-haspopup="menu" aria-expanded={open} disabled={disabled} onClick={() => setOpen(!open)}><Plus size={17} /></button>
+    {open && <div className="dropdown-menu" role="menu">{items.map(item => <button key={item.label} role="menuitem" onClick={() => { setOpen(false); ref.current?.querySelector<HTMLButtonElement>('button')?.focus(); item.onSelect(); }}>{item.icon}{item.label}</button>)}</div>}</div>;
+}
+
 /** Rarely used topbar actions share one dropdown so the bar stays short on phones. */
 function MoreMenu({ items }: { items: { label: string; icon: ReactNode; onSelect: () => void; disabled?: boolean; active?: boolean; phoneOnly?: boolean }[] }) {
   const [open, setOpen] = useState(false);
@@ -772,136 +815,6 @@ function BackendSettings({ state, refresh, onCreate, local, onTerminal }: { stat
   return <div className="backend-settings">{state.backends.map((backend) => <section className="backend-setting-card" key={backend.id}><div className="backend-setting-title"><BackendAvatar backend={backend.id} /><div><h2>{backend.label}</h2><p>{backend.version || (backend.installed ? '已检测到本机安装' : '未检测到本机安装')}</p></div><span className={`status-badge ${backend.installed ? 'running' : 'unknown'}`}><i />{backend.installed ? '已安装' : '未安装'}</span></div><p className="backend-note">{backend.note || (backend.id === 'dsh' ? '通过 Harness 原生 Web 界面继续交互。' : '在浏览器内运行原生 CLI，保留熟悉的操作方式。')}</p><div className="capability-list">{[['terminal', '原生终端'], ['resume', '恢复会话'], ['fork', '原生 Fork'], ['discovery', '发现已有会话']].map(([capability, label]) => <span key={capability} className={backend.capabilities[capability as keyof typeof backend.capabilities] ? 'supported' : ''}>{backend.capabilities[capability as keyof typeof backend.capabilities] ? <Check size={13} /> : <span className="capability-dash">—</span>}{label}</span>)}</div><button className="button secondary" disabled={!backend.installed} onClick={() => onCreate(backend.id)}><Plus size={15} /> 创建 {BACKEND[backend.id].short} 联系人</button><AgentSetupControls info={setup.find(item => item.id === backend.id)} local={local} onTerminal={onTerminal} refresh={refreshSetup} /></section>)}<div className="backend-info-note"><span>{setupError || '能力以本机实际安装的后端为准；安装或升级后重新检测。'}</span><button className="button secondary small-button" onClick={() => { refresh(); void refreshSetup(); }}><Radio size={14} /> 刷新状态</button></div></div>;
 }
 
-function GroupBoard({ detail, members, demo, busy, post, deliver, cancel, open, confirmReplace, loadOlder, loadingOlder, readSource, resolveDelivery }: { loadOlder: () => Promise<void>; loadingOlder: boolean; readSource: (id: string) => Promise<GroupMessage>; resolveDelivery: (delivery: Omit<Delivery, 'text'>, resolution: 'confirmed' | 'not_received' | 'cancelled') => void; detail: GroupDetail; members: Session[]; demo: boolean; busy: string | null; post: (body: { text: string; kind: GroupMessage['kind']; recipientIds: string[]; sourceMessageId?: string | null }) => Promise<boolean>; confirmReplace: (message: GroupMessage, draft: string, proceed: () => void) => void; deliver: (id: string, sessionId: string) => void; cancel: (id: string) => void; open: (id: string, interactive?: boolean) => void }) {
-  const [draft] = useState(() => readGroupDraft(detail.group.id));
-  const [kind, setKind] = useState<GroupMessage['kind']>(draft.kind);
-  const [text, setText] = useState(draft.text);
-  const [recipients, setRecipients] = useState<string[]>(draft.recipients);
-  const [sourceMessageId, setSourceMessageId] = useState<string | null>(draft.sourceMessageId);
-  const [visibleStart, setVisibleStart] = useState(() => Math.max(0, detail.messages.length - 200));
-  const firstVisible = detail.page ? 0 : Math.min(visibleStart, Math.max(0, detail.messages.length - 1));
-  const totalMessages = detail.page?.total ?? detail.messages.length;
-  const earlierCount = detail.page ? Math.max(0, totalMessages - detail.messages.length) : firstVisible;
-  const [sourcePreview, setSourcePreview] = useState<GroupMessage | null>(null);
-  const sourceVersion = useRef(0);
-  useEffect(() => () => { sourceVersion.current++; }, []);
-  const visibleMessages = useMemo(() => detail.messages.slice(firstVisible), [detail.messages, firstVisible]);
-  const historyRef = useRef<HTMLDivElement>(null);
-  const previousHistoryScroll = useRef<{ top: number; height: number } | null>(null);
-  const pendingMessageJump = useRef<string | null>(null);
-  const currentDraftRef = useRef('');
-  currentDraftRef.current = JSON.stringify({ text, kind, recipients, sourceMessageId });
-  const messagesById = useMemo(() => new Map(detail.messages.map(message => [message.id, message])), [detail.messages]);
-  const messagePositions = useMemo(() => new Map(detail.messages.map((message, index) => [message.id, index])), [detail.messages]);
-  const membersById = useMemo(() => new Map(members.map(member => [member.id, member])), [members]);
-  const deliveriesByMessage = useMemo(() => {
-    const index = new Map<string, Omit<Delivery, 'text'>[]>();
-    for (const delivery of detail.deliveries) {
-      const items = index.get(delivery.messageId);
-      if (items) items.push(delivery); else index.set(delivery.messageId, [delivery]);
-    }
-    return index;
-  }, [detail.deliveries]);
-  const sourceMessage = sourceMessageId ? messagesById.get(sourceMessageId) : undefined;
-  const composerRef = useRef<HTMLTextAreaElement>(null);
-  const jumpToMessage = useCallback((id: string) => {
-    const element = document.getElementById(`group-message-${id}`);
-    if (element) {
-      element.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
-      element.focus({ preventScroll: true });
-    } else {
-      const index = messagePositions.get(id);
-      if (index === undefined) {
-        const version = ++sourceVersion.current;
-        void readSource(id).then(message => { if (sourceVersion.current === version) setSourcePreview(message); }).catch(cause => { if (sourceVersion.current === version) setLocalError(cause.message); });
-        return;
-      }
-      pendingMessageJump.current = id;
-      setVisibleStart(current => Math.min(current, index));
-    }
-  }, [messagePositions, readSource]);
-  const showEarlier = useCallback(() => {
-    const history = historyRef.current;
-    if (history) previousHistoryScroll.current = { top: history.scrollTop, height: history.scrollHeight };
-    if (detail.page) void loadOlder();
-    else setVisibleStart(current => Math.max(0, current - 200));
-  }, [detail.page, loadOlder]);
-  useLayoutEffect(() => {
-    if (pendingMessageJump.current) {
-      const element = document.getElementById(`group-message-${pendingMessageJump.current}`);
-      element?.scrollIntoView({ block: 'center', behavior: 'instant' });
-      element?.focus({ preventScroll: true });
-      pendingMessageJump.current = null;
-      previousHistoryScroll.current = null;
-    } else if (previousHistoryScroll.current && historyRef.current) {
-      const previous = previousHistoryScroll.current;
-      historyRef.current.scrollTop = previous.top + historyRef.current.scrollHeight - previous.height;
-      previousHistoryScroll.current = null;
-    }
-  }, [firstVisible, detail.messages[0]?.id]);
-  const forwardMessage = useCallback((message: GroupMessage) => {
-    const proceed = () => {
-      setKind('task'); setText(message.text); setRecipients([]); setSourceMessageId(message.id); setLocalError('');
-      requestAnimationFrame(() => { composerRef.current?.focus(); composerRef.current?.scrollIntoView({ block: 'center' }); });
-    };
-    const current = JSON.parse(currentDraftRef.current) as GroupDraft;
-    if (current.text.trim() || current.recipients.length || current.sourceMessageId) confirmReplace(message, current.text, proceed);
-    else proceed();
-  }, [confirmReplace]);
-  const [localError, setLocalError] = useState('');
-  const [posting, setPosting] = useState(false);
-  const postingRef = useRef(false);
-  const activeMembers = members.filter((member) => !member.archived);
-  const activeRecipients = recipients.filter((id) => activeMembers.some((member) => member.id === id));
-  useEffect(() => {
-    const submitted = (event: Event) => {
-      const finished = (event as CustomEvent<{ groupId: string; draft: string }>).detail;
-      if (finished.groupId === detail.group.id && finished.draft === currentDraftRef.current) {
-        setText(''); setRecipients([]); setSourceMessageId(null);
-      }
-    };
-    window.addEventListener('sessiondeck:group-draft-submitted', submitted);
-    return () => window.removeEventListener('sessiondeck:group-draft-submitted', submitted);
-  }, [detail.group.id]);
-  useEffect(() => {
-    try {
-      const key = `sessiondeck.group-draft.${detail.group.id}`;
-      if (text || recipients.length || sourceMessageId) sessionStorage.setItem(key, JSON.stringify({ text, kind, recipients, sourceMessageId }));
-      else sessionStorage.removeItem(key);
-    } catch { /* Draft persistence is optional when browser storage is disabled. */ }
-  }, [detail.group.id, text, kind, recipients, sourceMessageId]);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault(); setLocalError('');
-    if (!text.trim() || postingRef.current || busy) return;
-    if (kind === 'task' && !activeRecipients.length) { setLocalError('请选择至少一位任务接收成员'); return; }
-    const submittedDraft = currentDraftRef.current;
-    const submittedGroupId = detail.group.id;
-    postingRef.current = true; setPosting(true);
-    try {
-      if (await post({ text: text.trim(), kind, recipientIds: kind === 'task' ? activeRecipients : [], sourceMessageId })) {
-        // The user may navigate away before the response arrives. Clear only
-        // this submitted draft, including a remounted composer, never a new edit.
-        try {
-          const key = `sessiondeck.group-draft.${submittedGroupId}`;
-          if (sessionStorage.getItem(key) === submittedDraft) sessionStorage.removeItem(key);
-        } catch { /* The live composer still clears when storage is unavailable. */ }
-        window.dispatchEvent(new CustomEvent('sessiondeck:group-draft-submitted', { detail: { groupId: submittedGroupId, draft: submittedDraft } }));
-      }
-    } finally { postingRef.current = false; setPosting(false); }
-  };
-  // Keystrokes only update the composer. Historical rows keep their DOM and
-  // use indexed lookups instead of rescanning every delivery and member.
-  const messageList = useMemo(() => <div ref={historyRef} className="message-list">{totalMessages > 200 && <div className="history-range"><span>显示第 {earlierCount + 1}–{totalMessages} 条，共 {totalMessages} 条</span>{earlierCount > 0 && <button className="text-button" disabled={loadingOlder} onClick={showEarlier}>{loadingOlder ? '正在读取…' : `显示更早 ${Math.min(200, earlierCount)} 条`}</button>}</div>}{visibleMessages.length ? visibleMessages.map((message) => <article id={`group-message-${message.id}`} tabIndex={-1} key={message.id} className={`group-message kind-${message.kind} ${message.senderId ? '' : 'mine'}`}><span className="message-avatar">{message.senderId ? <Command size={16} /> : '我'}</span><div className="message-body"><div className="message-heading"><strong>{message.senderName || '我'}</strong><span className="message-kind">{message.kind === 'task' ? '任务' : message.kind === 'result' ? '结果' : '记录'}</span><time>{relativeTime(message.createdAt)}</time></div><div className="bubble">{message.sourceMessageId && <button className="message-source-link" onClick={() => jumpToMessage(message.sourceMessageId!)}><ArrowRight size={12} />来源：{messagesById.get(message.sourceMessageId)?.senderName || '原消息'}<span>查看原消息</span></button>}<p>{message.text}</p>{message.recipientIds.length > 0 && <div className="message-recipients">{message.recipientIds.map((id) => <button key={id} onClick={() => open(id)}>@{membersById.get(id)?.title || '已归档成员'}</button>)}</div>}</div><div className="delivery-list">{(deliveriesByMessage.get(message.id) ?? []).map((delivery) => {
-      const member = membersById.get(delivery.sessionId);
-      return <div className="delivery-item" key={delivery.id}><span><Send size={13} />{member?.title || '群组成员'}</span>{delivery.status === 'pending' ? <div><button className="text-button" disabled={!!busy || !member || member.archived} onClick={() => deliver(delivery.id, delivery.sessionId)}>{busy === `deliver:${delivery.id}` ? <LoaderCircle size={13} className="spin" /> : <ArrowRight size={13} />}{!demo && (member?.backend === 'dsh' || !!member && ['codex', 'claude'].includes(member.backend) && member.interactionMode === 'chat') ? '发送到会话' : '填入会话'}</button><button className="icon-button" disabled={!!busy} aria-label="取消投递" title="取消投递" onClick={() => cancel(delivery.id)}><X size={13} /></button></div> : delivery.status === 'unknown' ? <div className="delivery-uncertain"><span title={delivery.lastError}>结果待确认，请核对原生会话</span><button className="text-button" onClick={() => open(delivery.sessionId, true)}>进入核对</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'confirmed')}>已核对，已收到</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'not_received')}>已核对，未收到</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'cancelled')}>关闭投递</button></div> : <span className="delivery-state">{delivery.status === 'sending' ? '投递中…' : delivery.status === 'sent' ? '已发送' : delivery.status === 'staged' ? '已填入 · 在私聊按回车发送' : '已取消'}{delivery.status === 'staged' && <button className="text-button" onClick={() => open(delivery.sessionId, true)}>进入 <ArrowRight size={12} /></button>}</span>}</div>;
-    })}</div><div className="message-actions"><button className="text-button" disabled={posting || !!busy} onClick={() => forwardMessage(message)}><ArrowRight size={13} />转交为任务</button></div></div></article>) : <div className="board-empty"><p>还没有群组消息。记录想法、向成员分配任务，或分享结果。</p></div>}</div>, [totalMessages, earlierCount, loadingOlder, firstVisible, visibleMessages, messagesById, membersById, deliveriesByMessage, busy, posting, demo, open, deliver, cancel, resolveDelivery, jumpToMessage, forwardMessage, showEarlier]);
-  return <section className="group-board"><div className="section-heading"><div><h2>群组动态</h2><span className="section-count">{totalMessages}</span></div>{detail.group.goal && <p className="group-goal-line" title={detail.group.goal}>目标：{detail.group.goal}</p>}</div><div className="board-content">
-    {messageList}
-    {sourcePreview && <ModalShell title="来源消息" subtitle={sourcePreview.senderName} close={() => setSourcePreview(null)}><div className="modal-fields"><p className="draft-replace-preview">{sourcePreview.text}</p></div><div className="modal-footer"><button className="button secondary" onClick={() => { forwardMessage(sourcePreview); setSourcePreview(null); }}>转交为任务</button><button className="button primary" onClick={() => setSourcePreview(null)}>返回群组</button></div></ModalShell>}
-    <form className="message-composer" onSubmit={submit}><div className="composer-tabs">{(['note', 'task', 'result'] as const).map((value) => <button type="button" key={value} disabled={posting} aria-pressed={kind === value} className={kind === value ? 'active' : ''} onClick={() => setKind(value)}>{value === 'note' ? <MessageSquare size={14} /> : value === 'task' ? <Send size={14} /> : <CheckCheck size={14} />}{value === 'note' ? '记录' : value === 'task' ? '分配任务' : '分享结果'}</button>)}</div>{kind === 'task' && <div className="recipient-picker"><span>接收成员</span>{activeMembers.map((member) => <button type="button" disabled={posting} aria-pressed={recipients.includes(member.id)} key={member.id} className={recipients.includes(member.id) ? 'selected' : ''} onClick={() => setRecipients((current) => current.includes(member.id) ? current.filter((id) => id !== member.id) : [...current, member.id])}>{recipients.includes(member.id) && <Check size={12} />}<BackendAvatar backend={member.backend} small />{member.title}</button>)}{!activeMembers.length && <small>添加成员后，即可分配任务</small>}</div>}{sourceMessageId && <div className="composer-source"><button type="button" className="text-button" onClick={() => jumpToMessage(sourceMessageId)}><Share2 size={13} />来源：{sourceMessage?.senderName || '原消息'}<span>查看原消息</span></button><button type="button" className="icon-button" disabled={posting} aria-label="解除转交来源" title="解除来源，保留内容" onClick={() => setSourceMessageId(null)}><X size={13} /></button></div>}<textarea ref={composerRef} disabled={posting} aria-label="群组消息" onKeyDown={(event) => { if (!event.nativeEvent.isComposing && (event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={kind === 'task' ? '描述任务、期望结果与需要参考的上下文…' : kind === 'result' ? '把成员的结论、进展或待决策事项分享给群组…' : '记录目标、想法或决定…'} value={text} onChange={(event) => setText(event.target.value)} rows={3} required maxLength={30000} />{localError && <p role="alert" className="form-error">{localError}</p>}<div className="composer-footer"><span title="草稿保留在当前浏览器标签页；Ctrl / ⌘ + Enter 发布">{kind === 'task' ? '任务先入队，再由你投递到成员会话。' : '群组记录不会自动发送给成员。'}{text && <small className="draft-note">草稿保留 · Ctrl / ⌘ + Enter 发布</small>}</span><button className="button primary small-button" disabled={!!busy || posting || !text.trim() || (kind === 'task' && !activeMembers.length)}>{busy === 'message' ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}{kind === 'task' ? '创建任务' : '发布'}</button></div></form>
-  </div></section>;
-}
-
 function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNullable<Modal>, { type: 'help' | 'appearance' | 'replaceDraft' | 'shareLink' }>; state: AppState; close: () => void; done: (session?: Session, group?: Group) => Promise<void>; notify: (message: string) => void }) {
   const [title, setTitle] = useState(modal.type === 'rename' ? modal.session.title : modal.type === 'fork' ? `${modal.session.title} · Fork` : modal.type === 'handoff' ? `${modal.session.title} · 交接` : modal.type === 'group' ? modal.group?.title ?? '' : '');
   const [backend, setBackend] = useState<Backend>((modal.type === 'create' ? modal.backend : undefined) ?? state.backends.find((item) => item.installed && (modal.type !== 'handoff' || item.id !== modal.session.backend))?.id ?? 'claude');
@@ -916,6 +829,10 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
   });
   const [forkCwd, setForkCwd] = useState(modal.type === 'fork' ? modal.session.cwd : state.defaultCwd);
   const [goal, setGoal] = useState(modal.type === 'group' ? modal.group?.goal ?? '' : '');
+  const memberGroup = modal.type === 'addMember' ? state.groups.find((group) => group.id === modal.groupId) : undefined;
+  const [placement, setPlacement] = useState<'group' | 'worktree' | 'directory'>(memberGroup?.workspace ? 'group' : 'directory');
+  const [groupWorkspace, setGroupWorkspace] = useState(modal.type === 'group' ? modal.group?.workspace ?? (modal.group ? '' : state.defaultCwd) : '');
+  const [groupPrompt, setGroupPrompt] = useState(modal.type === 'group' ? modal.group?.prompt?.trim() || DEFAULT_GROUP_PROMPT : DEFAULT_GROUP_PROMPT);
   const [text, setText] = useState(modal.type === 'share' ? modal.text : '');
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('default');
   const [claudePermission, setClaudePermission] = useState('');
@@ -953,10 +870,13 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
       if (modal.type === 'create') { const session = await api<Session>('/sessions', { title: title.trim(), backend, cwd: cwd.trim(), ...launchSettings, groupId: modal.groupId || undefined }); await done(session); }
       if (modal.type === 'fork') { const session = await api<Session>(`/sessions/${modal.session.id}/fork`, { title: title.trim(), groupId: groupId || undefined, cwd: modal.session.backend === 'dsh' ? undefined : forkCwd.trim() }); notify('已创建 Fork 联系人，原会话保留'); await done(session); }
       if (modal.type === 'handoff') { const result = await api<{ session: Session; prompt: string }>(`/sessions/${modal.session.id}/handoff`, { title: title.trim(), backend, cwd: cwd.trim(), summary: handoffSummary.trim() }); await copyToClipboard(result.prompt); notify('已创建目标联系人，交接内容已复制'); await done(result.session); }
-      if (modal.type === 'group') { const group = modal.group ? await api<Group>(`/groups/${modal.group.id}`, { title: title.trim(), goal: goal.trim() }, 'PATCH') : await api<Group>('/groups', { title: title.trim(), goal: goal.trim() }); await done(undefined, group); }
+      // The default template is stored as empty, so later template updates still apply.
+      const promptValue = groupPrompt.trim() === DEFAULT_GROUP_PROMPT.trim() ? '' : groupPrompt.trim();
+      if (modal.type === 'group') { const group = modal.group ? await api<Group>(`/groups/${modal.group.id}`, { title: title.trim(), goal: goal.trim(), prompt: promptValue, workspace: groupWorkspace.trim() }, 'PATCH') : await api<Group>('/groups', { title: title.trim(), goal: goal.trim(), prompt: promptValue, workspace: groupWorkspace.trim() }); await done(undefined, group); }
       if (modal.type === 'addMember') {
         if (memberMode === 'fork' && !sourceId) throw new Error('请选择要 Fork 的联系人');
-        const session = memberMode === 'new' ? await api<Session>('/sessions', { title: title.trim(), backend, cwd: cwd.trim(), ...launchSettings, groupId: modal.groupId }) : await api<Session>(`/sessions/${sourceId}/fork`, { title: title.trim() || `${selectedSource?.title} · 群组`, groupId: modal.groupId });
+        const memberPlacement = selectedSource?.backend === 'dsh' && memberMode === 'fork' ? 'directory' : placement;
+        const session = memberMode === 'new' ? await api<Session>('/sessions', { title: title.trim(), backend, ...(memberPlacement === 'directory' ? { cwd: cwd.trim() } : {}), placement: memberPlacement, ...launchSettings, groupId: modal.groupId }) : await api<Session>(`/sessions/${sourceId}/fork`, { title: title.trim() || `${selectedSource?.title} · 群组`, groupId: modal.groupId, placement: memberPlacement });
         notify(memberMode === 'fork' ? '已将上下文 Fork 入群，原会话保留' : '群组成员已创建'); await done(session);
       }
       if (modal.type === 'share') { await api(`/groups/${modal.session.groupId}/messages`, { text: text.trim(), kind: 'result', senderId: modal.session.id, recipientIds: [] }); notify('结果已分享到群组'); await done(); }
@@ -992,11 +912,12 @@ function AppModal({ modal, state, close, done, notify }: { modal: Exclude<NonNul
       {(modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new')) && backendPicker}
       {modal.type === 'addMember' && memberMode === 'fork' && <><label className="form-label">来源联系人<select required value={sourceId} onChange={(event) => { setSourceId(event.target.value); const source = state.sessions.find((session) => session.id === event.target.value); if (source) setTitle(`${source.title} · 群组`); }}><option value="">选择要延续的会话…</option>{state.sessions.filter((session) => !session.archived && !!session.nativeSessionId && !session.forkPending && state.backends.find((item) => item.id === session.backend)?.capabilities.fork).map((session) => <option key={session.id} value={session.id}>{session.title} · {BACKEND[session.backend].short}</option>)}</select></label><div className="form-note"><GitFork size={16} />通过后端原生能力 Fork 上下文。群组内的新会话独立运行，外面的原联系人保持不变。</div></>}
       {['create', 'rename', 'fork', 'addMember'].includes(modal.type) && nameField}
-      {(modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new')) && <>{cwdField}{backend === 'claude' ? <><label className="form-label">权限模式<select value={claudePermission} disabled={busy} onChange={event => setClaudePermission(event.target.value)}><option value="">原生默认</option>{claudePermissionChoices(claudeModes).map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}</select></label><p className="form-note">{claudePermission ? claudePermissionChoices([claudePermission])[0].description : '沿用 Claude 的原生权限配置。'} 图形对话与原生终端使用同一设置，之后可在会话中修改。</p>{!claudeModes.length && <p className="form-note">未检测到 Claude 可选权限模式，请更新 CLI 后刷新检测。</p>}</> : <><label className="form-label">执行模式<select value={executionMode} disabled={busy} onChange={event => setExecutionMode(event.target.value as ExecutionMode)}><option value="default">原生默认</option><option value="auto" disabled={!backendInfo?.capabilities.autoMode}>Auto · 自动审核</option></select></label><p className="form-note">{executionMode === 'auto' ? AUTO_MODE_NOTE[backend] : '沿用这个工具的原生权限配置。只影响当前联系人。'}</p>{!backendInfo?.capabilities.autoMode && <p className="form-note">所选后端尚未检测到 Auto 支持，请更新后端后刷新检测。</p>}</>}</>}
+      {modal.type === 'addMember' && !(memberMode === 'fork' && selectedSource?.backend === 'dsh') && (memberGroup?.workspace ? <><fieldset className="placement-picker"><legend>工作位置</legend>{([['group', '群工作区', '与其他成员共用同一目录，能看到彼此的改动'], ['worktree', '独立工作树', '从群工作区仓库新建分支和工作树，完成后由你合并'], ['directory', memberMode === 'fork' ? '保留原目录' : '其他目录', memberMode === 'fork' ? '沿用来源联系人的目录' : '选择群工作区以外的目录']] as const).map(([value, label, note]) => <label key={value} className={placement === value ? 'selected' : ''}><input type="radio" name="placement" value={value} checked={placement === value} disabled={busy} onChange={() => setPlacement(value)} /><span><strong>{label}</strong><small>{note}</small></span></label>)}</fieldset>{memberMode === 'fork' && selectedSource && placement === 'directory' && selectedSource.cwd !== memberGroup.workspace && <p className="form-note placement-warning"><CircleHelp size={16} />来源目录 {shortPath(selectedSource.cwd)} 与群工作区不同，这位成员看不到其他成员的改动。</p>}</> : <p className="form-note"><Folder size={16} />这个群还没有群工作区，{memberMode === 'new' ? '下方选择的目录会成为群工作区。' : '来源联系人的目录会成为群工作区。'}</p>)}
+      {(modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new')) && <>{(modal.type === 'create' || placement === 'directory' || !memberGroup?.workspace) && cwdField}{backend === 'claude' ? <><label className="form-label">权限模式<select value={claudePermission} disabled={busy} onChange={event => setClaudePermission(event.target.value)}><option value="">原生默认</option>{claudePermissionChoices(claudeModes).map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}</select></label><p className="form-note">{claudePermission ? claudePermissionChoices([claudePermission])[0].description : '沿用 Claude 的原生权限配置。'} 图形对话与原生终端使用同一设置，之后可在会话中修改。</p>{!claudeModes.length && <p className="form-note">未检测到 Claude 可选权限模式，请更新 CLI 后刷新检测。</p>}</> : <><label className="form-label">执行模式<select value={executionMode} disabled={busy} onChange={event => setExecutionMode(event.target.value as ExecutionMode)}><option value="default">原生默认</option><option value="auto" disabled={!backendInfo?.capabilities.autoMode}>Auto · 自动审核</option></select></label><p className="form-note">{executionMode === 'auto' ? AUTO_MODE_NOTE[backend] : '沿用这个工具的原生权限配置。只影响当前联系人。'}</p>{!backendInfo?.capabilities.autoMode && <p className="form-note">所选后端尚未检测到 Auto 支持，请更新后端后刷新检测。</p>}</>}</>}
 
       {modal.type === 'fork' && <><div className="fork-source"><BackendAvatar backend={modal.session.backend} small /><div><small>来源会话</small><strong>{modal.session.title}</strong></div><GitFork size={18} /></div><label className="form-label">新联系人放在哪里<select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">独立联系人</option>{state.groups.map((group) => <option key={group.id} value={group.id}>群组 · {group.title}</option>)}</select></label>{modal.session.backend === 'dsh' ? <p className="form-note"><CircleHelp size={16} />DeepSeek Harness 的 Fork 由原生界面处理，继续使用原工作目录。</p> : <DirectoryField label="新的工作目录" value={forkCwd} onChange={setForkCwd} disabled={busy} placeholder={modal.session.cwd} help="可沿用来源目录，或选择已有的隔离目录。" />}<p className="form-note"><CircleHelp size={16} />Fork 继承上下文；它不会自动创建 Git 分支或隔离文件。</p></>}
       {modal.type === 'handoff' && <><div className="fork-source"><BackendAvatar backend={modal.session.backend} small /><div><small>来源会话</small><strong>{modal.session.title}</strong></div><ArrowRightLeft size={18} /></div>{backendPicker}<label className="form-label">目标联系人名称<input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={120} /></label><DirectoryField label="工作目录" value={cwd} onChange={setCwd} disabled={busy} help="默认沿用来源会话的工作目录。" /><label className="form-label">交接说明<textarea rows={5} value={handoffSummary} onChange={(event) => setHandoffSummary(event.target.value)} maxLength={12000} /></label><p className="form-note">会自动附加最近对话、来源平台和工作目录；创建后会复制完整交接内容。</p></>}
-      {modal.type === 'group' && <><label className="form-label">群组名称<input placeholder="例如：完成登录功能" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={120} /></label><label className="form-label">共同目标<textarea placeholder="希望完成什么？怎样算完成？" value={goal} onChange={(event) => setGoal(event.target.value)} rows={4} maxLength={4000} /></label><p className="form-note"><UsersRound size={16} />创建后可添加新会话，或将现有联系人 Fork 入群。</p></>}
+      {modal.type === 'group' && <><label className="form-label">群组名称<input placeholder="例如：完成登录功能" value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={120} /></label><label className="form-label">共同目标<textarea placeholder="希望完成什么？怎样算完成？" value={goal} onChange={(event) => setGoal(event.target.value)} rows={4} maxLength={4000} /></label><DirectoryField label="群工作区" value={groupWorkspace} onChange={setGroupWorkspace} disabled={busy} required={false} help="成员默认在这个目录中共同工作；Git 仓库还可为成员创建独立工作树。" /><label className="form-label">群 prompt<textarea className="group-prompt-field" value={groupPrompt} onChange={(event) => setGroupPrompt(event.target.value)} rows={8} maxLength={8000} /></label><p className="form-note">@ 指派任务时，成员先收到这段说明，再收到你引用的结论和任务。可用 {'{{group}}'}、{'{{goal}}'}、{'{{member}}'}、{'{{workspace}}'} 占位。{groupPrompt.trim() !== DEFAULT_GROUP_PROMPT.trim() && <button type="button" className="text-button" onClick={() => setGroupPrompt(DEFAULT_GROUP_PROMPT)}>恢复默认</button>}</p><p className="form-note"><UsersRound size={16} />创建后可新建成员，或将现有联系人 Fork 入群。</p></>}
       {modal.type === 'share' && <><div className="fork-source"><BackendAvatar backend={modal.session.backend} small /><div><small>结果来自</small><strong>{modal.session.title}</strong></div></div><label className="form-label">分享内容<textarea rows={8} required placeholder="粘贴或整理成员的输出、结论与下一步…" value={text} onChange={(event) => setText(event.target.value)} maxLength={30000} /></label><p className="form-note">可以先在终端选中内容，再打开“分享结果”；也可以直接粘贴内容。</p></>}
       {((modal.type === 'create' || (modal.type === 'addMember' && memberMode === 'new')) && !backendInfo?.installed) && <p className="form-error">请先在本机安装所选后端，再到“连接与能力”刷新检测。</p>}
     </div>}
