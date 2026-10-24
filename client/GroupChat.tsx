@@ -126,7 +126,8 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   const [phoneMember, setPhoneMember] = useState<string | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const [mention, setMention] = useState<string | null>(null);
+  /** The "@query" being typed at the caret: its text and range in the draft. */
+  const [mention, setMention] = useState<{ query: string; start: number; end: number } | null>(null);
   const compact = useCompactLayout();
   const [visibleStart, setVisibleStart] = useState(() => Math.max(0, detail.messages.length - 200));
   const firstVisible = detail.page ? 0 : Math.min(visibleStart, Math.max(0, detail.messages.length - 1));
@@ -247,18 +248,20 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
     } catch { /* Draft persistence is optional when browser storage is disabled. */ }
   }, [detail.group.id, text, recipients, sourceMessageId, references]);
 
-  // Typing "@name" offers members; choosing one assigns it and removes the token.
-  const onText = (value: string) => {
+  // Typing "@name" anywhere (no space needed before it) offers members at the caret;
+  // choosing one assigns the member and removes the "@name" token from the text.
+  const onText = (value: string, caret: number) => {
     setText(value);
-    const token = value.match(/(?:^|\s)@([^\s@]{0,20})$/);
-    setMention(token ? token[1] : null);
+    const token = value.slice(0, caret).match(/@([^\s@]{0,20})$/);
+    setMention(token ? { query: token[1], start: caret - token[0].length, end: caret } : null);
   };
-  const mentionChoices = mention === null ? [] : activeMembers.filter(member => member.title.toLowerCase().includes(mention.toLowerCase()));
+  const mentionChoices = mention === null ? [] : activeMembers.filter(member => member.title.toLowerCase().includes(mention.query.toLowerCase()));
   const chooseMention = (member: Session) => {
-    setText(current => current.replace(/(^|\s)@[^\s@]{0,20}$/, '$1'));
+    const range = mention;
+    if (range) setText(current => current.slice(0, range.start) + current.slice(range.end));
     setRecipients(current => current.includes(member.id) ? current : [...current, member.id]);
     setMention(null);
-    requestAnimationFrame(() => composerRef.current?.focus());
+    requestAnimationFrame(() => { const field = composerRef.current; if (!field) return; field.focus(); if (range) field.setSelectionRange(range.start, range.start); });
   };
 
   const submit = async (event: FormEvent) => {
@@ -357,13 +360,15 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
         {sourceMessageId && <div className="composer-source"><button type="button" className="text-button" onClick={() => jumpToMessage(sourceMessageId)}><Share2 size={13} />来源：{sourceMessage?.senderName || '原消息'}<span>查看原消息</span></button><button type="button" className="icon-button" disabled={posting} aria-label="解除转交来源" title="解除来源，保留内容" onClick={() => setSourceMessageId(null)}><X size={13} /></button></div>}
         {mentionChoices.length > 0 && <div className="mention-menu" role="listbox" aria-label="选择要 @ 的成员">{mentionChoices.map(member => <button type="button" role="option" aria-selected={false} key={member.id} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(member)}><BackendAvatar backend={member.backend} small />{member.title}</button>)}</div>}
         <textarea ref={composerRef} disabled={posting} aria-label="群组消息" onKeyDown={event => {
-          if (event.nativeEvent.isComposing) return;
+          // Chinese IME candidate selection must never send or pick a member.
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
           if (mentionChoices.length && (event.key === 'Enter' || event.key === 'Tab')) { event.preventDefault(); chooseMention(mentionChoices[0]); return; }
           if (event.key === 'Escape' && mention !== null) { event.preventDefault(); setMention(null); return; }
-          if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
-        }} placeholder={activeRecipients.length ? '描述任务；成员会收到群 prompt、任务和你引用的结论…' : '输入 @ 指派成员，或直接记录想法…'} value={text} onChange={event => onText(event.target.value)} rows={3} required maxLength={30000} />
+          // Enter sends, Shift+Enter inserts a newline, like private chats.
+          if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+        }} onSelect={event => { const field = event.currentTarget; if (mention && (field.selectionStart < mention.start || field.selectionStart > mention.end + 1)) setMention(null); }} placeholder={activeRecipients.length ? '描述任务；成员会收到群 prompt、任务和你引用的结论…' : '输入 @ 指派成员，或直接记录想法…'} value={text} onChange={event => onText(event.target.value, event.target.selectionStart)} rows={3} required maxLength={30000} />
         {localError && <p role="alert" className="form-error">{localError}</p>}
-        <div className="composer-footer"><span title="草稿保留在当前浏览器标签页；Ctrl / ⌘ + Enter 发送">{activeRecipients.length ? `发送后立即投递给 ${activeRecipients.length} 位成员，回复会自动回到群里。` : '不 @ 成员时只作为群记录，不会发给任何成员。'}{text && <small className="draft-note">草稿保留 · Ctrl / ⌘ + Enter 发送</small>}</span><button className="button primary small-button" disabled={!!busy || posting || !text.trim()}>{busy === 'message' ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}{activeRecipients.length ? '发送任务' : '发送'}</button></div>
+        <div className="composer-footer"><span title="草稿保留在当前浏览器标签页；Enter 发送，Shift + Enter 换行">{activeRecipients.length ? `发送后立即投递给 ${activeRecipients.length} 位成员，回复会自动回到群里。` : '不 @ 成员时只作为群记录，不会发给任何成员。'}{text && <small className="draft-note">草稿保留 · Enter 发送 · Shift + Enter 换行</small>}</span><button className="button primary small-button" disabled={!!busy || posting || !text.trim()}>{busy === 'message' ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}{activeRecipients.length ? '发送任务' : '发送'}</button></div>
       </form>
     </div>
   </section>;

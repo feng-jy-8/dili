@@ -62,13 +62,27 @@ test('only-one-member filter, @ mention, quote chips and split columns', async (
   await expect(page.getByText('我的记录')).toBeVisible();
 
   const composer = page.getByLabel('群组消息');
-  await composer.fill('请 @实现');
+  // No space is needed before "@".
+  await composer.fill('请@实现');
   await page.getByRole('listbox', { name: '选择要 @ 的成员' }).getByRole('option', { name: /实现成员/ }).click();
-  await expect(composer).toHaveValue('请 ');
+  await expect(composer).toHaveValue('请');
   await expect(page.locator('.recipient-picker').getByRole('button', { name: /实现成员/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: '发送任务', exact: true })).toBeVisible();
   await page.locator('.group-message.kind-result').getByRole('button', { name: '引用' }).click();
   await expect(page.locator('.composer-references')).toContainText('方案成员的结论');
+
+  // Enter sends; Shift+Enter is a newline.
+  await composer.fill('');
+  await page.locator('.recipient-picker').getByRole('button', { name: /实现成员/ }).click();
+  await composer.pressSequentially('第一行');
+  await composer.press('Shift+Enter');
+  await composer.pressSequentially('第二行');
+  await expect(composer).toHaveValue('第一行\n第二行');
+  await page.locator('.recipient-picker').getByRole('button', { name: /实现成员/ }).click();
+  await composer.fill('一条记录');
+  await composer.press('Enter');
+  await expect(page.getByText('一条记录', { exact: true })).toBeVisible();
+  await expect(composer).toHaveValue('');
 
   await page.getByRole('button', { name: '一键分栏' }).click();
   await expect(page.locator('.group-split-pane')).toHaveCount(3);
