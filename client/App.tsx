@@ -564,6 +564,9 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         <button className="icon-button rail-toggle" aria-label={railOpen ? '收起侧栏' : '展开侧栏'} title={railOpen ? '收起侧栏' : '展开侧栏'} aria-expanded={railOpen} onClick={toggleRail}>{railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}</button>
         <span className="connection-indicator" title={connectionLabel}><span className={`connection-dot ${connected ? 'online' : ''}`} /><span className="sr-only">{connectionLabel}</span></span>
         <MoreMenu items={[
+          { label: '导入会话', icon: <ArrowDownToLine size={14} />, phoneOnly: true, disabled: !state, onSelect: () => setModal({ type: 'import' }) },
+          { label: '资源管理器', icon: <Folder size={14} />, phoneOnly: true, disabled: !explorerSession, active: workspaceOpen, onSelect: () => { if (explorerSession) preview.openExplorer(explorerSession); } },
+          { label: '底部终端', icon: <PanelBottomOpen size={14} />, phoneOnly: true, disabled: !state, active: terminalPanelOpen, onSelect: () => openTerminalPanel(selected?.id) },
           { label: '连接与能力', icon: <Settings2 size={14} />, active: view === 'backends', onSelect: () => navigate('backends') },
           { label: '网页服务', icon: <Globe2 size={14} />, active: servicePreviewOpen, onSelect: toggleServicePreview },
           { label: '随手记', icon: <FilePenLine size={14} />, active: scratchpadOpen, onSelect: toggleScratchpad },
@@ -583,12 +586,12 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
               <label className="filter-group"><span>状态</span><select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as SessionStatus | 'all' | 'attention' | 'unread')}><option value="all">全部状态</option><option value="attention">需要处理</option><option value="unread">未读提醒</option><option value="running">运行中</option><option value="waiting_input">等待输入</option><option value="waiting_approval">等待审批</option><option value="idle">空闲</option><option value="error">异常</option><option value="stopped">已停止</option><option value="unknown">状态未知</option></select></label>
               <label className="filter-group"><span>排序</span><select aria-label="联系人排序" value={contactSort} onChange={(event) => setContactSort(event.target.value as ContactSort)}><option value="input">上次输入时间</option><option value="created">创建时间</option><option value="name">名称</option></select></label>
             </FilterMenu></>}
-          <button className={`icon-button ${preview.open ? 'active' : ''}`} aria-label="打开预览面板" title={preview.open ? '隐藏预览面板' : '打开预览面板'} aria-expanded={preview.open} onClick={() => { if (preview.open) preview.hide(); else if (preview.tabs.length) preview.show(); else if (explorerSession) preview.openExplorer(explorerSession); else preview.openNote(); }}><PanelRightOpen size={17} /></button>
-          <button className={`icon-button ${workspaceOpen ? 'active' : ''}`} aria-label="打开资源管理器" title="打开资源管理器" disabled={!explorerSession} onClick={() => { if (explorerSession) preview.openExplorer(explorerSession); }}><Folder size={17} /></button>
-          <button className={`icon-button ${servicePreviewOpen ? 'active' : ''}`} aria-label="打开网页服务" title="网页服务预览" aria-expanded={servicePreviewOpen} onClick={toggleServicePreview}><Globe2 size={17} /></button>
-          <button className={`icon-button ${terminalPanelOpen ? 'active' : ''}`} aria-label="打开终端" title={terminalPanelOpen ? '终端面板已打开' : '打开底部终端'} disabled={!state} onClick={() => openTerminalPanel(selected?.id)}><PanelBottomOpen size={17} /></button>
-          <button className={`icon-button ${scratchpadOpen ? 'active' : ''}`} aria-label="打开随手记" title="随手记" aria-expanded={scratchpadOpen} onClick={toggleScratchpad}><FilePenLine size={17} /></button>
-          <button className="icon-button appearance-toggle" aria-label="切换主题" title="外观主题" onClick={() => setModal({ type: 'appearance' })}><Palette size={17} /></button>
+          <button className={`icon-button ${preview.open ? 'active' : ''} topbar-tool`} aria-label="打开预览面板" title={preview.open ? '隐藏预览面板' : '打开预览面板'} aria-expanded={preview.open} onClick={() => { if (preview.open) preview.hide(); else if (preview.tabs.length) preview.show(); else if (explorerSession) preview.openExplorer(explorerSession); else preview.openNote(); }}><PanelRightOpen size={17} /></button>
+          <button className={`icon-button ${workspaceOpen ? 'active' : ''} topbar-tool`} aria-label="打开资源管理器" title="打开资源管理器" disabled={!explorerSession} onClick={() => { if (explorerSession) preview.openExplorer(explorerSession); }}><Folder size={17} /></button>
+          <button className={`icon-button ${servicePreviewOpen ? 'active' : ''} topbar-tool`} aria-label="打开网页服务" title="网页服务预览" aria-expanded={servicePreviewOpen} onClick={toggleServicePreview}><Globe2 size={17} /></button>
+          <button className={`icon-button ${terminalPanelOpen ? 'active' : ''} topbar-tool`} aria-label="打开终端" title={terminalPanelOpen ? '终端面板已打开' : '打开底部终端'} disabled={!state} onClick={() => openTerminalPanel(selected?.id)}><PanelBottomOpen size={17} /></button>
+          <button className={`icon-button ${scratchpadOpen ? 'active' : ''} topbar-tool`} aria-label="打开随手记" title="随手记" aria-expanded={scratchpadOpen} onClick={toggleScratchpad}><FilePenLine size={17} /></button>
+          <button className="icon-button appearance-toggle topbar-tool" aria-label="切换主题" title="外观主题" onClick={() => setModal({ type: 'appearance' })}><Palette size={17} /></button>
           <div className="contact-actions">
             <button className="button primary new-contact" aria-label="新建联系人" title="新建联系人" disabled={!state} onClick={() => setModal({ type: 'create' })}><Plus size={17} /></button>
             <button className="button secondary import-contact" aria-label="导入会话" title="导入已有会话" disabled={!state} onClick={() => setModal({ type: 'import' })}><ArrowDownToLine size={17} /><span>导入</span></button>
@@ -727,7 +730,7 @@ function SessionCard({ session, active, canFork, onOpen, onRename, onFork, onPin
 }
 
 /** Rarely used topbar actions share one dropdown so the bar stays short on phones. */
-function MoreMenu({ items }: { items: { label: string; icon: ReactNode; onSelect: () => void; disabled?: boolean; active?: boolean }[] }) {
+function MoreMenu({ items }: { items: { label: string; icon: ReactNode; onSelect: () => void; disabled?: boolean; active?: boolean; phoneOnly?: boolean }[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -737,8 +740,8 @@ function MoreMenu({ items }: { items: { label: string; icon: ReactNode; onSelect
     document.addEventListener('mousedown', outside); document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('mousedown', outside); document.removeEventListener('keydown', escape); };
   }, [open]);
-  return <div className="more-menu" ref={ref}><button className={`icon-button ${open || items.some(item => item.active) ? 'active' : ''}`} aria-label="更多" title="更多" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(!open)}><Ellipsis size={17} /></button>
-    {open && <div className="dropdown-menu" role="menu">{items.map(item => <button key={item.label} role="menuitem" aria-label={item.label} disabled={item.disabled} className={item.active ? 'active' : ''} onClick={() => { setOpen(false); item.onSelect(); }}>{item.icon}{item.label}</button>)}</div>}</div>;
+  return <div className="more-menu" ref={ref}><button className={`icon-button ${open || items.some(item => item.active && !item.phoneOnly) ? 'active' : ''}`} aria-label="更多" title="更多" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(!open)}><Ellipsis size={17} /></button>
+    {open && <div className="dropdown-menu" role="menu">{items.map(item => <button key={item.label} role="menuitem" aria-label={item.label} disabled={item.disabled} className={[item.active ? 'active' : '', item.phoneOnly ? 'phone-only' : ''].filter(Boolean).join(' ') || undefined} onClick={() => { setOpen(false); item.onSelect(); }}>{item.icon}{item.label}</button>)}</div>}</div>;
 }
 
 function FilterMenu({ active, reset, children }: { active: boolean; reset: () => void; children: ReactNode }) {

@@ -114,6 +114,8 @@ test('permission denial leaves the composer usable and no microphone open', asyn
 test('mobile live transcript and recording controls fit and remain visible', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const app = await fixture(page, 'claude');
+  // Phones keep voice input behind the composer's + tray.
+  await page.getByRole('button', { name: '更多输入工具', exact: true }).click();
   await page.getByRole('button', { name: '语音输入', exact: true }).click();
   await expect(page.getByRole('button', { name: '结束录音', exact: true })).toBeVisible();
   app.traffic.send!({ type: 'transcript', text: '这是手机上的实时语音识别预览', final: false });

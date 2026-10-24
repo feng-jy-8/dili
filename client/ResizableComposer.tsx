@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Splitter } from './WorkspaceExplorer';
 import { readLocalPreference, writeLocalPreference } from './ui';
+import { useCompactLayout } from './useCompactLayout';
 import './resizable-composer.css';
 
 const HEIGHT = 'dili.composer.height', WIDTH = 'dili.composer.width-ratio';
@@ -14,6 +15,7 @@ export default function ResizableComposer({ children }: { children: ReactNode })
   const [bounds, setBounds] = useState({ width: 600, height: 600 });
   const [height, setHeight] = useState(() => saved(HEIGHT, 190));
   const [ratio, setRatio] = useState(() => Math.min(1, saved(WIDTH, 1)));
+  const compact = useCompactLayout();
   useLayoutEffect(() => {
     const parent = ref.current?.parentElement;
     if (!parent) return;
@@ -27,6 +29,8 @@ export default function ResizableComposer({ children }: { children: ReactNode })
   const maxHeight = Math.max(minHeight, Math.floor(bounds.height * .6));
   const actualHeight = Math.max(minHeight, Math.min(maxHeight, height));
   const changeWidth = (value: number) => setRatio(maxWidth ? value / maxWidth : 1);
+  // Phones get an IM composer that grows with its text; saved desktop sizes stay untouched.
+  if (compact) return <div ref={ref} className="resizable-composer compact"><div className="resizable-composer-content">{children}</div></div>;
   return <div ref={ref} className="resizable-composer" style={{ height: actualHeight }}>
     <Splitter label="调整输入区高度" orientation="horizontal" direction={-1} value={actualHeight} min={minHeight} max={maxHeight} onChange={setHeight} onCommit={value => writeLocalPreference(HEIGHT, String(value))} />
     <div className="resizable-composer-row" style={{ width }}>

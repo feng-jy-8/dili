@@ -10,12 +10,17 @@ let preference = normalize(readLocalPreference(key));
 const listeners = new Set<() => void>();
 export const interfaceScale = () => preference / 100;
 export const viewportWidth = () => window.innerWidth / interfaceScale();
-export const viewportHeight = () => window.innerHeight / interfaceScale();
+// iOS Safari keeps innerHeight when the keyboard opens; only the visual
+// viewport shrinks and pans. Sizing the shell from it keeps the header and
+// composer on screen instead of letting Safari push the whole page up.
+export const viewportHeight = () => (window.visualViewport?.height ?? window.innerHeight) / interfaceScale();
+const viewportTop = () => Math.max(0, window.visualViewport?.offsetTop ?? 0) / interfaceScale();
 
 function resizeViewport() {
   const root = document.documentElement;
   root.style.setProperty('--ui-viewport-height', `${viewportHeight()}px`);
   root.style.setProperty('--ui-viewport-width', `${viewportWidth()}px`);
+  root.style.setProperty('--ui-viewport-top', `${viewportTop()}px`);
 }
 function applyZoom() {
   document.documentElement.style.setProperty('--ui-scale', String(interfaceScale()));
@@ -28,6 +33,8 @@ function applyZoom() {
 }
 export function initializeZoom() {
   window.addEventListener('resize', resizeViewport);
+  window.visualViewport?.addEventListener('resize', resizeViewport);
+  window.visualViewport?.addEventListener('scroll', resizeViewport);
   window.addEventListener('storage', event => {
     if (event.key !== key && event.key !== null) return;
     preference = normalize(readLocalPreference(key)); applyZoom();

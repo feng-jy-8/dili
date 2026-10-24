@@ -2,7 +2,8 @@ import { PaneToolOverflow, SessionToolbar, useSessionChrome } from './SessionToo
 import './chat-presentation.css';
 import { appUrl } from './urls';
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowDownToLine, Check, ChevronRight, CircleAlert, List, LoaderCircle, MessageSquare, RefreshCw, Send, Settings2, Square, TerminalSquare } from 'lucide-react';
+import { ArrowDownToLine, Check, ChevronRight, CircleAlert, List, LoaderCircle, MessageSquare, Plus, RefreshCw, Send, Settings2, Square, TerminalSquare } from 'lucide-react';
+import { dismissKeyboard, useAutoGrow, useCompactLayout } from './useCompactLayout';
 import type { Session } from '../shared/types';
 import type { AgentChatAnswer, AgentChatHistoryPage, AgentChatItem, AgentChatPatch, AgentChatRequest, AgentChatSnapshot, AgentChatSubmission } from '../shared/chat';
 import { api, ApiError } from './api';
@@ -119,6 +120,8 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
   const [awaitingTurnId, setAwaitingTurnId] = useState<string | null>(null);
   const [voiceActive, setVoiceActive] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const compact = useCompactLayout();
   const [checking, setChecking] = useState(false);
   const [checkedUnknown, setCheckedUnknown] = useState(false);
   const [checkNotice, setCheckNotice] = useState('');
@@ -438,6 +441,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     : hasTurn ? activeItems.some(item => item.type === 'assistant' && item.text) ? 'replying' : activeItems.some(item => ['command', 'tool', 'fileChange'].includes(item.type)) ? 'working' : 'thinking'
     : awaitingTurnId && !snapshot.items.some(item => item.turnId === awaitingTurnId) ? 'waiting' : null;
   const nativeAvailable = !session.running || !!snapshot?.connected;
+  useAutoGrow(textarea, draft.text, compact);
   const canSend = (!!draft.text.trim() || !!draft.attachments.length) && !voiceActive && !uploading && !busy && !settingsController.saving && !draft.pending && transport && nativeAvailable && !snapshot?.requests.length && !session.archived;
   const olderCurrent = older?.identity === snapshot?.nativeSessionId && older?.instanceId === snapshot?.instanceId ? older : null;
   const existingIds = new Set(snapshot?.items.flatMap(item => [item.id, ...(item.replaces ?? [])]));
@@ -459,7 +463,7 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
       ...(olderCurrent?.notice ? [{ id: 'history:' + olderCurrent.notice, text: olderCurrent.notice }] : []),
     ]} />
     <div className="codex-chat-body"><div className="codex-chat-primary">
-    <div className="chat-scroll codex-chat-scroll" ref={scroller} tabIndex={0} aria-label={`${agentName} 消息记录`} onScroll={event => {
+    <div className="chat-scroll codex-chat-scroll" ref={scroller} onTouchMove={dismissKeyboard} tabIndex={0} aria-label={`${agentName} 消息记录`} onScroll={event => {
       const element = event.currentTarget, bottom = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
       followsBottom.current = bottom; setAtBottom(bottom);
     }}>
@@ -476,7 +480,8 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
     <ChatActivity phase={activityPhase} />
     <MessageQueue items={draft.queue||[]} locked={busy || uploading || !!draft.pending} disabled={busy || uploading || !!draft.pending || !transport || !nativeAvailable || !!snapshot?.requests.length || session.archived} sendingId={draft.pending?.queueId} send={item=>void send(undefined,item)} edit={editQueue} remove={id=>updateDraft({...draftRef.current,queue:draftRef.current.queue?.filter(item=>item.id!==id)})}/>
     {settingsOpen && <AgentChatSettingsPanel controller={settingsController} field={settingsField} close={() => { setSettingsOpen(false); textarea.current?.focus({ preventScroll: true }); }} />}
-    <ResizableComposer><form className="chat-composer codex-composer agent-chat-composer" onSubmit={event => void send(event)}>
+    <ResizableComposer><form className="chat-composer codex-composer agent-chat-composer" data-tools-open={toolsOpen || undefined} data-turn={hasTurn || undefined} data-empty={!draft.text.trim() && !draft.attachments.length || undefined} onSubmit={event => { setToolsOpen(false); void send(event); }}>
+      <button type="button" className="icon-button composer-tools-toggle" aria-label="更多输入工具" aria-expanded={toolsOpen} onClick={() => setToolsOpen(open => !open)}><Plus size={18} /></button>
       <ImageAttachments sessionId={session.id} items={draft.attachments} onChange={update => { const current = active.current ? draftRef.current : readDraft(session.id); updateDraft({ ...current, attachments: update(current.attachments) }); }} onBusy={setUploading} disabled={session.archived || !!draft.pending}>
       {preview && <div className="composer-preview" aria-label="消息 Markdown 预览"><Markdown text={draft.text || '还没有文字内容'} /></div>}
       <AgentChatCommands text={draft.text} anchor={textarea} enabled={!settingsOpen && !draft.attachments.length && !session.archived && !draft.pending} select={openCommand} />
@@ -486,13 +491,13 @@ function ChatSession({ session, onTerminal, onSelection }: { session: Session; o
       }} />
       </ImageAttachments>
       <AgentChatQuickSettings key={settingsOpen ? 'modal' : 'inline'} controller={settingsController} blockedReason={session.archived ? '恢复联系人后可修改设置。' : !transport || !nativeAvailable ? '连接原生会话后可修改设置。' : undefined} />
-      <div className="chat-composer-footer codex-composer-footer"><span>{busy ? '正在发送…' : draft.pending ? '请先核对上一条消息的发送结果' : !transport ? '正在连接本地服务，草稿已保留' : !nativeAvailable ? '请使用上方的重新连接按钮恢复输入' : hasTurn ? session.backend === 'claude' ? '生成中发送会加入队列 · 本轮结束后继续' : '生成中发送会补充当前任务 · 不停止生成' : 'Enter 发送 · Shift + Enter 换行'}</span><div><VoiceInput sessionId={session.id} disabled={session.archived || busy || !!draft.pending} onActive={setVoiceActive} insert={text => { const next = { ...draftRef.current, text: appendVoiceText(draftRef.current.text, text) }; if (!saveDraft(session.id, next)) throw new Error("草稿保存失败，识别文字保留在下方"); updateDraft(next); }} /><button type="button" className="text-button" aria-pressed={preview} onClick={() => setPreview(value => !value)}>Markdown 预览</button>{hasTurn && <button type="button" className="button secondary small-button" disabled={!transport || interrupting} onClick={async () => {
+      <div className="chat-composer-footer codex-composer-footer"><span className="composer-hint" data-actionable={busy || !!draft.pending || !transport || !nativeAvailable || undefined}>{busy ? '正在发送…' : draft.pending ? '请先核对上一条消息的发送结果' : !transport ? '正在连接本地服务，草稿已保留' : !nativeAvailable ? '请使用上方的重新连接按钮恢复输入' : hasTurn ? session.backend === 'claude' ? '生成中发送会加入队列 · 本轮结束后继续' : '生成中发送会补充当前任务 · 不停止生成' : 'Enter 发送 · Shift + Enter 换行'}</span><div><VoiceInput sessionId={session.id} disabled={session.archived || busy || !!draft.pending} onActive={setVoiceActive} insert={text => { const next = { ...draftRef.current, text: appendVoiceText(draftRef.current.text, text) }; if (!saveDraft(session.id, next)) throw new Error("草稿保存失败，识别文字保留在下方"); updateDraft(next); }} /><button type="button" className="text-button composer-preview-toggle" aria-pressed={preview} onClick={() => setPreview(value => !value)}>Markdown 预览</button>{hasTurn && <button type="button" className="button secondary small-button composer-stop" disabled={!transport || interrupting} onClick={async () => {
         updateDraft({...draftRef.current,queue:draftRef.current.queue?.map(item=>({...item,paused:true}))});
         setInterrupting(true); setError('');
         try { await api(`/sessions/${session.id}/chat/interrupt`, {}); await readSnapshot.current(); }
         catch (cause) { if (active.current) setError(errorText(cause)); }
         finally { if (active.current) setInterrupting(false); }
-      }}><Square size={12} />{interrupting ? '正在停止…' : '停止生成'}</button>}{hasTurn && <button type="button" className="text-button" disabled={!canSend} onClick={enqueue}>加入队列</button>}<button type="submit" className="button primary small-button" disabled={!canSend}>{busy ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}发送</button></div></div>
+      }}><Square size={12} />{interrupting ? '正在停止…' : '停止生成'}</button>}{hasTurn && <button type="button" className="text-button composer-queue" disabled={!canSend} onClick={enqueue}>加入队列</button>}<button type="submit" className="button primary small-button composer-send" disabled={!canSend}>{busy ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}发送</button></div></div>
     </form></ResizableComposer>
   </section>;
 }

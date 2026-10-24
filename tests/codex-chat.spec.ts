@@ -893,6 +893,9 @@ for (const backend of ['codex', 'claude'] as const) test(`${backend} composer ex
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await expect(page.getByRole('button', { name: '选择原生模型', exact: true })).toContainText('Native Model');
   await page.setViewportSize({ width: 390, height: 844 });
+  // Phones keep model and permission behind the composer's + tray.
+  await page.getByRole('button', { name: '更多输入工具', exact: true }).click();
+  await page.getByLabel(`给 ${backend === 'claude' ? 'Claude' : 'Codex'} 发送消息`).fill('手机补充');
   const controls = page.getByLabel('原生模型和权限');
   const bounds = await controls.boundingBox(); expect(bounds).toBeTruthy(); expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
   const expectSendInView = async () => {
@@ -1006,6 +1009,7 @@ test('composer menus remain usable at 200 percent zoom on a small screen and in 
   expect(box.x).toBeGreaterThanOrEqual(0); expect(box.y).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(390); expect(box.y + box.height).toBeLessThanOrEqual(844);
   await page.screenshot({ path: 'artifacts/composer-slash-mobile-200.png' });
   await input.fill('保留草稿');
+  await page.getByRole('button', { name: '更多输入工具', exact: true }).click();
   await page.getByRole('button', { name: '选择原生权限', exact: true }).click();
   const popup = page.getByRole('group', { name: '原生权限设置' });
   await expect(popup.getByLabel('原生权限', { exact: true })).toBeVisible();
@@ -1069,4 +1073,69 @@ test('Claude final saved messages replace provisional text even when older histo
   await app.patch({ items: app.current.snapshot.items.filter(item => item.id !== saved.id) });
   await expect(page.locator('[data-chat-item="claude:thread:saved-uuid"]')).toHaveCount(1);
   await expect(page.locator('[data-chat-item="claude-live:thread:msg:1"]')).toHaveCount(0);
+});
+
+test.describe('phone composer', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  test('is one IM row that grows with text, keeps tools in a tray, turns Send into Stop and keeps the page still under the keyboard', async ({ page }) => {
+    await page.addInitScript(() => {
+      // Scriptable visual viewport, like iOS Safari while the keyboard is open.
+      const fake = Object.assign(new EventTarget(), { width: 390, height: 844, offsetTop: 0, offsetLeft: 0, pageTop: 0, pageLeft: 0, scale: 1 });
+      Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => fake });
+      (window as unknown as { fakeViewport: typeof fake }).fakeViewport = fake;
+    });
+    const app = await fixture(page, 'claude');
+    await app.open();
+    const input = page.getByLabel('给 Claude 发送消息');
+    // iOS zooms into any focused field under 16px.
+    expect(await input.evaluate(element => getComputedStyle(element).fontSize)).toBe('16px');
+    expect((await page.locator('.resizable-composer.compact').boundingBox())!.height).toBeLessThanOrEqual(64);
+    await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '添加图片' })).toBeHidden();
+
+    const oneLine = (await input.boundingBox())!.height;
+    await input.fill(['第一行', '第二行', '第三行'].join('\n'));
+    expect((await input.boundingBox())!.height).toBeGreaterThan(oneLine + 30);
+    await input.fill(Array.from({ length: 30 }, (_, index) => `第 ${index + 1} 行`).join('\n'));
+    expect((await input.boundingBox())!.height).toBeLessThanOrEqual(844 * .35 + 1);
+    expect(await input.evaluate(element => getComputedStyle(element).overflowY)).toBe('auto');
+    await input.fill('');
+    expect(Math.abs((await input.boundingBox())!.height - oneLine)).toBeLessThanOrEqual(1);
+
+    const tools = page.getByRole('button', { name: '更多输入工具', exact: true });
+    await tools.click();
+    await expect(tools).toHaveAttribute('aria-expanded', 'true');
+    for (const name of ['添加图片', 'Markdown 预览', '选择原生模型', '选择原生权限']) await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+    await tools.click();
+    await expect(page.getByRole('button', { name: '添加图片' })).toBeHidden();
+
+    // Generating with nothing typed: Stop takes the Send slot, Send returns once there is text.
+    await app.patch({ activeTurnId: 'phone-turn' });
+    await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '发送', exact: true })).toBeHidden();
+    await input.fill('补充');
+    await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
+
+    // Keyboard open: the shell follows the visual viewport, the header stays, the document never scrolls.
+    await page.evaluate(() => { const viewport = (window as unknown as { fakeViewport: { height: number; offsetTop: number } & EventTarget }).fakeViewport; viewport.height = 500; viewport.offsetTop = 120; viewport.dispatchEvent(new Event('resize')); });
+    const shell = (await page.locator('.app-shell').boundingBox())!;
+    expect(Math.round(shell.y)).toBe(120);
+    expect(Math.round(shell.height)).toBe(500);
+    await expect(page.locator('.drawer-header')).toBeInViewport();
+    await expect(input).toBeInViewport();
+    expect(await page.evaluate(() => document.scrollingElement!.scrollTop)).toBe(0);
+    await page.screenshot({ path: 'artifacts/phone-composer-keyboard.png' });
+  });
+});
+
+test('desktop composer hides the phone tray toggle and keeps every tool on one row', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const app = await fixture(page, 'claude');
+  await app.open();
+  await expect(page.getByRole('button', { name: '更多输入工具', exact: true })).toBeHidden();
+  const rows = await Promise.all(['添加图片', '选择原生模型', '选择原生权限', 'Markdown 预览', '发送'].map(async name => {
+    const box = (await page.getByRole('button', { name, exact: true }).boundingBox())!;
+    return box.y + box.height / 2;
+  }));
+  for (const y of rows) expect(Math.abs(y - rows[0])).toBeLessThan(6);
 });

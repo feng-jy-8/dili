@@ -27,4 +27,8 @@
   .chat-composer-footer { flex-wrap:wrap; }
   .chat-composer-footer>div { margin-left:auto; }
   .chat-latest { right:16px; }
+  /* Phone reading: IM-sized text, tighter rhythm. */
+  .chat-messages { gap:14px; }
+  .chat-message-body, .chat-user .chat-message-body, .chat-message-body .chat-markdown { font-size:15px; line-height:1.65; }
+  .chat-user .chat-message-body { padding:9px 13px; }
 }

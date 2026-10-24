@@ -6,6 +6,7 @@ import type { ConversationTranscript, Session } from '../shared/types';
 import { api } from './api';
 import Markdown from './Markdown';
 import { interfaceScale } from './zoom';
+import { dismissKeyboard } from './useCompactLayout';
 import NativeInputComposer from './NativeInputComposer';
 import ChatActivity from './ChatActivity';
 import NoticeToasts from './NoticeToasts';
@@ -199,7 +200,7 @@ export default function ConversationPane({ session, onTerminal, onSelection, all
     {error && <div className="conversation-error" role="alert"><span>{error}</span><button className="text-button" disabled={refreshing} onClick={() => refresh.current(true)}>重试读取</button></div>}
     {nativeQuestionPending && <div className="conversation-question-notice" role="status"><span>{session.backend === 'claude' ? 'Claude 正在等待原生终端中的输入。' : 'DeepSeek Harness 正在等待原生界面中的问题回答。'}</span><button className="text-button" onClick={onTerminal}>{session.backend === 'dsh' ? '前往原生界面处理' : '前往原生终端处理'}</button></div>}
     {allowInput && session.running && session.status === 'waiting_approval' && <div className="conversation-error" role="status"><span>原生会话正在等待审批</span><button className="text-button" onClick={onTerminal}>前往原生终端处理</button></div>}
-    <div className="conversation-body"><div className="conversation-primary"><div className="chat-scroll conversation-scroller" ref={scroller} tabIndex={0} aria-label="会话消息" onScroll={(event) => {
+    <div className="conversation-body"><div className="conversation-primary"><div className="chat-scroll conversation-scroller" ref={scroller} onTouchMove={dismissKeyboard} tabIndex={0} aria-label="会话消息" onScroll={(event) => {
       const element = event.currentTarget;
       const next = element.scrollHeight - element.scrollTop - element.clientHeight < 64;
       followBottom.current = next; setAtBottom(next);

@@ -15,3 +15,48 @@
 .resizable-composer .codex-composer-footer,.resizable-composer .native-input-footer,.resizable-composer .codex-composer-footer>div,.resizable-composer .native-input-footer>div { flex-wrap:wrap; }
 .resizable-composer .attachment-actions { flex-wrap:wrap; }
 .workspace-resizing-height,.workspace-resizing-height * { cursor:row-resize !important; }
+
+/* Phone composer (≤720px): one IM row [+] [field] [send]; every other tool
+   sits in a tray behind +. Existing components keep their logic; their
+   wrappers flatten (display: contents) so the items can be ordered here. */
+.resizable-composer:not(.compact) .composer-tools-toggle { display:none; }
+
+/* Desktop composer: the field fills the resizable area and every tool sits on
+   one row beneath it: [添加图片] [模型] [权限] hint … [语音] [预览] [停止] [队列] [发送].
+   Wrapper elements flatten (display: contents) so their items join the grid. */
+.resizable-composer:not(.compact) :is(.codex-composer,.native-input-composer) { display:grid; grid-template-columns:auto auto minmax(0,1fr) auto; grid-template-rows:auto auto minmax(0,1fr) auto auto; align-items:center; column-gap:8px; row-gap:4px; }
+.resizable-composer:not(.compact) :is(.image-composer,.chat-composer-footer) { display:contents; }
+.resizable-composer:not(.compact) .composer-preview { grid-column:1/-1; grid-row:1; }
+.resizable-composer:not(.compact) .chat-attachments { grid-column:1/-1; grid-row:2; }
+.resizable-composer:not(.compact) :is(.codex-composer,.native-input-composer) textarea { grid-column:1/-1; grid-row:3; align-self:stretch; height:auto; }
+.resizable-composer:not(.compact) .attachment-actions { grid-column:1; grid-row:4; flex-wrap:nowrap; }
+.resizable-composer:not(.compact) .attachment-actions>span { display:none; }
+.resizable-composer:not(.compact) .agent-chat-quick-settings { grid-column:2; grid-row:4; padding:0; }
+.resizable-composer:not(.compact) .composer-hint { grid-column:3; grid-row:4; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.resizable-composer:not(.compact) .chat-composer-footer>div { grid-column:4; grid-row:4; flex-wrap:nowrap; }
+.resizable-composer:not(.compact) :is(.attachment-error,.codex-request-error,.native-input-composer>[role="status"]) { grid-column:1/-1; grid-row:5; }
+.resizable-composer.compact { flex-shrink:0; height:auto; padding-bottom:env(safe-area-inset-bottom); }
+.resizable-composer.compact .resizable-composer-content { display:block; }
+.resizable-composer.compact :is(.codex-composer,.native-input-composer) { display:flex; flex-direction:row; flex-wrap:wrap; align-items:flex-end; gap:6px 8px; padding:8px 10px; overflow:visible; }
+.resizable-composer.compact :is(.image-composer,.chat-composer-footer,.chat-composer-footer>div) { display:contents; }
+.resizable-composer.compact .composer-hint { order:0; display:none; flex-basis:100%; color:var(--muted); font-size:12px; line-height:1.5; }
+.resizable-composer.compact .composer-hint[data-actionable] { display:block; }
+.resizable-composer.compact :is(.chat-attachments,.native-input-composer>[role="status"]) { order:1; flex-basis:100%; }
+.resizable-composer.compact .composer-preview { order:2; flex-basis:100%; max-height:30vh; }
+.resizable-composer.compact .composer-tools-toggle { order:3; display:inline-flex; align-items:center; justify-content:center; flex:0 0 36px; width:36px; height:36px; margin-bottom:2px; border-radius:50%; color:var(--muted); }
+.resizable-composer.compact [data-tools-open] .composer-tools-toggle { color:var(--accent); background:var(--accent-soft); }
+.resizable-composer.compact [data-tools-open] .composer-tools-toggle svg { transform:rotate(45deg); }
+.resizable-composer.compact .composer-tools-toggle svg { transition:transform .15s ease; }
+.resizable-composer.compact textarea { order:4; flex:1 1 0; min-width:0; min-height:40px; max-height:none; padding:8px 14px; border:1px solid var(--line-strong); border-radius:20px; background:var(--subtle); line-height:22px; resize:none; }
+.resizable-composer.compact textarea:focus-visible { outline:0; border-color:var(--accent); }
+.resizable-composer.compact .composer-send { order:5; flex:0 0 auto; height:36px; margin-bottom:2px; padding:0 14px; border-radius:18px; }
+/* Generating with nothing typed: the send slot becomes Stop, like an IM call-to-action. */
+.resizable-composer.compact [data-turn][data-empty] .composer-send { display:none; }
+.resizable-composer.compact [data-turn][data-empty] .composer-stop { order:5; display:inline-flex; height:36px; margin-bottom:2px; border-radius:18px; }
+/* Tray: forced onto its own line, shown only while open. */
+.resizable-composer.compact [data-tools-open]::after { content:''; order:6; flex-basis:100%; height:0; }
+.resizable-composer.compact :is(.attachment-actions,.agent-chat-quick-settings,.voice-input,.composer-preview-toggle,.composer-queue,.composer-stop) { order:7; display:none; }
+.resizable-composer.compact [data-tools-open] :is(.attachment-actions,.agent-chat-quick-settings,.voice-input,.composer-preview-toggle,.composer-queue,.composer-stop) { display:inline-flex; }
+.resizable-composer.compact .attachment-actions>span { display:none; }
+.resizable-composer.compact .agent-chat-quick-settings { padding:0; }
+.resizable-composer.compact :is(.attachment-error,.codex-request-error) { order:8; flex-basis:100%; }

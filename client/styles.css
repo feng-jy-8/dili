@@ -879,3 +879,52 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .backend-avatar.coral,.avatar-wrap .backend-avatar.coral { background:var(--avatar-coral-bg); color:#cf7a5b; }
 .backend-avatar.green,.avatar-wrap .backend-avatar.green { background:var(--subtle); color:var(--text); }
 .backend-avatar.blue,.avatar-wrap .backend-avatar.blue { background:var(--avatar-blue-bg); color:#6580ff; }
+
+/* ——— Touch screens (iPhone Safari first) ———
+   1. iOS zooms the page when a focused field's text is under 16px and never
+      zooms back. Every editable field, including xterm's hidden textarea,
+      therefore uses 16px on touch screens; !important because component rules
+      vary in specificity. Pinch zoom stays enabled.
+   2. The keyboard shrinks only the visual viewport. The shell and full-screen
+      layers follow it (--ui-viewport-top/-height from zoom.ts), the document
+      itself never scrolls or rubber-bands, and only lists inside scroll. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, select { font-size: 16px !important; }
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  .app-shell { position: fixed; top: var(--ui-viewport-top, 0px); left: 0; right: 0; }
+  .modal-overlay, .session-drawer.session-fullscreen, .terminal-pane.fullscreen, .conversation-outline-dialog { top: var(--ui-viewport-top, 0px); bottom: auto; height: var(--ui-viewport-height, 100dvh); }
+  .toast { bottom: auto; top: calc(var(--ui-viewport-top, 0px) + var(--ui-viewport-height, 100dvh) - 24px); transform: translate(-50%, -100%); }
+  /* Login, pairing and share-entry pages live outside the shell; they scroll themselves. */
+  .auth-page { position: fixed; top: var(--ui-viewport-top, 0px); left: 0; right: 0; height: var(--ui-viewport-height, 100dvh); min-height: 0; overflow-y: auto; overscroll-behavior: contain; align-items: flex-start; }
+  /* Auto margins center the card yet keep its top reachable when the keyboard shrinks the page. */
+  .auth-page > * { margin-block: auto; }
+}
+@media (pointer: coarse) and (max-width: 720px) {
+  .scratchpad-panel, .service-preview-panel, .image-viewer { top: var(--ui-viewport-top, 0px); bottom: auto; height: var(--ui-viewport-height, 100dvh); }
+}
+
+/* Phone top bar, IM style: row 1 is the title with "+" on the right, row 2 a
+   full-width search with the filter button. Panel tools leave the bar; the
+   bottom bar's "…" menu carries them (phone-only entries) with web services,
+   notes and appearance. */
+.more-menu .phone-only { display: none; }
+@media (max-width: 720px) {
+  .more-menu .phone-only { display: flex; }
+  .topbar-row { flex-wrap: wrap; row-gap: 6px; column-gap: 8px; padding-bottom: 8px; }
+  .topbar-actions, .contact-actions { display: contents; }
+  .topbar-tool, .topbar-actions .import-contact { display: none; }
+  .topbar-title { order: 0; flex: 1 1 0; min-width: 0; min-height: 36px; }
+  .topbar-title h1 { font-size: 17px; }
+  .topbar-actions .new-contact { order: 1; width: 36px; height: 36px; margin: 0; border-radius: 50%; }
+  .topbar-actions .search-field { order: 2; flex: 1 1 0; width: auto; min-width: 0; height: 36px; margin: 0; border-radius: 10px; }
+  .topbar-actions .filter-menu { order: 3; }
+  .topbar-actions .filter-menu > .icon-button { width: 36px; height: 36px; }
+  /* Search and filter share their own row under the title. */
+  .topbar-row::after { content: ''; order: 1; flex-basis: 100%; height: 0; }
+}
+@media (max-width: 720px) {
+  /* Pin lives in the "…" menu; the icon only marks pinned contacts and sits beside "…", below the preview. */
+  .card-pin { display: none; }
+  .card-pin.pinned { display: inline-flex; bottom: 4px; right: 40px; }
+  .session-card { padding-bottom: 28px; }
+}
