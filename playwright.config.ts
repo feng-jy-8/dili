@@ -18,7 +18,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 45_000,
-  use: { baseURL, viewport: { width: 1440, height: 1000 }, trace: 'retain-on-failure', screenshot: 'only-on-failure' },
+  use: { serviceWorkers: 'block', baseURL, viewport: { width: 1440, height: 1000 }, trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   outputDir: 'artifacts/playwright',
   webServer: {
     // Build into a throwaway client directory so a browser run cannot empty or

@@ -3,6 +3,7 @@ import base from './playwright.config';
 
 export default defineConfig({
   ...base,
+  use: { ...base.use, serviceWorkers: 'allow' },
   testMatch: 'pwa.spec.ts',
   outputDir: 'artifacts/pwa',
   projects: [
