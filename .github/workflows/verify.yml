@@ -16,5 +16,26 @@ jobs:
       - run: npm ci
       - run: npm run preflight
       - run: npx playwright install --with-deps chromium
-      - run: npm run verify
+      - name: Verify application
+        run: |
+          set -o pipefail
+          npm run verify 2>&1 | tee verify.log
+      - name: Report verification failure
+        if: failure()
+        run: |
+          node --input-type=module <<'JS'
+          import { existsSync, readFileSync } from 'node:fs';
+          if (existsSync('verify.log')) {
+            const log = readFileSync('verify.log', 'utf8').slice(-60000);
+            console.log('::error title=Verification diagnostics::' + log.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A'));
+          }
+          JS
+      - name: Upload regression diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-diagnostics
+          path: |
+            verify.log
+            artifacts/playwright/
       - run: npm run test:package
