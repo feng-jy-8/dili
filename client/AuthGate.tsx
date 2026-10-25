@@ -5,6 +5,7 @@ import type { AuthStatus } from '../shared/auth';
 import { api, getToken } from './api';
 import App, { BrandMark } from './App';
 
+const PairMachine = lazy(() => import('./PairMachine'));
 const ShareApp = lazy(() => import('./ShareApp'));
 const SHARE_HASH = /^#\/share\/([A-Za-z0-9_-]{20,128})$/;
 
@@ -38,6 +39,7 @@ export default function AuthGate() {
   if (shareToken && status.kind !== 'share') return <RedeemPage token={shareToken} done={accept} />;
   if (status.kind === 'anonymous') return <LoginPage passwordSet={status.passwordSet} done={accept} />;
   if (status.kind === 'share') return <Suspense fallback={<div className="auth-page"><LoaderCircle className="spin" size={22} /></div>}><ShareApp status={status} /></Suspense>;
+  if (location.hash.startsWith('#/pair?')) return <Suspense fallback={null}><PairMachine /></Suspense>;
   return <App auth={status} />;
 }
 

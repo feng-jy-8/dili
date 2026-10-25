@@ -15,11 +15,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run preflight
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - name: Verify application
         run: |
           set -o pipefail
           npm run verify 2>&1 | tee verify.log
+          npm run test:pwa 2>&1 | tee -a verify.log
       - name: Report verification failure
         if: failure()
         run: |
@@ -38,4 +39,5 @@ jobs:
           path: |
             verify.log
             artifacts/playwright/
+            artifacts/pwa/
       - run: npm run test:package

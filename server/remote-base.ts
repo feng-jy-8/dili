@@ -13,7 +13,8 @@ export function remoteHtml(html: string, base: string) {
 }
 export function remoteManifest(source: string, base: string) {
   const manifest = JSON.parse(source);
-  manifest.start_url = manifest.scope = `${base}/`;
+  manifest.start_url = `${base}/#/machines`;
+  manifest.scope = `${base}/`;
   manifest.id = `${base}/`;
   for (const icon of manifest.icons ?? []) if (icon.src?.startsWith('/')) icon.src = base + icon.src;
   return JSON.stringify(manifest);

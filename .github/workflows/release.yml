@@ -22,11 +22,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: node -e 'const p=require("./package.json");if(process.env.GITHUB_REF_NAME!=="v"+p.version)process.exit(1)'
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - name: Verify application
         run: |
           set -o pipefail
           npm run verify 2>&1 | tee verify.log
+          npm run test:pwa 2>&1 | tee -a verify.log
       - name: Report verification failure
         if: failure()
         run: |
@@ -45,6 +46,7 @@ jobs:
           path: |
             verify.log
             artifacts/playwright/
+            artifacts/pwa/
       - run: npm run test:package
       - run: npm run build:relay
       - run: SESSIONDECK_FRP_PLATFORMS=linux_amd64 npm run prepare:relay-clients
@@ -58,6 +60,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          body_path: docs/release-notes.md
           files: |
             dist/releases/*.tar.gz
             dist/releases/*.tgz

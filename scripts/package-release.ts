@@ -42,6 +42,12 @@ try {
   await writeFile(join(staging, relayName, 'start-relay.sh'), launcher, { mode: 0o755 });
   await writeFile(join(staging, relayName, 'README.md'), '# Dili Relay ' + version + ' for Linux x86_64\n\n配置 SESSIONDECK_RELAY_URL（默认 https://discoverpaw.com/connect）和可选的 SESSIONDECK_RELAY_DOMAINS 后执行 ./start-relay.sh。域名必须解析到同一台 Caddy／中继服务。还需单独安装并配置 frps 与 Caddy；本脚本仅启动配对服务，不会自动启动整套中继。自定义域名需完成 DNS、TLS、Caddy 配置并验收配对与隧道。\n');
   await archive(relayName, relayName);
+  const pwaName = `dili-pwa-${version}-all-platforms`;
+  await copy('dist/client', pwaName);
+  const pwaIndex = join(staging, pwaName, 'index.html');
+  await writeFile(pwaIndex, (await readFile(pwaIndex, 'utf8')).replace('<head>', '<head><meta name="dili-launcher" content="1">'));
+  await copy('docs/pwa.md', join(pwaName, 'INSTALL.md'));
+  await archive(pwaName, pwaName);
   await exec('npm', ['pack', '--ignore-scripts', '--pack-destination', releaseDir], { cwd: root });
   const files = (await readdir(releaseDir)).filter(name => name.endsWith('.tar.gz') || name.endsWith('.tgz')).sort();
   const sums = await Promise.all(files.map(async name => `${createHash('sha256').update(await readFile(join(releaseDir, name))).digest('hex')}  ${name}`));

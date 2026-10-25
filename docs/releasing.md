@@ -1,10 +1,10 @@
 # 正式版发布清单
 
-当前代码版本：0.4.0-dev.0（本地开发版本，未发布到 npm）。已有 v0.3.0 GitHub Release 不代表下面这些验收已经完成。
+当前代码版本：0.5.0。通过 GitHub Release 分发安装包；未发布到 npm registry。发布记录不代表下面未勾选的真机或生产环境验收已经完成。
 
 ## 发布范围与承诺
 
-首个正式版优先支持 Linux x86_64 / WSL2 x86_64，Node.js 24+；浏览器支持当前 Chromium。WSL2 沿用 Linux 运行方式，但需要在真实 Windows + WSL2 环境补做安装、中文输入、目录访问和启动验收。Windows 原生、macOS、ARM64 不在本轮正式发行保证内。
+首个正式版优先支持 Linux x86_64 / WSL2 x86_64，Node.js 24+；工作台浏览器以当前 Chromium 为主。0.5.0 新增电脑、Android Chromium 与 iPhone WebKit 的 PWA 入口自动化验证；手机安装和系统权限仍需真机验收。WSL2 沿用 Linux 运行方式，但需要在真实 Windows + WSL2 环境补做安装、中文输入、目录访问和启动验收。Windows 原生、macOS、ARM64 不在本轮正式发行保证内。
 
 Dili 是本地 Web 工作台；工作目录、会话和笔记留在服务主机。Claude / Codex / Harness 仍独立负责认证、付费、模型执行与权限。API 配置保存时不产生模型请求，也不保证账号或服务商兼容。
 

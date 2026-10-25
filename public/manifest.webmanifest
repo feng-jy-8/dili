@@ -2,15 +2,32 @@
   "name": "Dili · 嘀哩工作台",
   "short_name": "Dili",
   "description": "让每一次 AI 对话，都能继续成为工作",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./#/machines",
+  "scope": "./",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f2f2f7",
   "theme_color": "#ffffff",
   "lang": "zh-CN",
   "icons": [
-    { "src": "/icon.svg?v=shared-centre", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "/icon-maskable.svg?v=shared-centre", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
-  ]
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "id": "./"
 }
