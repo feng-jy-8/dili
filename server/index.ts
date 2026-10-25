@@ -43,7 +43,7 @@ import { StatePublisher } from './state.ts';
 import { listDirectories, normalizeDirectoryInput } from './directories.ts';
 import { ConversationReader, conversationPreview, handoffPrompt } from './conversation.ts';
 import { gitDiff, gitStatus, listWorkspace, openWorkspaceContent, parseByteRange, readWorkspaceFile, streamWorkspaceContent } from './workspace.ts';
-import { Attachments, registerAttachments, hasImageSignature } from './attachments.ts';
+import { Attachments, registerAttachments, hasImageSignature, groupAttachmentScope } from './attachments.ts';
 import { ChatSubmissions } from './chat-submissions.ts';
 import { registerAgentChat } from './chat-api.ts';
 import { createAgentChatAdapters } from './agents/chat.ts';
@@ -117,6 +117,7 @@ const conversations = new ConversationReader({ dshHistory: id => dsh.readHistory
 // Claude/dsh-only installation usable when an older Codex CLI lacks the bridge
 // flags, while preserving exact native IDs whenever the installed CLI supports it.
 const codexBridge = new CodexBridge({ dataDir });
+const codexViewerTerminals = new Set<string>();
 const codexRuns = new Map<string, { nativeId: string; launchId: string }>();
 // Settings each running Claude terminal was launched with, by contact ID.
 const claudeTerminalSettings = new Map<string, NativeSettings>();
@@ -188,9 +189,9 @@ function viewState(principal: Principal): AppState {
   const full = state();
   if (principal.kind !== 'share') return full;
   return {
-    ...full, defaultCwd: '', groups: [],
-    sessions: full.sessions.filter(item => item.id === principal.sessionId && !item.archived),
-    activities: full.activities.filter(activity => activity.sessionId === principal.sessionId),
+    ...full, defaultCwd: '', groups: principal.groupId ? full.groups.filter(group => group.id === principal.groupId).map(group => ({ ...group, workspace: '', prompt: '' })) : [],
+    sessions: full.sessions.filter(item => (principal.groupId ? item.groupId === principal.groupId : item.id === principal.sessionId) && !item.archived).map(item => principal.groupId ? { ...item, cwd: '', nativeSessionId: null, nativeUrl: undefined, worktree: undefined, parentId: null, statusDetail: '', lastUserInput: null, lastAttentionKey: null, claudeUnwritten: undefined, nativeSettings: undefined, groupBriefing: undefined } : item),
+    activities: full.activities.filter(activity => !principal.groupId && activity.sessionId === principal.sessionId),
   };
 }
 function principalOf(res: express.Response): Principal { return res.locals.principal as Principal; }
@@ -392,7 +393,7 @@ app.post('/api/sessions/:id/terminal/image', captureTerminalImage,
       next(error);
     }
   });
-registerAttachments(app, express.raw, attachments, { csrf: csrfValid, allowed: id => { const item = store.session(id); return !demo && !!item && !item.archived && ['codex', 'claude', 'dsh'].includes(item.backend); } });
+registerAttachments(app, express.raw, attachments, { csrf: csrfValid, allowedGroup: id => !!store.group(id), allowed: id => { const item = store.session(id); return !demo && !!item && !item.archived && ['codex', 'claude', 'dsh'].includes(item.backend); } });
 app.use(express.json({ limit: '128kb' }));
 // Login and share redemption run before a device exists; the remote listener
 // already requires a matching Origin for them, and SameSite blocks the cookie.
@@ -414,7 +415,7 @@ function authStatus(res: express.Response): AuthStatus {
   const principal = res.locals.principal as Principal | null;
   const remote = res.locals.remote as boolean;
   if (!principal) return { kind: 'anonymous', remote: true, passwordSet: auth.hasPassword() };
-  if (principal.kind === 'share') return { kind: 'share', remote, sessionId: principal.sessionId, mode: principal.mode, name: principal.name };
+  if (principal.kind === 'share') return { kind: 'share', remote, sessionId: principal.sessionId, ...(principal.groupId ? { groupId: principal.groupId } : {}), mode: principal.mode, name: principal.name };
   const deviceName = remote ? pairing()?.name?.trim() : undefined;
   return { kind: 'owner', remote, passwordSet: auth.hasPassword(), ...(deviceName ? { deviceName } : {}) };
 }
@@ -546,6 +547,21 @@ app.post('/api/sessions/:id/shares', (req, res) => {
   const { token: secret, share } = auth.createShare(item.id, mode, ttl, text(req.body.label ?? '', '备注', 80, false));
   store.activity(item.id, 'share', `创建了${mode === 'write' ? '可协作' : '只读'}分享链接`); broadcast();
   res.status(201).json({ share, url: shareUrl(secret), remoteReady: !!remoteSettings().publicUrl && remoteSettings().enabled });
+});
+app.get('/api/groups/:id/shares', (req, res) => {
+  const id = String(req.params.id);
+  if (!store.group(id)) fail('群聊不存在', 404);
+  res.json(auth.shares(undefined, id));
+});
+app.post('/api/groups/:id/shares', (req, res) => {
+  const id = String(req.params.id);
+  if (!store.group(id)) fail('群聊不存在', 404);
+  const mode = req.body.mode as ShareMode;
+  if (mode !== 'read' && mode !== 'write') fail('分享权限无效');
+  const ttl = req.body.ttlDays === null ? null : Number(req.body.ttlDays);
+  if (ttl !== null && (!Number.isInteger(ttl) || ttl < 1 || ttl > 365)) fail('有效期无效');
+  const { token, share } = auth.createShare('', mode, ttl, text(req.body.label ?? '', '备注', 80, false), id);
+  res.status(201).json({ share, url: shareUrl(token), remoteReady: !!remoteSettings().publicUrl && remoteSettings().enabled });
 });
 app.delete('/api/shares/:id', (req, res) => { auth.revokeShare(String(req.params.id)); revalidateViewers(); broadcast(); res.json({ ok: true }); });
 app.get('/api/shells', (_req, res) => res.json(shells.list()));
@@ -697,6 +713,7 @@ app.get('/api/events', (req, res) => {
 });
 
 app.get('/api/voice', (_req, res) => res.json(voiceEngine.status()));
+app.get('/api/groups/:id/voice', (req, res) => { if (!store.group(String(req.params.id))) fail('群聊不存在', 404); res.json(voiceEngine.status()); });
 app.get('/api/sessions/:id/voice', (req, res) => { session(String(req.params.id)); res.json(voiceEngine.status()); });
 app.post('/api/voice', (req, res) => {
   if (demo) fail('演示模式不修改语音设置', 409);
@@ -944,7 +961,9 @@ async function startSession(id: string, body: { mode?: unknown; restart?: unknow
     try {
       const executable = await findExecutable('codex');
       if (!executable) fail('未找到 Codex 原生命令');
-      terminals.start(item, codexBridge.remoteLaunch(item.nativeSessionId!, executable, item.cwd));
+      codexViewerTerminals.add(item.id);
+      try { terminals.start(item, codexBridge.remoteLaunch(item.nativeSessionId!, executable, item.cwd)); }
+      catch (error) { codexViewerTerminals.delete(item.id); throw error; }
       status(item.id, { interactionMode: 'terminal' });
       broadcast(); return session(item.id);
     } finally { starting.delete(item.id); }
@@ -1121,10 +1140,11 @@ app.post('/api/groups/:id/read', (req, res) => { const group = store.markGroupRe
 app.get('/api/groups/:id', (req, res) => {
   if (req.query.since !== undefined && typeof req.query.since !== 'string') fail('历史版本无效');
   if (req.query.before !== undefined && typeof req.query.before !== 'string') fail('历史游标无效');
-  res.json(store.groupDetail(String(req.params.id), {
+  const detail = store.groupDetail(String(req.params.id), {
     ...(req.query.before !== undefined ? { before: Number(req.query.before) } : {}),
     ...(typeof req.query.since === 'string' ? { since: req.query.since } : {}),
-  }));
+  });
+  res.json(principalOf(res).kind === 'share' ? { ...detail, group: { ...detail.group, workspace: '', prompt: '' }, deliveries: [] } : detail);
 });
 app.get('/api/groups/:id/messages/:messageId', (req, res) => {
   const message = store.message(String(req.params.messageId));
@@ -1133,6 +1153,8 @@ app.get('/api/groups/:id/messages/:messageId', (req, res) => {
 });
 app.post('/api/groups/:id/messages', async (req, res) => {
   const id = String(req.params.id);
+  const principal = principalOf(res);
+  if (principal.kind === 'share' && (req.body.senderId || req.body.kind === 'result')) fail('不能冒充群成员发布结果', 403);
   const kind = req.body.kind ?? 'note';
   if (!['note', 'task', 'result'].includes(kind)) fail('消息类型无效');
   const ids = req.body.recipientIds ?? [];
@@ -1141,7 +1163,11 @@ app.post('/api/groups/:id/messages', async (req, res) => {
   const sourceMessageId = req.body.sourceMessageId ? text(req.body.sourceMessageId, '转交来源') : null;
   const references = req.body.references ?? [];
   if (!Array.isArray(references) || references.length > 20 || references.some(x => typeof x !== 'string')) fail('引用无效');
-  const message = store.addMessage({ groupId: id, kind, text: text(req.body.text, '消息', 30_000), recipientIds: ids, senderId, senderName: senderId ? session(senderId).title : '你', sourceMessageId, ...(references.length ? { references } : {}) });
+  const scope = groupAttachmentScope(id);
+  attachments.resolve(scope, req.body.attachments);
+  const images = (req.body.attachments ?? []).map((imageId: string) => attachments.get(scope, imageId));
+  const messageText = text(req.body.text ?? '', '消息', 30_000, !images.length);
+  const message = store.addMessage({ groupId: id, kind, text: messageText, ...(images.length ? { attachments: images } : {}), recipientIds: ids, senderId, senderName: principal.kind === 'share' ? principal.name : senderId ? session(senderId).title : '你', sourceMessageId, ...(references.length ? { references } : {}) });
   broadcast();
   // @-assignment sends immediately. Each recipient is independent: a failure
   // leaves that delivery pending or awaiting confirmation, never retried here.
@@ -1168,18 +1194,25 @@ async function deliverNow(id: string, options: { autoStart?: boolean } = {}) {
   if (targetWeb && !target.nativeSessionId) fail('原生会话尚未准备好');
   const agentChat = !demo && target.interactionMode === 'chat' && (target.backend === 'codex' ? codexRuns : claudeRuns).has(target.id);
   if (!targetWeb && !agentChat && !terminals.has(target.id)) fail('会话尚未启动或已经退出');
+  const message = store.message(delivery.messageId);
+  const images = message?.attachments?.length ? attachments.resolve(groupAttachmentScope(message.groupId), message.attachments.map(item => item.id)) : [];
+  if (images.length && targetWeb) fail('DeepSeek Harness 网页会话暂不支持图片任务，请使用终端会话接收；图片已保留在群聊中');
   deliveryLocks.add(id);
   try {
     const deliveryStatus = targetWeb || agentChat ? 'sent' : 'staged';
     const pending = sendDelivery(store, id, deliveryStatus, async () => {
       if (agentChat) {
-        try { await (target.backend === 'claude' ? claudeBridge : codexBridge).sendPrompt(target.nativeSessionId!, delivery.text); }
+        try { await (target.backend === 'claude' ? claudeBridge : codexBridge).sendPrompt(target.nativeSessionId!, delivery.text, undefined, images); }
         catch (error) {
           if ((error as { deliveryUnknown?: boolean }).deliveryUnknown === false) throw new DeliveryNotAcceptedError(error instanceof Error ? error.message : 'Codex 未接收任务');
           throw error;
         }
       } else if (deliveryStatus === 'sent') await dsh.prompt(target.nativeSessionId!, delivery.text);
-      else terminals.stage(target.id, delivery.text);
+      else {
+        const generation = terminals.generation(target.id);
+        for (const image of images) terminals.stagePath(target.id, image, generation ?? undefined, target.backend);
+        terminals.stage(target.id, (images.length ? ' ' : '') + delivery.text);
+      }
     });
     broadcast();
     const updated = await pending;
@@ -1253,6 +1286,12 @@ terminals.on('input', (id: string, data: string) => {
   if (session(id).statusSource !== 'native' && session(id).status !== 'unknown') status(id, { status: 'unknown', statusSource: 'process', statusDetail: '已发送输入，等待后端状态', lastActivity: new Date().toISOString() });
 });
 terminals.on('exit', (id: string, exitCode: number) => {
+  // A viewer attached to a graphical executor does not own that executor.
+  if (codexViewerTerminals.delete(id) && codexRuns.has(id) && !stopping.has(id)) {
+    status(id, { interactionMode: 'chat' });
+    terminalEvent(id, { type: 'exit', exitCode });
+    return;
+  }
   nativeStatus.stop(id);
   launchIds.delete(id);
   expectedNativeIds.delete(id);
@@ -1286,16 +1325,16 @@ function applySharedSize(id: string) {
 }
 function upgrade(req: import('node:http').IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) {
   const url = new URL(req.url || '/', `http://127.0.0.1:${port}`);
-  const voiceMatch = /^\/api\/sessions\/([^/]+)\/voice$/.exec(url.pathname);
+  const voiceMatch = /^\/api\/(sessions|groups)\/([^/]+)\/voice$/.exec(url.pathname);
   if (voiceMatch) {
     const remote = isRemote(req);
     const device = remote ? readCookie(req.headers.cookie, DEVICE_COOKIE) : undefined;
     const principal = remote ? auth.principal(device) : LOCAL_OWNER;
     const allowed = remote ? allowedRemoteRequest(req, remoteSettings().publicUrl, remoteSettings().localPort) : allowedRequest(req, port, wildcardHost);
     const decision = authorize(principal, remote, 'GET', url.pathname);
-    const item = store.session(voiceMatch[1]!);
+    const item = voiceMatch[1] === 'groups' ? store.group(voiceMatch[2]!) : store.session(voiceMatch[2]!);
     if (!allowed || !decision.allowed || !principal || !validToken(url.searchParams.get('token'), auth.csrf(principal))) { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; }
-    if (demo || closing || !item || item.archived) { socket.write('HTTP/1.1 409 Conflict\r\n\r\n'); socket.destroy(); return; }
+    if (demo || closing || !item || ('archived' in item && item.archived)) { socket.write('HTTP/1.1 409 Conflict\r\n\r\n'); socket.destroy(); return; }
     voiceWss.handleUpgrade(req, socket, head, ws => voiceConnections.attach(ws, device));
     return;
   }

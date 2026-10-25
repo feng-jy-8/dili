@@ -16,7 +16,7 @@ const secret = () => randomBytes(32).toString('base64url');
 export type Principal =
   | { kind: 'owner'; local: true }
   | { kind: 'owner'; local: false; deviceId: string }
-  | { kind: 'share'; deviceId: string; shareId: string; sessionId: string; mode: ShareMode; name: string };
+  | { kind: 'share'; deviceId: string; shareId: string; sessionId: string; groupId?: string; mode: ShareMode; name: string };
 
 type DeviceRow = AuthDevice & { tokenHash: string };
 type ShareRow = Omit<Share, 'devices'> & { tokenHash: string };
@@ -94,7 +94,7 @@ export class AuthStore {
     if (device.kind === 'owner') return { kind: 'owner', local: false, deviceId: device.id };
     const share = device.shareId ? this.liveShare(device.shareId) : undefined;
     if (!share) { this.remove('auth_devices', device.id); return null; }
-    return { kind: 'share', deviceId: device.id, shareId: share.id, sessionId: share.sessionId, mode: share.mode, name: device.name };
+    return { kind: 'share', deviceId: device.id, shareId: share.id, sessionId: share.sessionId, ...(share.groupId ? { groupId: share.groupId } : {}), mode: share.mode, name: device.name };
   }
 
   /** CSRF tokens are bound to the device, so a share's token is useless elsewhere. */
@@ -110,10 +110,10 @@ export class AuthStore {
     return share;
   }
 
-  createShare(sessionId: string, mode: ShareMode, ttlDays: number | null, label: string) {
+  createShare(sessionId: string, mode: ShareMode, ttlDays: number | null, label: string, groupId?: string) {
     const token = secret();
     const share: ShareRow = {
-      id: digest(token).slice(0, 24), tokenHash: digest(token), sessionId, mode, label,
+      id: digest(token).slice(0, 24), tokenHash: digest(token), sessionId, ...(groupId ? { groupId } : {}), mode, label,
       createdAt: now(), expiresAt: ttlDays ? new Date(Date.now() + ttlDays * 24 * 3600_000).toISOString() : null, revokedAt: null,
     };
     this.write('auth_shares', share.id, share);
@@ -135,8 +135,8 @@ export class AuthStore {
     return this.createDevice({ kind: 'share', shareId: share.id, name: display, userAgent, expiresAt: share.expiresAt });
   }
 
-  shares(sessionId?: string) {
-    return this.all<ShareRow>('auth_shares').filter(share => !share.revokedAt && (!sessionId || share.sessionId === sessionId)
+  shares(sessionId?: string, groupId?: string) {
+    return this.all<ShareRow>('auth_shares').filter(share => !share.revokedAt && (!sessionId || share.sessionId === sessionId) && (groupId ? share.groupId === groupId : !share.groupId)
       && !(share.expiresAt && Date.parse(share.expiresAt) <= Date.now())).map(share => this.publicShare(share))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }

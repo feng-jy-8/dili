@@ -15,12 +15,12 @@ let service;
 let logs = '';
 async function command(file, args, options = {}) {
   const child = spawn(file, args, { cwd: root, ...options, stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  child.stdout.on('data', part => { output += part; }); child.stderr.on('data', part => { output += part; });
+  let output = '', errors = '';
+  child.stdout.on('data', part => { output += part; }); child.stderr.on('data', part => { errors += part; });
   const timer = setTimeout(() => child.kill('SIGTERM'), 120_000);
   try {
     const [code] = await once(child, 'exit');
-    assert.equal(code, 0, `${file} ${args.join(' ')} failed:\n${output.slice(-4000)}`);
+    assert.equal(code, 0, `${file} ${args.join(' ')} failed:\n${(output + errors).slice(-4000)}`);
     return output;
   } finally { clearTimeout(timer); }
 }

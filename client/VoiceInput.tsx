@@ -15,8 +15,8 @@ export function appendVoiceText(draft: string, speech: string) {
 }
 
 /** A recording owns its stream, socket and transcript; unmount discards late results. */
-export default function VoiceInput({ sessionId, disabled, insert, onActive }: {
-  sessionId: string; disabled?: boolean; insert(text: string): void; onActive(active: boolean): void;
+export default function VoiceInput({ sessionId, scope = 'sessions', disabled, insert, onActive }: {
+  sessionId: string; scope?: 'sessions' | 'groups'; disabled?: boolean; insert(text: string): void; onActive(active: boolean): void;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ bottom: 84, right: 24, maxHeight: 220 });
@@ -47,7 +47,7 @@ export default function VoiceInput({ sessionId, disabled, insert, onActive }: {
     clearTimeout(timer.current); clearInterval(ticker.current);
   };
   const finish = () => { run.current++; active.current = false; release(); setPhase('idle'); props.current.onActive(false); };
-  useEffect(() => () => { run.current++; active.current = false; release(); }, [sessionId]);
+  useEffect(() => () => { run.current++; active.current = false; release(); }, [sessionId, scope]);
   function cancel() { finish(); setTranscript(''); setError(''); }
   function stop() {
     if (recorder.current?.state !== 'recording') return;
@@ -67,14 +67,14 @@ export default function VoiceInput({ sessionId, disabled, insert, onActive }: {
       if (typeof MediaRecorder === 'undefined') throw new Error('此浏览器不支持录音，请使用新版 Chrome、Edge、Firefox 或 Safari');
       const mime = VOICE_MIME_TYPES.find(value => MediaRecorder.isTypeSupported(value));
       if (!mime) throw new Error('此浏览器没有支持的录音格式，请更新浏览器');
-      const status = await api<VoiceStatus>('/sessions/' + encodeURIComponent(sessionId) + '/voice');
+      const status = await api<VoiceStatus>('/' + scope + '/' + encodeURIComponent(sessionId) + '/voice');
       if (!current()) return;
       if (!status.enabled || !status.installed) throw new Error('请先在设置 → 语音输入中安装并启用 FunASR 插件');
       const microphone = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
       if (!current()) { microphone.getTracks().forEach(track => track.stop()); return; }
       stream.current = microphone;
       const token = await getToken(); if (!current()) return;
-      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${appUrl('/api/sessions/' + encodeURIComponent(sessionId) + '/voice')}?token=${encodeURIComponent(token)}`);
+      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${appUrl('/api/' + scope + '/' + encodeURIComponent(sessionId) + '/voice')}?token=${encodeURIComponent(token)}`);
       socket.current = ws; setPhase('loading');
       timer.current = setTimeout(() => failed('语音连接超时，请在设置中检查插件状态后重试'), 10 * 60_000);
       ws.onopen = () => { if (current()) ws.send(JSON.stringify({ type: 'start', mime })); else ws.close(); };

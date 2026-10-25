@@ -1,8 +1,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_GROUP_PROMPT, briefingVersion, buildGroupTask, buildJoinBriefing, taskTagLine } from '../shared/group-prompt.ts';
-import { failureReply, replyFor } from './group-replies.ts';
+import { GroupReplies, failureReply, replyFor } from './group-replies.ts';
+import { Store } from './store.ts';
+import { setTimeout as delay } from 'node:timers/promises';
+import type { ConversationTranscript } from '../shared/types.ts';
 import { nativeErrorText } from './codex.ts';
+
+test('group replies reconcile late final answers after retries and an earlier progress answer', async t => {
+  const store = new Store(':memory:');
+  const group = store.addGroup('G', '');
+  const session = store.addSession({ backend: 'codex', title: 'A', cwd: '/tmp', groupId: group.id });
+  store.addMessage({ groupId: group.id, senderId: null, senderName: '用户', kind: 'task', text: '任务', recipientIds: [session.id] });
+  const delivery = store.deliveries()[0];
+  store.updateDelivery(delivery.id, 'sent');
+  let transcript: ConversationTranscript = { messages: [], truncated: false };
+  let reads = 0;
+  const replies = new GroupReplies({ store, read: async () => { reads++; return transcript; }, turnOpen: () => false, onReply() {}, delays: [1], reconcileMs: 20 });
+  t.after(() => { replies.close(); store.close(); });
+  replies.statusChanged(session);
+  const until = async (condition: () => boolean) => { for (let i = 0; i < 100; i++) { if (condition()) return; await delay(10); } assert.fail('group reply did not reconcile'); };
+  await until(() => reads >= 2);
+  transcript = { messages: [{ id: 'u', role: 'user', text: taskTagLine(delivery.tag!) }, { id: 'a', role: 'assistant', text: '检查中' }], truncated: false };
+  await until(() => store.groupDetail(group.id).messages.some(item => item.text === '检查中'));
+  transcript.messages.push({ id: 'final', role: 'assistant', text: '最终完成' });
+  await until(() => store.groupDetail(group.id).messages.some(item => item.text === '最终完成'));
+  assert.equal(store.groupDetail(group.id).messages.filter(item => item.senderId === session.id).length, 1);
+});
+
+test('a resumed turn cannot publish an obsolete history read', async t => {
+  const store = new Store(':memory:');
+  const group = store.addGroup('G', '');
+  const session = store.addSession({ backend: 'codex', title: 'A', cwd: '/tmp', groupId: group.id });
+  store.addMessage({ groupId: group.id, senderId: null, senderName: '用户', kind: 'task', text: '任务', recipientIds: [session.id] });
+  const delivery = store.deliveries()[0]; store.updateDelivery(delivery.id, 'sent');
+  let started!: () => void;
+  const reading = new Promise<void>(resolve => { started = resolve; });
+  let release!: (value: ConversationTranscript) => void;
+  const result = new Promise<ConversationTranscript>(resolve => { release = resolve; });
+  const replies = new GroupReplies({ store, read: () => { started(); return result; }, turnOpen: () => false, onReply() {}, delays: [1] });
+  t.after(() => { replies.close(); store.close(); });
+  replies.statusChanged(session);
+  // Keep the event loop alive while the production timer is deliberately unref'ed.
+  await Promise.race([reading, delay(1000).then(() => assert.fail('read not started'))]);
+  store.updateSession(session.id, { status: 'running' });
+  release({ messages: [{ id: 'u', role: 'user', text: taskTagLine(delivery.tag!) }, { id: 'a', role: 'assistant', text: '旧进度' }], truncated: false });
+  await delay(10);
+  assert.equal(store.deliveries()[0].replyMessageId, undefined);
+});
 
 test('a task carries a short header, the quoted answers and the task; the full rules only when they changed', () => {
   const group = { title: '登录协作', goal: '' };

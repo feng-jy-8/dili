@@ -11,6 +11,10 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { DshBridge } from '../server/dsh.ts';
+import { ConversationReader } from '../server/conversation.ts';
+import { GroupReplies } from '../server/group-replies.ts';
+import { Store } from '../server/store.ts';
+import { taskTagLine } from '../shared/group-prompt.ts';
 import { findExecutable } from '../server/adapters.ts';
 
 const executable = await findExecutable('dsh');
@@ -30,8 +34,9 @@ let fixtureError: Error | undefined;
 const provider = createServer(async (request, response) => {
   try {
     assert.equal(request.method, 'POST');
-    assert.equal(request.url, '/chat/completions');
-    assert.equal(request.headers.authorization, 'Bearer sessiondeck-local-fixture-only');
+    assert.ok(['/chat/completions', '/v1/messages'].includes(request.url ?? ''));
+    const messagesApi = request.url === '/v1/messages';
+    assert.equal(messagesApi ? request.headers['x-api-key'] : request.headers.authorization, messagesApi ? 'sessiondeck-local-fixture-only' : 'Bearer sessiondeck-local-fixture-only');
     let body = '';
     for await (const chunk of request) {
       body += chunk;
@@ -45,13 +50,18 @@ const provider = createServer(async (request, response) => {
     requests.push({ marker, sessionId: String(request.headers['x-deepseek-harness-session-id'] ?? '') });
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
     const chunk = (content: string, finish: string | null = null) => `data: ${JSON.stringify({ id: 'sessiondeck-fixture', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: input.model, choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: finish }], usage: { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 } })}\n\n`;
-    response.write(chunk(`${marker}_REPLY`));
+    const event = (type: string, data: Record<string, unknown>) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+    if (messagesApi) {
+      response.write(event('message_start', { message: { id: 'fixture', type: 'message', role: 'assistant', content: [], model: input.model, stop_reason: null, usage: { input_tokens: 10, output_tokens: 0 } } }));
+      response.write(event('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }));
+      response.write(event('content_block_delta', { index: 0, delta: { type: 'text_delta', text: `${marker}_REPLY` } }));
+    } else response.write(chunk(`${marker}_REPLY`));
     if (marker === 'SESSIONDECK_CANCEL') {
       held.add(response);
       response.once('close', () => { held.delete(response); cancellations++; });
       return;
     }
-    response.end(`${chunk('', 'stop')}data: [DONE]\n\n`);
+    response.end(messagesApi ? event('content_block_stop', { index: 0 }) + event('message_delta', { delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } }) + event('message_stop', {}) : `${chunk('', 'stop')}data: [DONE]\n\n`);
   } catch (error) {
     fixtureError = error instanceof Error ? error : new Error(String(error));
     response.writeHead(500, { 'content-type': 'application/json' });
@@ -68,10 +78,13 @@ async function waitFor(check: () => Promise<boolean> | boolean, detail: string, 
   }
   throw new Error(detail);
 }
+let nativeCookie = '';
+let modern = false;
 async function rpc<T>(method: string, payload: Record<string, unknown>): Promise<T> {
   assert.ok(bridge);
   const rpcId = randomUUID();
-  const response = await fetch(`${bridge.baseUrl}/api/${method}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: bridge.baseUrl }, body: JSON.stringify({ type: 'client-request', rpcId, method, payload }), signal: AbortSignal.timeout(5000) });
+  const endpoint = modern ? method.replace('.', '/') : method;
+  const response = await fetch(`${bridge.baseUrl}/api/${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: bridge.baseUrl, ...(nativeCookie ? { cookie: nativeCookie } : {}) }, body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: modern ? { args: { request: payload } } : payload }), signal: AbortSignal.timeout(5000) });
   const body = await response.json() as { rpcId: string; result: { ok: boolean; value: T; error?: unknown } };
   assert.equal(response.status, 200);
   assert.equal(body.rpcId, rpcId);
@@ -79,7 +92,7 @@ async function rpc<T>(method: string, payload: Record<string, unknown>): Promise
   return body.result.value;
 }
 type History = { events: { event: Record<string, unknown> }[] };
-const history = (id: string) => rpc<History>('session.history', { sessionId: id, maxMessages: 100 });
+const history = async (id: string) => await bridge!.readHistory(id, 100) as History;
 
 try {
   await new Promise<void>(accept => provider.listen(0, '127.0.0.1', accept));
@@ -101,12 +114,36 @@ try {
   });
   bridge = new DshBridge({ port: nativeAddress.port, dataDir: join(directory, 'deck'), cwd: workspace, env });
   const source = await bridge.createSession(workspace, 'Fixture source');
+  modern = new URL(source.nativeUrl).searchParams.has('token');
+  if (modern) {
+    const exchange = await fetch(source.nativeUrl, { redirect: 'manual', signal: AbortSignal.timeout(5000) });
+    assert.equal(exchange.status, 303);
+    nativeCookie = exchange.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+    assert.ok(nativeCookie);
+  }
   await rpc('session.rename', { sessionId: source.nativeSessionId, title: 'Pinned fixture source' });
-  await rpc('session.selectModel', { sessionId: source.nativeSessionId, provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'off' });
-  await bridge.prompt(source.nativeSessionId, 'SESSIONDECK_SOURCE');
-  await waitFor(async () => (await bridge!.getStatus(source.nativeSessionId)).status === 'waiting_input', 'Source native turn did not complete');
-  const sourceHistory = await history(source.nativeSessionId);
-  assert.ok(JSON.stringify(sourceHistory).includes('SESSIONDECK_SOURCE_REPLY'));
+  await rpc('session.selectModel', { sessionId: source.nativeSessionId, provider: 'deepseek-official', model: modern ? 'deepseek-flash' : 'deepseek-v4-flash', reasoningEffort: 'off' });
+  // Auto availability depends on the native review plugin, not the transport.
+  await bridge.setAutoMode(source.nativeSessionId).catch(error => {
+    assert.match(String(error), /unknown preset \"auto\"/);
+  });
+  const store = new Store(':memory:');
+  const group = store.addGroup('Native fixture group', '');
+  const member = store.addSession({ backend: 'dsh', title: 'Native member', cwd: workspace, groupId: group.id, nativeSessionId: source.nativeSessionId });
+  store.addMessage({ groupId: group.id, senderId: null, senderName: 'User', kind: 'task', text: 'SESSIONDECK_SOURCE', recipientIds: [member.id] });
+  const delivery = store.deliveries()[0]!;
+  store.updateDelivery(delivery.id, 'sent');
+  const reader = new ConversationReader({ dshHome: nativeHome, dshHistory: id => bridge!.readHistory(id, 100), cacheMs: 0 });
+  const replies = new GroupReplies({ store, read: session => reader.readLatest(session), turnOpen: () => false, onReply() {}, delays: [1], reconcileMs: 50 });
+  let sourceHistory: History;
+  try {
+    await bridge.prompt(source.nativeSessionId, `${taskTagLine(delivery.tag!)}\nSESSIONDECK_SOURCE`);
+    await waitFor(async () => (await bridge!.getStatus(source.nativeSessionId)).status === 'waiting_input', 'Source native turn did not complete');
+    sourceHistory = await history(source.nativeSessionId);
+    assert.ok(JSON.stringify(sourceHistory).includes('SESSIONDECK_SOURCE_REPLY'));
+    replies.statusChanged(member);
+    await waitFor(() => store.groupDetail(group.id).messages.some(item => item.senderId === member.id && item.text === 'SESSIONDECK_SOURCE_REPLY'), 'Native final answer did not return to the group');
+  } finally { replies.close(); store.close(); }
   const child = await bridge.forkSession(source.nativeSessionId, workspace);
   assert.notEqual(child.nativeSessionId, source.nativeSessionId);
   const forkedHistory = await history(child.nativeSessionId);
@@ -128,7 +165,7 @@ try {
   const blocked = await readFile(auditPath, 'utf8').catch(() => '');
   assert.equal(blocked, '', 'Native harness attempted unexpected external network traffic');
   const version = (await promisify(execFile)(executable, ['--version'], { env, cwd: workspace, timeout: 5000 })).stdout.trim();
-  console.log(JSON.stringify({ result: 'passed', harness: version, provider: 'deterministic loopback fixture', nativeCreate: true, nativeCompletion: true, nativeFork: true, inheritedContext: true, independentChild: true, nativeCancellation: true, localModelRequests: requests.length, externalModelRequests: 0, realCredentialsUsed: false, isolatedData: true }, null, 2));
+  console.log(JSON.stringify({ result: 'passed', harness: version, provider: 'deterministic loopback fixture', nativeCreate: true, nativeCompletion: true, groupReplyReturn: true, nativeFork: true, inheritedContext: true, independentChild: true, nativeCancellation: true, localModelRequests: requests.length, externalModelRequests: 0, realCredentialsUsed: false, isolatedData: true }, null, 2));
 } finally {
   await bridge?.close();
   for (const response of held) response.destroy();

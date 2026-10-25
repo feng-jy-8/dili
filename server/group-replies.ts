@@ -11,6 +11,8 @@ export interface GroupReplyOptions {
   onReply(): void;
   /** Retry delays while native history catches up with a finished turn. */
   delays?: number[];
+  /** Keep reconciling slow native history even after the initial retry window. */
+  reconcileMs?: number;
 }
 
 const FINISHED = new Set(['idle', 'waiting_input', 'error', 'stopped']);
@@ -53,7 +55,13 @@ export class GroupReplies {
   private timers = new Map<string, NodeJS.Timeout>();
   private running = new Set<string>();
   private closed = false;
-  constructor(private readonly options: GroupReplyOptions) {}
+  private reconciliation: NodeJS.Timeout;
+  constructor(private readonly options: GroupReplyOptions) {
+    this.reconciliation = setInterval(() => {
+      for (const session of options.store.sessions()) this.statusChanged(session);
+    }, options.reconcileMs ?? 30_000);
+    this.reconciliation.unref();
+  }
 
   /** Not yet answered, or answered by a reply that is still open (member still working). */
   private outstanding(sessionId: string): Delivery[] {
@@ -67,7 +75,7 @@ export class GroupReplies {
     if (this.closed || !session.groupId) return;
     if (session.status === 'running') { this.reopen(session.id); return; }
     if (!FINISHED.has(session.status) || !this.outstanding(session.id).length) return;
-    this.schedule(session.id, 0);
+    if (!this.running.has(session.id) && !this.timers.has(session.id)) this.schedule(session.id, 0);
   }
 
   /** The member started working again without a new human turn (e.g. a
@@ -97,6 +105,9 @@ export class GroupReplies {
     let missing = false;
     try {
       const transcript = await this.options.read(session);
+      // Reading history can race a resumed turn, an approval or a removed member.
+      const current = this.options.store.session(sessionId);
+      if (this.closed || !current?.groupId || current.groupId !== session.groupId || !FINISHED.has(current.status) || this.options.turnOpen(current)) return;
       const delays = this.options.delays ?? [800, 2500, 6000, 15000];
       const lastAttempt = attempt >= delays.length - 1;
       for (const delivery of pending) {
@@ -126,5 +137,5 @@ export class GroupReplies {
     if (missing) this.schedule(sessionId, attempt + 1);
   }
 
-  close() { this.closed = true; for (const timer of this.timers.values()) clearTimeout(timer); this.timers.clear(); }
+  close() { this.closed = true; clearInterval(this.reconciliation); for (const timer of this.timers.values()) clearTimeout(timer); this.timers.clear(); }
 }

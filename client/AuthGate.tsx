@@ -81,7 +81,7 @@ function RedeemPage({ token, done }: { token: string; done: (status: AuthStatus)
     } catch (cause) { setError(cause instanceof Error ? cause.message : '无法打开分享'); }
     finally { setBusy(false); }
   };
-  return <AuthCard title="打开共享会话" subtitle="留下你的名字，你在会话中的操作会以这个名字记录。">
+  return <AuthCard title="打开分享" subtitle="留下你的名字，你的协作操作会以这个名字记录。">
     <form className="auth-form" onSubmit={submit}>
       <label className="form-label">你的名字<input autoComplete="name" autoFocus maxLength={40} placeholder="例如：张三" value={name} onChange={event => setName(event.target.value)} required /></label>
       {error && <p role="alert" className="form-error">{error}</p>}

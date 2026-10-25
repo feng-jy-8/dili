@@ -7,8 +7,8 @@ import { uploadChatImage } from './api';
 import { appUrl } from './urls';
 import './attachments.css';
 
-export default function ImageAttachments({ sessionId, items, onChange, onBusy, disabled, children }: {
-  sessionId: string; items: ChatAttachment[]; onChange(update: (items: ChatAttachment[]) => ChatAttachment[]): void; onBusy(busy: boolean): void; disabled?: boolean; children: ReactNode;
+export default function ImageAttachments({ sessionId, scope = 'sessions', items, onChange, onBusy, disabled, children, actions }: {
+  sessionId: string; scope?: 'sessions' | 'groups'; items: ChatAttachment[]; onChange(update: (items: ChatAttachment[]) => ChatAttachment[]): void; onBusy(busy: boolean): void; disabled?: boolean; children: ReactNode; actions?: ReactNode;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const latest = useRef(items); latest.current = items;
@@ -25,7 +25,7 @@ export default function ImageAttachments({ sessionId, items, onChange, onBusy, d
       for (const file of files) {
         if (!(TERMINAL_IMAGE_TYPES as readonly string[]).includes(file.type)) throw new Error('仅支持 PNG、JPEG、GIF 或 WebP 图片');
         if (file.size > MAX_TERMINAL_IMAGE_BYTES) throw new Error('每张图片不能超过 10 MiB');
-        const item = await uploadChatImage(sessionId, file);
+        const item = await uploadChatImage(sessionId, file, scope);
         // Keep uploaded metadata in the draft even if this view was closed.
         latest.current = [...latest.current, item];
         change.current(current => current.some(value => value.id === item.id) ? current : [...current, item].slice(0, MAX_CHAT_ATTACHMENTS));
@@ -54,8 +54,8 @@ export default function ImageAttachments({ sessionId, items, onChange, onBusy, d
   }
   return <div className="image-composer" onPasteCapture={paste} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={drop}>
     {children}
-    {!!items.length && <div className="chat-attachments" aria-label="待发送图片">{items.map(item => <figure key={item.id}><img src={appUrl('/api/sessions/' + encodeURIComponent(sessionId) + '/attachments/' + encodeURIComponent(item.id))} alt={item.name} /><figcaption>{item.name}</figcaption><button type="button" className="icon-button" aria-label={'移除图片 ' + item.name} disabled={disabled} onClick={() => change.current(current => current.filter(value => value.id !== item.id))}><X size={12}/></button></figure>)}</div>}
-    <div className="attachment-actions"><input ref={input} type="file" accept={TERMINAL_IMAGE_TYPES.join(',')} multiple hidden onChange={event => { void add(Array.from(event.target.files ?? [])); event.target.value=''; }}/><button type="button" className="text-button" title="添加图片，也支持粘贴、拖入" disabled={disabled || uploading || items.length >= MAX_CHAT_ATTACHMENTS} onClick={() => input.current?.click()}>{uploading ? <LoaderCircle size={14} className="spin"/> : <ImagePlus size={14}/>}添加图片</button><span>支持粘贴、拖入图片</span></div>
+    {!!items.length && <div className="chat-attachments" aria-label="待发送图片">{items.map(item => <figure key={item.id}><img src={appUrl('/api/' + scope + '/' + encodeURIComponent(sessionId) + '/attachments/' + encodeURIComponent(item.id))} alt={item.name} /><figcaption>{item.name}</figcaption><button type="button" className="icon-button" aria-label={'移除图片 ' + item.name} disabled={disabled} onClick={() => change.current(current => current.filter(value => value.id !== item.id))}><X size={12}/></button></figure>)}</div>}
+    <div className="attachment-actions"><input ref={input} type="file" accept={TERMINAL_IMAGE_TYPES.join(',')} multiple hidden onChange={event => { void add(Array.from(event.target.files ?? [])); event.target.value=''; }}/><button type="button" className="text-button" title="添加图片，也支持粘贴、拖入" disabled={disabled || uploading || items.length >= MAX_CHAT_ATTACHMENTS} onClick={() => input.current?.click()}>{uploading ? <LoaderCircle size={14} className="spin"/> : <ImagePlus size={14}/>}添加图片</button><span>支持粘贴、拖入图片</span>{actions}</div>
     {error && <p className="attachment-error" role="alert">{error}</p>}
   </div>;
 }

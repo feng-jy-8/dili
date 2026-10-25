@@ -13,7 +13,9 @@ export interface AuthDevice {
 
 export interface Share {
   id: string;
+  /** Empty for a group share; old session links retain their original shape. */
   sessionId: string;
+  groupId?: string;
   mode: ShareMode;
   label: string;
   createdAt: string;
@@ -26,7 +28,7 @@ export interface Share {
 export type AuthStatus =
   | { kind: 'anonymous'; remote: true; passwordSet: boolean }
   | { kind: 'owner'; remote: boolean; passwordSet: boolean; deviceName?: string }
-  | { kind: 'share'; remote: boolean; sessionId: string; mode: ShareMode; name: string };
+  | { kind: 'share'; remote: boolean; sessionId: string; groupId?: string; mode: ShareMode; name: string };
 
 export interface RemoteSettings {
   mode?: 'ssh' | 'invite';

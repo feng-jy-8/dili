@@ -11,13 +11,16 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
+      - name: Check version tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node -e 'const p=require("./package.json");if(process.env.GITHUB_REF_NAME!=="v"+p.version)process.exit(1)'
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run verify
@@ -29,9 +32,6 @@ jobs:
         with:
           name: dili-release-packages
           path: dist/releases/*
-      - name: Check version tag
-        if: startsWith(github.ref, 'refs/tags/')
-        run: node -e 'const p=require("./package.json");if(process.env.GITHUB_REF_NAME!=="v"+p.version)process.exit(1)'
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2

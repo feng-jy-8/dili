@@ -28,7 +28,7 @@ async function until(check: () => Promise<boolean>, detail: string) {
   assert.fail(detail);
 }
 
-async function fixture(t: TestContext, options: { wrongIdentity?: boolean; stubborn?: boolean; startupTimeoutMs?: number; probeDelayMs?: number; stall?: 'identity-headers' | 'identity-body' | 'api-headers' | 'api-body' } = {}) {
+async function fixture(t: TestContext, options: { modern?: boolean; invalidAuth?: boolean; wrongIdentity?: boolean; stubborn?: boolean; startupTimeoutMs?: number; probeDelayMs?: number; apiStatus?: number; stall?: 'identity-headers' | 'identity-body' | 'api-headers' | 'api-body' } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'sessiondeck-dsh-events-'));
   const file = join(dir, 'native-events-fixture.cjs'), id = `session-${randomUUID()}`;
   const wsModule = fileURLToPath(new URL('../node_modules/ws/index.js', import.meta.url));
@@ -40,6 +40,8 @@ const args = process.argv.slice(2), id = ${JSON.stringify(id)};
 ${options.stubborn ? "process.on('SIGTERM', () => {});" : ''}
 let running = false, history = [], holdReplay = false, muxConnections = 0, holdList = false, releaseList = null;
 const pending = new Map(), paused = new Set();
+const modern = ${!!options.modern};
+if (modern) fs.writeFileSync(process.env.SESSIONDECK_DSH_AUTH_FILE, ${options.invalidAuth ? "'http://127.0.0.1:1/?token=fixture-token'" : "process.env.SESSIONDECK_DSH_BASE_URL+'/?token=fixture-token'"});
 const server = http.createServer(async (request, response) => {
   if (${options.probeDelayMs ?? 0} && ['/sessiondeck/instance','/api/session.list'].includes(request.url)) await new Promise(resolve => setTimeout(resolve, ${options.probeDelayMs ?? 0}));
   const stall = ${JSON.stringify(options.stall ?? '')};
@@ -49,11 +51,22 @@ const server = http.createServer(async (request, response) => {
     return;
   }
   if (request.url === '/sessiondeck/instance') { response.end(${options.wrongIdentity ? "'another-process'" : 'process.env.SESSIONDECK_DSH_LAUNCH_TOKEN'}); return; }
+  if (${options.apiStatus ?? 0} && request.url === '/api/session.list') { response.writeHead(${options.apiStatus ?? 0}); response.end('unauthorized'); return; }
+  if (modern && request.url === '/?token=fixture-token') { response.writeHead(303, {'set-cookie':'native=fixture-cookie; HttpOnly',location:'./'}); response.end(); return; }
+  if (modern && request.url.startsWith('/api/') && request.headers.cookie !== 'native=fixture-cookie') { response.writeHead(401); response.end(); return; }
   if (request.method === 'GET') {
     response.end(request.url === '/fixture' ? JSON.stringify({muxConnections, listPending: !!releaseList}) : 'native fixture'); return;
   }
   let body = ''; for await (const chunk of request) body += chunk;
   const input = JSON.parse(body);
+  if (modern && request.url.startsWith('/api/')) {
+    const method = input.method;
+    if (!request.url.endsWith(method) || method.includes('.') || !input.payload.args || (method === 'session/list' ? !input.payload.args._request : method === 'commands/execute' ? input.payload.args.agentId !== id : !input.payload.args.request)) { response.writeHead(400); response.end(); return; }
+    if (method === 'session/prompt' && !input.payload.args.request.requestId) { response.writeHead(400); response.end(); return; }
+    input.method = method.replace('/','.');
+    if (input.method === 'session.projections') input.method = 'fixture.projections';
+    if (input.method === 'session.page') input.method = 'session.history';
+  }
   if (['session.create','session.fork'].includes(input.method)) fs.appendFileSync(${JSON.stringify(join(dir, 'native-mutations'))},input.method+'\\n');
   if (request.url === '/fixture') {
     if (input.exit) { response.end('{}'); setImmediate(() => process.exit(0)); return; }
@@ -71,6 +84,10 @@ const server = http.createServer(async (request, response) => {
       if (p.type === 'session/event') { history.push(p.event); if (p.event.type === 'turn/end') pending.clear(); }
       for (const socket of streams.clients) if (socket.path === (p.type.startsWith('host/') ? '/api/events.host' : '/api/events.mux')) socket.send(JSON.stringify(frame));
     }
+    if (input.modernFrame) for (const socket of streams.clients) {
+      const streamId = input.modernFrame.control ? 'control' : socket.followId;
+      if (streamId) socket.send(JSON.stringify({type:'item',streamId,value:input.modernFrame.value}));
+    }
     if (input.disconnect) for (const socket of streams.clients) socket.terminate();
     if (input.releaseReplay) {
       holdReplay = false;
@@ -80,15 +97,31 @@ const server = http.createServer(async (request, response) => {
     response.end('{}'); return;
   }
   let value = {};
-  if (input.method === 'session.list') value = { items: [{ sessionId: id, running }] };
+  if (input.method === 'session.list') value = { items: [{ sessionId: id, running, agentAvailable: true }] };
   if (input.method === 'session.list' && holdList) await new Promise(resolve => { releaseList = resolve; });
   if (input.method === 'session.history') value = { events: history.map(event => ({event})), hasMore: false };
+  if (modern && input.method === 'commands.execute') value = {result:{kind:'success'}};
+  if (modern && input.method === 'fixture.projections') value = {asOfSeq: history.at(-1)?.seq ?? -1, values:{}};
+  if (modern && input.method === 'session.history') value = {records: history.map(event => ({type:'event',event})),hasMore:false};
   response.setHeader('content-type', 'application/json');
   response.end(JSON.stringify({ type: 'server-response', rpcId: input.rpcId, result: { ok: true, value } }));
 });
 const streams = new WebSocketServer({ server });
 streams.on('connection', (socket, request) => {
   socket.path = request.url;
+  if (modern) {
+    if (request.headers.cookie !== 'native=fixture-cookie' || socket.path !== '/api/remote.mux') {socket.terminate();return;}
+    muxConnections++;
+    socket.on('message',raw=>{
+      const message=JSON.parse(raw);
+      if (message.type !== 'open') return;
+      if (message.endpoint === 'session/control') socket.send(JSON.stringify({type:'item',streamId:message.streamId,value:{type:'baseline',value:{projections:{}}}}));
+      else if (message.endpoint === 'session/follow') {
+        socket.followId=message.streamId;
+        socket.send(JSON.stringify({type:'item',streamId:message.streamId,value:{type:'snapshot',records:history.map(event=>({type:'event',event})),projections:{values:{questions:{active:[]}}}}}));
+      } else socket.send(JSON.stringify({type:'error',streamId:message.streamId}));
+    });return;
+  }
   if (socket.path !== '/api/events.mux') return;
   muxConnections++;
   socket.send(JSON.stringify({type:'server-request',rpcId:'subscription',payload:{type:'session/subscribed',sessionId:id,lastSeq:history.at(-1)?.seq ?? -1}}));
@@ -136,6 +169,16 @@ test('dsh startup cancellation and immediate running-process replacement own ind
     catch { return true; }
   }, 'Native process remained reachable after bridge.stop()');
   await until(async () => !(await readdir(directory)).some(name => name.startsWith('dsh-launch-')), 'Stopped launches left temporary plugin files');
+});
+
+for (const apiStatus of [401, 403]) test(`dsh startup reports API access rejection ${apiStatus} and retires its process`, { timeout: 10_000 }, async t => {
+  const { bridge, directory } = await fixture(t, { apiStatus, startupTimeoutMs: 8_000 });
+  await assert.rejects(bridge.start(), new RegExp(`拒绝桥接访问（HTTP ${apiStatus}）`));
+  await until(async () => {
+    try { await fetch(bridge.baseUrl, { signal: AbortSignal.timeout(100) }); return false; }
+    catch { return true; }
+  }, 'Rejected launch remained reachable');
+  await until(async () => !(await readdir(directory)).some(name => name.startsWith('dsh-launch-')), 'Rejected launch left invocation files');
 });
 
 test('dsh startup refuses an HTTP server without this launch identity', { timeout: 10_000 }, async t => {
@@ -286,7 +329,7 @@ test('stopping a cold persisted DSH session is a no-op, while running or unknown
     let body = ''; for await (const chunk of request) body += chunk;
     const input = JSON.parse(body);
     if (input.method === 'session.cancel') cancellations++;
-    response.end(JSON.stringify({ type: 'server-response', rpcId: input.rpcId, result: failCancel && input.method === 'session.cancel' ? { ok: false, error: { code: 'session-not-found', message: 'not attached' } } : { ok: true, value: input.method === 'session.list' ? { items: [{ sessionId: id, running }] } : { accepted: true } } }));
+    response.end(JSON.stringify({ type: 'server-response', rpcId: input.rpcId, result: failCancel && input.method === 'session.cancel' ? { ok: false, error: { code: 'session-not-found', message: 'not attached' } } : { ok: true, value: input.method === 'session.list' ? { items: [{ sessionId: id, running, agentAvailable: true }] } : { accepted: true } } }));
   });
   await new Promise<void>(accept => server.listen(0, '127.0.0.1', accept));
   const address = server.address(); assert.ok(address && typeof address === 'object');
@@ -355,6 +398,7 @@ test('forty DSH contacts share one native listing per round and do not cache sta
   const ids = Array.from({ length: 40 }, () => `session-${randomUUID()}`);
   let listings = 0, running = true, errorCode = '';
   const server = createHttpServer(async (request, response) => {
+    if (request.method !== 'POST') { response.writeHead(404); response.end(); return; }
     let body = ''; for await (const chunk of request) body += chunk;
     const input = JSON.parse(body);
     if (input.method === 'session.list') listings++;
@@ -394,4 +438,36 @@ test('live DSH boundaries received during a batched listing win over that older 
   await until(async () => changes > before, 'status event did not request refresh');
   await configure({ releaseList: true });
   assert.equal((await pending).get(id)?.status, 'waiting_input');
+});
+
+
+test('dsh 0.2 authenticates RPC and read-only mux, tracks approvals/questions and reconnects', {timeout: 15_000}, async t => {
+  const {bridge,id,configure,waitStatus}=await fixture(t,{modern:true});
+  await bridge.start();
+  await configure({running:true,history:[{type:'turn/start',seq:0,data:{}}]});
+  await waitStatus('running');
+  await bridge.setAutoMode(id);
+  await bridge.prompt(id,'fixture task');
+  const event=async (value:Record<string,unknown>)=>configure({modernFrame:{value:{type:'event',event:value}}});
+  await event({type:'approval/asked',seq:1,data:{id:'permission'}});
+  await waitStatus('waiting_approval');
+  await event({type:'approval/decided',seq:2,data:{id:'permission'}});
+  await waitStatus('running');
+  await configure({modernFrame:{control:true,value:{type:'projection',sessionId:id,key:'questions',value:{active:[{callId:'question'}]}}}});
+  await waitStatus('waiting_input');
+  await configure({modernFrame:{control:true,value:{type:'projection',sessionId:id,key:'questions',value:{active:[]}}}});
+  await waitStatus('running');
+  await configure({disconnect:true});
+  await waitStatus('unknown');
+  await waitStatus('running');
+  await configure({running:false,history:[{type:'turn/end',seq:3,data:{reason:{kind:'completed'}}}]});
+  const status=await waitStatus('waiting_input');
+  assert.match(status.attentionKey!,/turn:.*:3:completed/);
+  assert.equal((await bridge.readHistory(id,10))?.events?.length,1);
+});
+
+
+test('dsh rejects an authentication URL outside its owned origin before connecting', async t => {
+  const {bridge}=await fixture(t,{modern:true,invalidAuth:true});
+  await assert.rejects(bridge.start(), /无效的本地认证地址/);
 });

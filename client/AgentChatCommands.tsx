@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type RefObject } from 'react';
+import { useLayoutEffect, useId, useState, type RefObject } from 'react';
 import { BrainCircuit, ChevronRight, Settings2, ShieldCheck } from 'lucide-react';
 import AgentChatPopover from './AgentChatPopover';
 
@@ -17,9 +17,9 @@ export default function AgentChatCommands({ text, anchor, enabled, select }: {
   const [dismissed, setDismissed] = useState(false);
   const matches = commands.filter(command => ('/' + command.id).startsWith(text));
   const visible = enabled && !dismissed && /^\/[a-z]*$/.test(text) && !!matches.length;
-  useEffect(() => { setActive(0); setDismissed(false); }, [text]);
+  useLayoutEffect(() => { setActive(0); setDismissed(false); }, [text]);
   const index = Math.min(active, matches.length - 1);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const input = anchor.current;
     if (!input || !visible) return;
     input.setAttribute('aria-controls', id);

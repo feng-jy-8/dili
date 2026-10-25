@@ -1,9 +1,9 @@
 {
   "name": "dili-workbench",
-  "version": "0.4.0-dev.0",
+  "version": "0.4.0",
   "private": false,
   "type": "module",
-  "description": "Dili (\u5600\u54e9\u5de5\u4f5c\u53f0): a local-first web home for Claude Code, Codex and DeepSeek Harness sessions",
+  "description": "Dili (嘀哩工作台): a local-first web home for Claude Code, Codex and DeepSeek Harness sessions",
   "scripts": {
     "postinstall": "node scripts/prepare-pty.mjs",
     "preflight": "node scripts/prepare-pty.mjs && tsx scripts/check-pty.ts",

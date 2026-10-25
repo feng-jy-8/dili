@@ -833,7 +833,10 @@ for (const backend of ['codex', 'claude'] as const) test(`${backend} unified nat
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await expect(input).toHaveValue('保留我的草稿');
   await page.setViewportSize({ width: 390, height: 844 });
-  await input.fill('/model'); await input.press('Enter');
+  await expect(page.locator('.resizable-composer.compact')).toBeVisible();
+  await input.fill('/model');
+  await expect(page.getByRole('listbox', { name: '原生会话命令' })).toBeVisible();
+  await input.press('Enter');
   await expect(dialog).toBeVisible();
   await expect(input).toHaveValue('');
   expect(app.requests.filter(item => item.path === 'messages')).toHaveLength(0);

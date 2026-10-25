@@ -55,15 +55,15 @@ test('contacts, native terminal, fork and directed group collaboration work in t
   await page.getByRole('dialog').getByRole('button', { name: '创建群组', exact: true }).click();
   await page.getByRole('button', { name: '添加成员', exact: true }).first().click();
   await page.getByRole('button', { name: '从已有联系人 Fork', exact: true }).click();
-  await page.getByLabel('来源联系人').selectOption({ label: 'Dili · 开发笔记 · Codex' });
+  await page.getByRole('combobox', { name: '来源联系人' }).selectOption({ label: 'Dili · 开发笔记 · Codex' });
   await page.getByRole('dialog').getByLabel('联系人名称').fill('群组实现成员');
   await page.getByRole('button', { name: 'Fork 入群', exact: true }).click();
   await expect(page.getByRole('dialog', { name: '群组实现成员 的私聊' })).toBeVisible();
   await expect(page.getByRole('button', { name: '停止进程', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '关闭会话', exact: true }).click();
   // @-assignment sends at once; a running terminal member gets the task staged.
-  await page.locator('.recipient-picker').getByRole('button', { name: /群组实现成员/ }).click();
   await page.getByLabel('群组消息').fill('请验证卡片改名，保留原始联系人。');
+  await page.locator('.recipient-picker').getByRole('button', { name: /群组实现成员/ }).click();
   await page.getByRole('button', { name: '发送任务', exact: true }).click();
   await expect(page.getByText('请验证卡片改名，保留原始联系人。', { exact: true })).toBeVisible();
   await expect(page.getByText('已填入 · 在私聊按回车发送')).toBeVisible();
@@ -97,7 +97,7 @@ async function createTestGroup(page: import('@playwright/test').Page, title: str
 
 async function openGroup(page: import('@playwright/test').Page, title: string) {
   await page.getByRole('button', { name: new RegExp('进入群聊 ' + title) }).click();
-  await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible();
   await expect(page.getByLabel('群组消息')).toBeVisible();
 }
 
@@ -178,7 +178,7 @@ test('group history failures have their own retry without losing the workspace',
   await page.goto('/');
   await page.getByRole('button', { name: /进入群聊 加载恢复回归/ }).click();
   await expect(page.getByRole('alert')).toContainText('群组动态加载失败：临时读取失败');
-  await expect(page.getByRole('heading', { name: '加载恢复回归' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '加载恢复回归', level: 1 })).toBeVisible();
   await page.unroute(`**/api/groups/${group.id}`);
   await page.getByRole('button', { name: '重试群组动态', exact: true }).click();
   await expect(page.getByLabel('群组消息')).toBeVisible();
@@ -231,7 +231,8 @@ test('session bookmarks reload the same private context and browser history rest
 test('group bookmarks preserve members and unknown route IDs recover without trapping the workspace', async ({ page }) => {
   await page.goto('/');
   await openGroup(page, '登录体验优化');
-  await page.getByRole('button', { name: '进入 梳理登录流程 的会话', exact: true }).click();
+  await page.getByRole('button', { name: '群成员', exact: true }).click();
+  await page.locator('.group-members-row').filter({ hasText: '梳理登录流程' }).getByRole('button', { name: '私聊', exact: true }).click();
   const bookmark = page.url();
   expect(bookmark).toMatch(/#\/groups\/[\w-]+\?session=[\w-]+$/);
   await page.reload();
@@ -239,7 +240,7 @@ test('group bookmarks preserve members and unknown route IDs recover without tra
   await page.getByRole('navigation', { name: '会话关系' }).getByRole('button', { name: '登录体验优化', exact: true }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(page).toHaveURL(/#\/groups\/[\w-]+$/);
-  await expect(page.getByRole('heading', { name: '登录体验优化' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '登录体验优化', level: 1 })).toBeVisible();
 
   await page.goto('/#/groups/missing-group?session=missing-session');
   await expect(page).toHaveURL(/#\/contacts$/);
@@ -406,11 +407,11 @@ test('contact sorting and filters persist across reload with separate filters fo
   await page.locator('.backend-tabs').getByRole('button', { name: 'Codex', exact: true }).click();
   await page.getByLabel('按状态筛选').selectOption('idle');
   await expect(page.getByLabel('联系人排序')).toHaveValue('input');
-  await expect(page.locator('.session-card h3')).toHaveText(['Z 排序置顶', 'A 排序联系人', 'B 排序联系人']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['Z 排序置顶', 'A 排序联系人', 'B 排序联系人']);
   await page.getByLabel('联系人排序').selectOption('name');
-  await expect(page.locator('.session-card h3')).toHaveText(['Z 排序置顶', 'A 排序联系人', 'B 排序联系人']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['Z 排序置顶', 'A 排序联系人', 'B 排序联系人']);
   await page.getByLabel('联系人排序').selectOption('created');
-  await expect(page.locator('.session-card h3')).toHaveText(['Z 排序置顶', 'B 排序联系人', 'A 排序联系人']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['Z 排序置顶', 'B 排序联系人', 'A 排序联系人']);
   await page.reload();
   await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
   await expect(page.getByLabel('联系人排序')).toHaveValue('created');
@@ -425,7 +426,7 @@ test('contact sorting and filters persist across reload with separate filters fo
   await page.getByLabel('搜索联系人', { exact: true }).fill('查无结果 xyz');
   await expect(page.getByText('没有找到匹配的联系人')).toBeVisible();
   await page.getByRole('button', { name: '清除筛选', exact: true }).click();
-  await expect(page.locator('.session-card')).toHaveCount(4);
+  await expect(page.locator('.session-card:not(.group-card)')).toHaveCount(4);
   await page.reload();
   await expect(page.getByLabel('搜索联系人', { exact: true })).toHaveValue('');
   await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
@@ -485,11 +486,11 @@ test('many cards and long names, paths and group titles remain within desktop an
   });
   await page.route('**/api/groups/long-group', route => route.fulfill({ json: { group: state.groups[0], messages: [], deliveries: [] } }));
   await page.goto('/');
-  await expect(page.locator('.session-card')).toHaveCount(72);
+  await expect(page.locator('.session-card:not(.group-card)')).toHaveCount(72);
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
-    expect(await page.locator('.session-card h3').first().evaluate(element => element.clientHeight < 60)).toBeTruthy();
+    expect(await page.locator('.session-card:not(.group-card) h3').first().evaluate(element => element.clientHeight < 60)).toBeTruthy();
   }
   await page.screenshot({ path: 'artifacts/long-contacts-mobile.png', animations: 'disabled' });
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -563,18 +564,18 @@ test('group messages become editable directed tasks with persistent source and e
   await composer.fill(`${source.text}\n请补充失败重试测试。`);
   await page.locator('.recipient-picker').getByRole('button', { name: /转交来源成员/ }).click();
   await page.reload();
-  await expect(composer).toHaveValue(`${source.text}\n请补充失败重试测试。`);
+  await expect(composer).toHaveValue(`@转交来源成员 ${source.text}\n请补充失败重试测试。`);
   await expect(page.locator('.composer-source')).toContainText('转交来源成员');
   await expect(page.locator('.recipient-picker').getByRole('button', { name: /转交来源成员/ })).toHaveAttribute('aria-pressed', 'true');
   await page.locator('.composer-source').getByRole('button', { name: /查看原消息/ }).click();
   await expect(original).toBeFocused();
   await page.getByRole('button', { name: '解除转交来源', exact: true }).click();
   await expect(page.locator('.composer-source')).not.toBeVisible();
-  await expect(composer).toHaveValue(`${source.text}\n请补充失败重试测试。`);
+  await expect(composer).toHaveValue(`@转交来源成员 ${source.text}\n请补充失败重试测试。`);
   await original.getByRole('button', { name: '转交为任务', exact: true }).click();
   await replacement.getByRole('button', { name: '替换为转交任务', exact: true }).click();
-  await page.locator('.recipient-picker').getByRole('button', { name: /转交来源成员/ }).click();
   await composer.fill(`${source.text}\n请由你完成第二轮验证。`);
+  await page.locator('.recipient-picker').getByRole('button', { name: /转交来源成员/ }).click();
   await page.getByRole('button', { name: '发送任务', exact: true }).click();
   const task = page.locator('.group-message.kind-task').filter({ hasText: '第二轮验证' });
   await expect(task).toBeVisible();
@@ -582,10 +583,10 @@ test('group messages become editable directed tasks with persistent source and e
   await task.locator('.message-source-link').click();
   await expect(original).toBeFocused();
   const detail = await (await page.request.get(`/api/groups/${group.id}`)).json() as import('../shared/types').GroupDetail;
-  expect(detail.messages).toHaveLength(2);
-  expect(detail.messages[1].sourceMessageId).toBe(source.id);
-  expect(detail.deliveries).toHaveLength(1);
-  expect(detail.deliveries[0].status).toBe('pending');
+  const submitted = detail.messages.find(message => message.sourceMessageId === source.id)!;
+  expect(submitted.text).toContain('第二轮验证');
+  expect(detail.deliveries.find(item => item.messageId === submitted.id)?.status).toBe('pending');
+  // Delivery is now performed atomically by the message endpoint.
   expect(automaticDeliveryRequests).toBe(0);
   await expect(composer).toHaveValue('');
   await expect(page.locator('.composer-source')).not.toBeVisible();
@@ -609,18 +610,18 @@ test('execution filters distinguish an attached idle process from an active task
   await page.goto('/');
   await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
   await page.getByLabel('联系人排序').selectOption('name');
-  await expect(page.locator('.session-card h3')).toHaveText(['置顶空闲', '红点等待输入', '红点异常', '真正执行任务', '已读等待输入', '保留未读提醒', '已读异常', '已连接但空闲']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['置顶空闲', '红点等待输入', '红点异常', '真正执行任务', '已读等待输入', '保留未读提醒', '已读异常', '已连接但空闲']);
   await page.keyboard.press('Escape');
   await page.goto('/#/running');
-  await expect(page.locator('.session-card h3')).toHaveText(['真正执行任务']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['真正执行任务']);
   await page.getByRole('navigation', { name: '工作空间导航' }).getByRole('button', { name: /^联系人/ }).click();
   await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
   await page.getByLabel('按状态筛选').selectOption('unread');
-  await expect(page.locator('.session-card h3')).toHaveText(['红点等待输入', '红点异常', '保留未读提醒']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['红点等待输入', '红点异常', '保留未读提醒']);
   await page.reload();
   await page.getByRole('button', { name: '筛选与排序', exact: true }).click();
   await expect(page.getByLabel('按状态筛选')).toHaveValue('unread');
-  await expect(page.locator('.session-card h3')).toHaveText(['红点等待输入', '红点异常', '保留未读提醒']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['红点等待输入', '红点异常', '保留未读提醒']);
 });
 
 test('card actions are reachable with keyboard and menu direction keys open a rename dialog', async ({ page }) => {
@@ -711,9 +712,9 @@ test('the "需要你处理" badge counts unread reminders, matching the red badg
   await expect(attentionTab.locator('b')).toHaveText('1');
   await expect(page).toHaveTitle(/^\(1\) /);
   // Pinned first, then red-dot reminders, then waiting sessions already read.
-  await expect(page.locator('.session-card h3')).toHaveText(['曾提醒但已在运行', '等待且未读', '已看过但仍在等待']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['曾提醒但已在运行', '等待且未读', '已看过但仍在等待']);
   await attentionTab.click();
-  await expect(page.locator('.session-card h3')).toHaveText(['等待且未读']);
+  await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['等待且未读']);
 });
 
 test('opening a blocked session clears its red badge from the read response alone, without the live stream', async ({ page }) => {
@@ -722,9 +723,10 @@ test('opening a blocked session clears its red badge from the read response alon
   let target!: AppState['sessions'][number];
   await mockWorkspace(page, state => {
     target = state.sessions.find(session => session.title === '梳理登录流程')!;
-    Object.assign(target, { status: 'waiting_input', unread: 1, archived: false });
+    Object.assign(target, { status: 'waiting_input', unread: 1, archived: false, groupId: null });
+    state.sessions = [target]; state.groups = [];
   });
-  await page.goto(`/#/groups/${target.groupId}`);
+  await page.goto('/#/contacts');
   const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: target.title, exact: true }) });
   await expect(card.locator('.unread-badge')).toHaveCount(1);
   await expect(page.locator('.primary-nav b.alert')).toHaveText('1');

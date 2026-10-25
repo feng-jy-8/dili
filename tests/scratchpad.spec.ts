@@ -79,7 +79,8 @@ test('offline drafts recover after refresh and conflicting edits never silently 
 test('mobile scratchpad opens as a page and returns to the contact list without losing text', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await page.getByRole('button', { name: '打开随手记', exact: true }).click();
+  await page.locator('.rail').getByRole('button', { name: '更多', exact: true }).click();
+  await page.getByRole('menuitem', { name: '随手记', exact: true }).click();
   const panel = page.getByRole('complementary', { name: '随手记', exact: true });
   await panel.getByRole('button', { name: '源码', exact: true }).click();
   const editor = panel.getByRole('textbox', { name: '随手记内容' });
@@ -89,7 +90,8 @@ test('mobile scratchpad opens as a page and returns to the contact list without 
   await page.screenshot({ path: 'artifacts/scratchpad-mobile.png' });
   await panel.getByRole('button', { name: '关闭随手记' }).click();
   await expect(page.getByRole('main', { name: '联系人列表' })).toBeVisible();
-  await page.getByRole('button', { name: '打开随手记', exact: true }).click();
+  await page.locator('.rail').getByRole('button', { name: '更多', exact: true }).click();
+  await page.getByRole('menuitem', { name: '随手记', exact: true }).click();
   await expect(editor).toHaveValue('# 手机待办\n\n- [ ] 明天继续');
 });
 

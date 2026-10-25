@@ -263,6 +263,36 @@ test('remote listener requires login, shares see one session and read-only termi
   const listed = (await owner.call(`/api/sessions/${target.id}/shares`)).json as Share[];
   assert.equal(listed.find(share => share.id === writeLink.share.id)?.devices[0]?.name, '赵六');
 
+
+  // Group links expose the group discussion, never private member sessions.
+  const group = (await owner.call('/api/groups', { body: { title: '共享测试群', goal: '协作验证' } })).json;
+  const member = (await owner.call('/api/sessions', { body: { backend: 'codex', title: '共享成员', cwd: root, groupId: group.id, briefing: 'silent' } })).json;
+  const groupLink = (await owner.call(`/api/groups/${group.id}/shares`, { body: { mode: 'write', ttlDays: 1 } })).json;
+  const guest = client(remote);
+  const groupAuth = (await guest.call('/api/auth/redeem', { body: { token: groupLink.url.split('/#/share/')[1], name: '协作者' } })).json;
+  assert.equal(groupAuth.groupId, group.id);
+  await guest.refreshCsrf();
+  const scoped = (await guest.call('/api/state')).json as AppState;
+  assert.deepEqual(scoped.groups.map(item => item.id), [group.id]);
+  assert.equal(scoped.sessions.find(item => item.id === member.id)?.cwd, '');
+  assert.equal(scoped.sessions.find(item => item.id === member.id)?.lastUserInput, null);
+  assert.equal((await guest.call(`/api/sessions/${target.id}/conversation`)).status, 404);
+  assert.equal((await guest.call('/api/groups/other')).status, 404);
+  assert.equal((await guest.call(`/api/groups/${group.id}/shares`)).status, 403);
+  const posted = await guest.call(`/api/groups/${group.id}/messages`, { body: { text: '一起推进', senderName: '冒名' } });
+  assert.equal(posted.status, 201);
+  assert.equal(posted.json.senderName, '协作者');
+  assert.equal((await guest.call(`/api/groups/${group.id}/messages`, { body: { text: '伪造', senderId: target.id } })).status, 403);
+  assert.equal((await guest.call(`/api/groups/${group.id}/messages`, { body: { text: '任务', kind: 'task', recipientIds: ['other'] } })).status, 400);
+  const readLink = (await owner.call(`/api/groups/${group.id}/shares`, { body: { mode: 'read', ttlDays: 7 } })).json;
+  const observer = client(remote);
+  await observer.call('/api/auth/redeem', { body: { token: readLink.url.split('/#/share/')[1], name: '观察者' } });
+  await observer.refreshCsrf();
+  assert.equal((await observer.call(`/api/groups/${group.id}`)).status, 200);
+  assert.equal((await observer.call(`/api/groups/${group.id}/messages`, { body: { text: '不允许' } })).status, 403);
+  await owner.call(`/api/shares/${groupLink.share.id}`, { method: 'DELETE', body: {} });
+  assert.equal((await guest.call('/api/state')).status, 401);
+
   // Revocation ends the session for the device, including its live terminal.
   const closed = new Promise<number>(accept => socket.once('close', code => accept(code)));
   assert.equal((await owner.call(`/api/shares/${created.share.id}`, { method: 'DELETE', body: {} })).status, 200);
@@ -300,4 +330,16 @@ test('SSH password reaches ssh through askpass, never argv, and is sealed at res
   assert.ok(!sealed.includes('secret-value'));
   assert.equal(box.open(sealed), 'secret-value');
   assert.throws(() => new SecretBox(secretKey(Buffer.from('other'))).open(sealed));
+});
+
+ test('group image and voice access follows share scope and collaboration permission', () => {
+  const read = { kind: 'share', deviceId: 'd', shareId: 's', sessionId: '', groupId: 'mine', mode: 'read', name: 'A' } as const;
+  const write = { ...read, mode: 'write' } as const;
+  assert.equal(authorize(read, true, 'GET', '/api/groups/mine/attachments/image').allowed, true);
+  for (const [method, path] of [['POST', '/api/groups/mine/attachments'], ['GET', '/api/groups/mine/voice']]) {
+    assert.equal(authorize(read, true, method, path).allowed, false);
+    assert.equal(authorize(write, true, method, path).allowed, true);
+    assert.equal(authorize(write, true, method, path.replace('/mine/', '/other/')).allowed, false);
+  }
+  assert.equal(authorize(write, true, 'GET', '/api/sessions/mine/attachments/image').allowed, false);
 });

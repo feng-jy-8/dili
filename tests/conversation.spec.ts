@@ -232,7 +232,7 @@ test('staging a group task overrides the read-only preference and opens the exis
   await expect(page.getByRole('region', { name: '原生对话记录', exact: true })).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('sessiondeck.private-view.codex'))).toBe('conversation');
   await page.getByRole('button', { name: '关闭会话', exact: true }).click();
-  await page.getByRole('button', { name: '填入会话', exact: true }).click();
+  await page.locator('.group-message').filter({ hasText: prompt }).getByRole('button', { name: '填入会话', exact: true }).click();
   await expect(page.getByRole('dialog', { name: `${session.title} 的私聊` })).toBeVisible();
   await expect(page.getByRole('button', { name: '原生终端', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.terminal-connection')).toHaveText('已连接');

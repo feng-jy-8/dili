@@ -132,7 +132,7 @@ function codexMessages(rows: Line[], nativeId: string): ConversationMessage[] {
       if (body.role === 'assistant') { role = 'assistant'; text = textContent(body.content); }
       else if (body.role === 'user' && !hasUserEvents) { role = 'user'; text = textContent(body.content); if (syntheticCodexUser(text)) continue; }
     }
-    if (!role) continue;
+    if (!role || (role === 'user' && syntheticCodexUser(text))) continue;
     const item = message(`codex:${nativeId}:${typeof body.id === 'string' ? body.id : offset}`, role, text, row.timestamp);
     if (item) output.push(item);
   }

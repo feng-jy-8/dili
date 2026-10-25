@@ -546,3 +546,21 @@ test('unsupported native steering rejects safely and concurrent steering is clai
   assert.equal(f.calls.filter(call => call.message.method === 'turn/start').length, 1);
   assert.equal(bridge.chatSnapshot(threadId)!.activeTurnId, turnId);
 });
+
+test('latest user survives tool-heavy turns and stale history omitting the observed turn', () => {
+  const state = new CodexChatState(), id = randomUUID(), turnId = randomUUID();
+  state.event(id, 'turn/started', { turn: { id: turnId } });
+  state.event(id, 'item/completed', { turnId, item: { id: 'latest-user', type: 'userMessage', content: [{ type: 'text', text: 'Latest request' }] } });
+  for (let i = 0; i < 250; i++) state.event(id, 'item/completed', { turnId, item: { id: `tool-${i}`, type: 'commandExecution', command: 'cmd', aggregatedOutput: 'x'.repeat(64_000) } });
+  const before = state.get(id)!;
+  assert.equal(before.items[0].id, 'latest-user');
+  assert.ok(before.items.length <= 200);
+  assert.ok(before.items.reduce((n, item) => n + item.text.length + (item.output?.length ?? 0) + (item.title?.length ?? 0), 0) <= 512_000);
+  const after = state.reconcile(id, { id, turns: [{ id: randomUUID(), status: 'completed', items: [] }] }, before.revision, true);
+  assert.equal(after.activeTurnId, turnId);
+  assert.equal(after.items[0].id, 'latest-user');
+  assert.equal(after.items.at(-1)?.id, 'tool-249');
+  const partial = state.reconcile(id, { id, turns: [{ id: turnId, status: 'inProgress', items: [] }] }, after.revision, true);
+  assert.equal(partial.items[0].id, 'latest-user');
+  assert.equal(partial.activeTurnId, turnId);
+});

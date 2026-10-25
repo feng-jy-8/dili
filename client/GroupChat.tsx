@@ -1,4 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import type { ChatAttachment } from '../shared/attachments';
+import ImageAttachments from './ImageAttachments';
+import VoiceInput, { appendVoiceText } from './VoiceInput';
+import GroupImages from './GroupImages';
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Maximize2, Minimize2, FolderGit2, FolderOpen, GitMerge, RotateCcw, Trash2, ArrowLeft, ArrowRight, AtSign, Check, ChevronDown, ChevronUp, Columns3, LoaderCircle, MessageSquare, Plus, Quote, Send, Settings2, Share2, UserMinus, UsersRound, X } from 'lucide-react';
 import type { AgentChatSnapshot } from '../shared/chat';
 import type { Delivery, Group, GroupDetail, GroupMessage, Session, WorktreeStatus } from '../shared/types';
@@ -13,21 +17,36 @@ import './group-chat.css';
 
 const AgentChatPane = lazy(() => import('./AgentChatPane'));
 
-type GroupDraft = { text: string; kind: GroupMessage['kind']; recipients: string[]; sourceMessageId: string | null; references: string[] };
+type GroupDraft = { attachments: ChatAttachment[]; text: string; kind: GroupMessage['kind']; recipients: string[]; sourceMessageId: string | null; references: string[] };
 function readGroupDraft(groupId: string): GroupDraft {
   try {
     const draft = JSON.parse(sessionStorage.getItem(`sessiondeck.group-draft.${groupId}`) ?? 'null');
     if (draft && typeof draft.text === 'string' && Array.isArray(draft.recipients)) return {
+      attachments: Array.isArray(draft.attachments) ? draft.attachments.filter((item: ChatAttachment) => item && typeof item.id === 'string' && typeof item.name === 'string' && typeof item.type === 'string' && typeof item.size === 'number').slice(0, 8) : [],
       text: draft.text.slice(0, 30000), kind: draft.kind === 'task' ? 'task' : 'note',
       recipients: draft.recipients.filter((id: unknown) => typeof id === 'string'),
       sourceMessageId: typeof draft.sourceMessageId === 'string' ? draft.sourceMessageId : null,
       references: Array.isArray(draft.references) ? draft.references.filter((id: unknown) => typeof id === 'string') : [],
     };
   } catch { /* Unavailable or stale browser storage must not block the workspace. */ }
-  return { text: '', kind: 'note', recipients: [], sourceMessageId: null, references: [] };
+  return { attachments: [], text: '', kind: 'note', recipients: [], sourceMessageId: null, references: [] };
 }
 
-export interface GroupPost { text: string; kind: GroupMessage['kind']; recipientIds: string[]; sourceMessageId?: string | null; references?: string[]; deliverNow?: boolean }
+// Only confirmed choices route tasks. Typing or pasting a name alone never assigns it.
+function mentionRange(text: string, title: string): { start: number; end: number } | undefined {
+  const token = `@${title}`;
+  let start = text.indexOf(token);
+  while (start >= 0) {
+    const end = start + token.length;
+    if (end === text.length || /\s/.test(text[end])) return { start, end };
+    start = text.indexOf(token, start + 1);
+  }
+}
+function withMention(text: string, title: string): string {
+  return mentionRange(text, title) ? text : `@${title} ${text}`;
+}
+
+export interface GroupPost { attachments?: string[]; text: string; kind: GroupMessage['kind']; recipientIds: string[]; sourceMessageId?: string | null; references?: string[]; deliverNow?: boolean }
 
 /** A task still being worked on: no reply yet, or a reply that is still open. */
 function openTask(detail: GroupDetail) {
@@ -106,7 +125,8 @@ function MemberPane({ member, chatCapable, open }: { member: Session; chatCapabl
   </section>;
 }
 
-export default function GroupChat({ group, detail, members, demo, busy, chatCapable, post, deliver, cancel, open, confirmReplace, loadOlder, loadingOlder, readSource, resolveDelivery, addMember, editGroup, removeMember, markRead, back, openWorkspace, notify }: {
+export default function GroupChat({ onShare, group, detail, members, demo, busy, chatCapable, post, deliver, cancel, open, confirmReplace, loadOlder, loadingOlder, readSource, resolveDelivery, addMember, editGroup, removeMember, markRead, back, openWorkspace, notify }: {
+  onShare?: () => void;
   group: Group; detail: GroupDetail; members: Session[]; demo: boolean; busy: string | null;
   chatCapable: (member: Session) => boolean;
   post: (body: GroupPost) => Promise<boolean>;
@@ -117,7 +137,12 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   addMember: () => void; editGroup: () => void; removeMember: (member: Session) => void; markRead: () => void; back: () => void; openWorkspace: (member: Session) => void; notify: (text: string) => void;
 }) {
   const [draft] = useState(() => readGroupDraft(detail.group.id));
-  const [text, setText] = useState(draft.text);
+  const [text, setText] = useState(() => draft.recipients.reduce((value, id) => {
+    const member = members.find(member => member.id === id && !member.archived);
+    return member ? withMention(value, member.title) : value;
+  }, draft.text));
+  const [images, setImages] = useState<ChatAttachment[]>(draft.attachments);
+  const [uploading, setUploading] = useState(false), [voiceActive, setVoiceActive] = useState(false);
   const [recipients, setRecipients] = useState<string[]>(draft.recipients);
   const [sourceMessageId, setSourceMessageId] = useState<string | null>(draft.sourceMessageId);
   const [references, setReferences] = useState<string[]>(draft.references);
@@ -129,6 +154,9 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   /** The "@query" being typed at the caret: its text and range in the draft. */
   const [mention, setMention] = useState<{ query: string; start: number; end: number } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionMenuId = useId();
+  const mentionMenuRef = useRef<HTMLDivElement>(null);
   const compact = useCompactLayout();
   const [visibleStart, setVisibleStart] = useState(() => Math.max(0, detail.messages.length - 200));
   const firstVisible = detail.page ? 0 : Math.min(visibleStart, Math.max(0, detail.messages.length - 1));
@@ -144,7 +172,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   const pendingMessageJump = useRef<string | null>(null);
   const followBottom = useRef(true);
   const currentDraftRef = useRef('');
-  currentDraftRef.current = JSON.stringify({ text, kind: recipients.length ? 'task' : 'note', recipients, sourceMessageId, references });
+  currentDraftRef.current = JSON.stringify({ attachments: images, text, kind: recipients.length ? 'task' : 'note', recipients, sourceMessageId, references });
   const messagesById = useMemo(() => new Map(detail.messages.map(message => [message.id, message])), [detail.messages]);
   const messagePositions = useMemo(() => new Map(detail.messages.map((message, index) => [message.id, index])), [detail.messages]);
   const membersById = useMemo(() => new Map(members.map(member => [member.id, member])), [members]);
@@ -204,24 +232,25 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
 
   const forwardMessage = useCallback((message: GroupMessage) => {
     const proceed = () => {
-      setText(message.text); setRecipients([]); setSourceMessageId(message.id); setLocalError('');
+      setText(message.text); setImages(message.attachments ?? []); setRecipients([]); setSourceMessageId(message.id); setLocalError('');
       requestAnimationFrame(() => { composerRef.current?.focus(); composerRef.current?.scrollIntoView({ block: 'center' }); });
     };
     const current = JSON.parse(currentDraftRef.current) as GroupDraft;
-    if (current.text.trim() || current.recipients.length || current.sourceMessageId) confirmReplace(message, current.text, proceed);
+    if (current.attachments.length || current.text.trim() || current.recipients.length || current.sourceMessageId) confirmReplace(message, current.text, proceed);
     else proceed();
   }, [confirmReplace]);
   /** A failed task goes back to the same member: original text and references, edited before sending. */
   const reassign = useCallback((failure: GroupMessage) => {
     const task = failure.sourceMessageId ? messagesById.get(failure.sourceMessageId) : undefined;
     const proceed = () => {
-      setText(task?.text ?? ''); setRecipients(failure.senderId ? [failure.senderId] : []); setSourceMessageId(null); setReferences(task?.references ?? []); setLocalError('');
+      const member = membersById.get(failure.senderId ?? '');
+      setImages(task?.attachments ?? []); setText(member ? withMention(task?.text ?? '', member.title) : task?.text ?? ''); setRecipients(member ? [member.id] : []); setSourceMessageId(null); setReferences(task?.references ?? []); setLocalError('');
       requestAnimationFrame(() => { composerRef.current?.focus(); composerRef.current?.scrollIntoView({ block: 'center' }); });
     };
     const current = JSON.parse(currentDraftRef.current) as GroupDraft;
-    if (current.text.trim() || current.recipients.length || current.sourceMessageId) confirmReplace(failure, current.text, proceed);
+    if (current.attachments.length || current.text.trim() || current.recipients.length || current.sourceMessageId) confirmReplace(failure, current.text, proceed);
     else proceed();
-  }, [messagesById, confirmReplace]);
+  }, [messagesById, membersById, confirmReplace]);
   const quote = useCallback((message: GroupMessage) => {
     setReferences(current => current.includes(message.id) ? current : [...current, message.id].slice(-20));
     requestAnimationFrame(() => composerRef.current?.focus());
@@ -229,13 +258,27 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   const [localError, setLocalError] = useState('');
   const [posting, setPosting] = useState(false);
   const postingRef = useRef(false);
-  const activeRecipients = recipients.filter(id => activeMembers.some(member => member.id === id));
-  const toggleRecipient = (id: string) => setRecipients(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
+  const activeRecipients = recipients.filter(id => activeMembers.some(member => member.id === id && mentionRange(text, member.title)));
+  const toggleRecipient = (id: string) => {
+    const member = membersById.get(id);
+    if (!member) return;
+    if (recipients.includes(id)) {
+      setRecipients(current => current.filter(item => item !== id));
+      setText(current => {
+        const range = mentionRange(current, member.title);
+        return range ? current.slice(0, range.start) + current.slice(range.end + (current[range.end] === ' ' ? 1 : 0)) : current;
+      });
+    } else {
+      setRecipients(current => [...current, id]);
+      setText(current => withMention(current, member.title));
+    }
+    setMention(null);
+  };
   useEffect(() => {
     const submitted = (event: Event) => {
       const finished = (event as CustomEvent<{ groupId: string; draft: string }>).detail;
       if (finished.groupId === detail.group.id && finished.draft === currentDraftRef.current) {
-        setText(''); setRecipients([]); setSourceMessageId(null); setReferences([]);
+        setText(''); setImages([]); setRecipients([]); setSourceMessageId(null); setReferences([]);
       }
     };
     window.addEventListener('sessiondeck:group-draft-submitted', submitted);
@@ -244,36 +287,64 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
   useEffect(() => {
     try {
       const key = `sessiondeck.group-draft.${detail.group.id}`;
-      if (text || recipients.length || sourceMessageId || references.length) sessionStorage.setItem(key, currentDraftRef.current);
+      if (images.length || text || recipients.length || sourceMessageId || references.length) sessionStorage.setItem(key, currentDraftRef.current);
       else sessionStorage.removeItem(key);
     } catch { /* Draft persistence is optional when browser storage is disabled. */ }
-  }, [detail.group.id, text, recipients, sourceMessageId, references]);
+  }, [detail.group.id, text, recipients, sourceMessageId, references, images]);
 
   // Typing "@name" anywhere (no space needed before it) offers members at the caret;
-  // choosing one assigns the member and removes the "@name" token from the text.
+  // choosing one expands it to a visible @name; deleting it cancels assignment.
   const onText = (value: string, caret: number) => {
     setText(value);
+    setMentionIndex(0);
+    setRecipients(current => current.filter(id => {
+      const member = membersById.get(id);
+      return member && mentionRange(value, member.title);
+    }));
     const token = value.slice(0, caret).match(/@([^\s@]{0,20})$/);
     setMention(token ? { query: token[1], start: caret - token[0].length, end: caret } : null);
   };
   const mentionChoices = mention === null ? [] : activeMembers.filter(member => member.title.toLowerCase().includes(mention.query.toLowerCase()));
+  const selectedMentionIndex = Math.min(mentionIndex, Math.max(0, mentionChoices.length - 1));
+  const selectedMentionId = mentionChoices[selectedMentionIndex]?.id;
+  useEffect(() => {
+    mentionMenuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [selectedMentionId]);
   const chooseMention = (member: Session) => {
     const range = mention;
-    if (range) setText(current => current.slice(0, range.start) + current.slice(range.end));
+    if (!range) return;
+    const token = `@${member.title} `;
+    setText(current => current.slice(0, range.start) + token + current.slice(range.end));
     setRecipients(current => current.includes(member.id) ? current : [...current, member.id]);
     setMention(null);
-    requestAnimationFrame(() => { const field = composerRef.current; if (!field) return; field.focus(); if (range) field.setSelectionRange(range.start, range.start); });
+    requestAnimationFrame(() => {
+      const field = composerRef.current;
+      if (!field) return;
+      field.focus(); field.setSelectionRange(range.start + token.length, range.start + token.length);
+    });
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setLocalError('');
-    if (!text.trim() || postingRef.current || busy) return;
+    let messageText = text;
+    for (const id of activeRecipients) {
+      const member = membersById.get(id);
+      if (!member) continue;
+      let range = mentionRange(messageText, member.title);
+      while (range) {
+        messageText = messageText.slice(0, range.start) + messageText.slice(range.end + (messageText[range.end] === ' ' ? 1 : 0));
+        range = mentionRange(messageText, member.title);
+      }
+    }
+    messageText = messageText.trim();
+    if (!messageText && !images.length) { setLocalError('请输入任务正文，不能只发送 @ 成员'); return; }
+    if (postingRef.current || busy || uploading || voiceActive) return;
     const submittedDraft = currentDraftRef.current;
     const submittedGroupId = detail.group.id;
     const task = activeRecipients.length > 0;
     postingRef.current = true; setPosting(true);
     try {
-      if (await post({ text: text.trim(), kind: task ? 'task' : 'note', recipientIds: task ? activeRecipients : [], sourceMessageId, references: task ? references.filter(id => messagesById.has(id)) : [], deliverNow: task })) {
+      if (await post({ attachments: images.map(item => item.id), text: messageText, kind: task ? 'task' : 'note', recipientIds: task ? activeRecipients : [], sourceMessageId, references: task ? references.filter(id => messagesById.has(id)) : [], deliverNow: task })) {
         followBottom.current = true;
         try {
           const key = `sessiondeck.group-draft.${submittedGroupId}`;
@@ -308,6 +379,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
             {message.sourceMessageId && <button className="message-source-link" onClick={() => jumpToMessage(message.sourceMessageId!)}><ArrowRight size={12} />{message.kind === 'reply' ? '回复' : '来源'}：{messagesById.get(message.sourceMessageId)?.senderName || '原消息'}<span>查看原消息</span></button>}
             {message.recipientIds.length > 0 && <div className="message-recipients">{message.recipientIds.map(id => <button key={id} onClick={() => open(id)}>@{membersById.get(id)?.title || '已归档成员'}</button>)}</div>}
             {!!message.references?.length && <div className="message-references">{message.references.map(id => <button key={id} className="text-button" onClick={() => jumpToMessage(id)}><Quote size={12} />引用 {messagesById.get(id)?.senderName || '回答'}</button>)}</div>}
+            <GroupImages groupId={group.id} items={message.attachments} />
             {message.kind === 'reply'
               ? <div className="group-reply"><div className={`group-reply-answer${long && !open_ ? ' folded' : ''}`}><Markdown text={message.text} /></div>
                 {long && <button className="text-button" aria-expanded={open_} onClick={() => setExpanded(current => { const next = new Set(current); if (next.has(message.id)) next.delete(message.id); else next.add(message.id); return next; })}>{open_ ? <ChevronUp size={13} /> : <ChevronDown size={13} />}{open_ ? '收起' : '展开全文'}</button>}</div>
@@ -344,6 +416,7 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
         <button className="icon-button" aria-label="添加成员" title="新建成员或 Fork 联系人入群" onClick={addMember}><Plus size={15} /></button>
       </div>
       <div className="group-chat-actions">
+        {onShare && <button className="icon-button" aria-label="分享群聊" title="分享群聊" onClick={onShare}><Share2 size={16} /></button>}
         <button className={`icon-button${fullscreen ? ' active' : ''}`} aria-pressed={fullscreen} aria-label={fullscreen ? '退出群聊全屏' : '全屏群聊'} title={fullscreen ? '退出全屏（Esc）' : '全屏群聊（Ctrl/⌘ + Shift + Enter）'} onClick={() => setFullscreen(value => !value)}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
         <button className="icon-button" aria-label="打开群工作区" title={group.workspace ? `群工作区：${group.workspace}` : '还没有群工作区'} disabled={!sharedMember} onClick={() => sharedMember && openWorkspace(sharedMember)}><FolderOpen size={16} /></button>
         <button className={`icon-button${split ? ' active' : ''}`} aria-pressed={split} aria-label={split ? '退出分栏' : '一键分栏'} title={split ? '退出分栏' : '每个成员一栏，同时查看'} disabled={!activeMembers.length} onClick={() => setSplit(value => !value)}><Columns3 size={16} /></button>
@@ -367,17 +440,47 @@ export default function GroupChat({ group, detail, members, demo, busy, chatCapa
         <div className="recipient-picker"><span><AtSign size={13} />指派给</span>{activeMembers.map(member => <button type="button" disabled={posting} aria-pressed={recipients.includes(member.id)} key={member.id} className={recipients.includes(member.id) ? 'selected' : ''} onClick={() => toggleRecipient(member.id)}>{recipients.includes(member.id) && <Check size={12} />}<BackendAvatar backend={member.backend} small />{member.title}</button>)}{!activeMembers.length && <small>添加成员后，即可 @ 指派任务</small>}</div>
         {references.length > 0 && <div className="composer-references">{references.map(id => { const quoted = messagesById.get(id); return <span key={id} className="reference-chip"><Quote size={12} />{quoted?.senderName || '回答'}：{(quoted?.text || '').slice(0, 40)}<button type="button" className="icon-button" aria-label="取消引用" onClick={() => setReferences(current => current.filter(item => item !== id))}><X size={12} /></button></span>; })}</div>}
         {sourceMessageId && <div className="composer-source"><button type="button" className="text-button" onClick={() => jumpToMessage(sourceMessageId)}><Share2 size={13} />来源：{sourceMessage?.senderName || '原消息'}<span>查看原消息</span></button><button type="button" className="icon-button" disabled={posting} aria-label="解除转交来源" title="解除来源，保留内容" onClick={() => setSourceMessageId(null)}><X size={13} /></button></div>}
-        {mentionChoices.length > 0 && <div className="mention-menu" role="listbox" aria-label="选择要 @ 的成员">{mentionChoices.map(member => <button type="button" role="option" aria-selected={false} key={member.id} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(member)}><BackendAvatar backend={member.backend} small />{member.title}</button>)}</div>}
-        <textarea ref={composerRef} disabled={posting} aria-label="群组消息" onKeyDown={event => {
+        {mentionChoices.length > 0 && <div ref={mentionMenuRef} id={mentionMenuId} className="mention-menu" role="listbox" aria-label="选择要 @ 的成员">{mentionChoices.map((member, index) => <button type="button" role="option" id={`${mentionMenuId}-${index}`} aria-selected={index === selectedMentionIndex} key={member.id} onMouseEnter={() => setMentionIndex(index)} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(member)}><BackendAvatar backend={member.backend} small />{member.title}</button>)}</div>}
+        <ImageAttachments sessionId={group.id} scope="groups" actions={<><VoiceInput sessionId={group.id} scope="groups" disabled={posting || uploading} onActive={setVoiceActive} insert={speech => setText(current => appendVoiceText(current, speech))} /><span title="草稿保留在当前浏览器标签页；Enter 发送，Shift + Enter 换行">{activeRecipients.length ? `发送后立即投递给 ${activeRecipients.length} 位成员，回复会自动回到群里。` : '不 @ 成员时只作为群记录，不会发给任何成员。'}{text && <small className="draft-note">草稿保留 · Enter 发送 · Shift + Enter 换行</small>}</span><button className="button primary small-button" disabled={!!busy || posting || uploading || voiceActive || (!text.trim() && !images.length)}>{busy === 'message' ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}{activeRecipients.length ? '发送任务' : '发送'}</button></>} items={images} onChange={update => {
+          const saved = JSON.parse(currentDraftRef.current) as GroupDraft;
+          saved.attachments = update(saved.attachments);
+          currentDraftRef.current = JSON.stringify(saved);
+          try { sessionStorage.setItem(`sessiondeck.group-draft.${group.id}`, currentDraftRef.current); } catch { /* Optional storage. */ }
+          setImages(saved.attachments);
+        }} onBusy={setUploading} disabled={posting}>
+        <textarea ref={composerRef} disabled={posting} aria-label="群组消息" aria-controls={mentionChoices.length ? mentionMenuId : undefined} aria-activedescendant={mentionChoices.length ? `${mentionMenuId}-${selectedMentionIndex}` : undefined} onKeyDown={event => {
           // Chinese IME candidate selection must never send or pick a member.
           if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-          if (mentionChoices.length && (event.key === 'Enter' || event.key === 'Tab')) { event.preventDefault(); chooseMention(mentionChoices[0]); return; }
+          // Delete a confirmed @ as one unit, including its separator.
+          const field = event.currentTarget;
+          if ((event.key === 'Backspace' || event.key === 'Delete') && field.selectionStart === field.selectionEnd) {
+            const caret = field.selectionStart;
+            for (const id of recipients) {
+              const member = membersById.get(id);
+              const range = member && mentionRange(text, member.title);
+              if (!range) continue;
+              const end = range.end + (text[range.end] === ' ' ? 1 : 0);
+              if ((event.key === 'Backspace' && caret > range.start && caret <= end) || (event.key === 'Delete' && caret >= range.start && caret < range.end)) {
+                event.preventDefault();
+                onText(text.slice(0, range.start) + text.slice(end), range.start);
+                setMention(null);
+                requestAnimationFrame(() => field.setSelectionRange(range.start, range.start));
+                return;
+              }
+            }
+          }
+          if (mentionChoices.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+            event.preventDefault();
+            setMentionIndex((selectedMentionIndex + (event.key === 'ArrowDown' ? 1 : -1) + mentionChoices.length) % mentionChoices.length);
+            return;
+          }
+          if (mentionChoices.length && !event.shiftKey && (event.key === 'Enter' || event.key === 'Tab')) { event.preventDefault(); chooseMention(mentionChoices[selectedMentionIndex]); return; }
           if (event.key === 'Escape' && mention !== null) { event.preventDefault(); setMention(null); return; }
           // Enter sends, Shift+Enter inserts a newline, like private chats.
           if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
-        }} onSelect={event => { const field = event.currentTarget; if (mention && (field.selectionStart < mention.start || field.selectionStart > mention.end + 1)) setMention(null); }} placeholder={activeRecipients.length ? '描述任务；成员会收到群 prompt、任务和你引用的结论…' : '输入 @ 指派成员，或直接记录想法…'} value={text} onChange={event => onText(event.target.value, event.target.selectionStart)} rows={3} required maxLength={30000} />
+        }} onSelect={event => { const field = event.currentTarget; if (mention && (field.selectionStart < mention.start || field.selectionStart > mention.end + 1)) setMention(null); }} placeholder={activeRecipients.length ? '描述任务；成员会收到群 prompt、任务和你引用的结论…' : '输入 @ 指派成员，或直接记录想法…'} value={text} onChange={event => onText(event.target.value, event.target.selectionStart)} rows={3} maxLength={30000} />
+        </ImageAttachments>
         {localError && <p role="alert" className="form-error">{localError}</p>}
-        <div className="composer-footer"><span title="草稿保留在当前浏览器标签页；Enter 发送，Shift + Enter 换行">{activeRecipients.length ? `发送后立即投递给 ${activeRecipients.length} 位成员，回复会自动回到群里。` : '不 @ 成员时只作为群记录，不会发给任何成员。'}{text && <small className="draft-note">草稿保留 · Enter 发送 · Shift + Enter 换行</small>}</span><button className="button primary small-button" disabled={!!busy || posting || !text.trim()}>{busy === 'message' ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}{activeRecipients.length ? '发送任务' : '发送'}</button></div>
       </form>
     </div>
   </section>;

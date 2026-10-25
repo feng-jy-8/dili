@@ -60,3 +60,7 @@
 .resizable-composer.compact .attachment-actions>span { display:none; }
 .resizable-composer.compact .agent-chat-quick-settings { padding:0; }
 .resizable-composer.compact :is(.attachment-error,.codex-request-error) { order:8; flex-basis:100%; }
+
+/* Bound the mobile tray at enlarged interface scales as well as normal size. */
+.resizable-composer.compact .agent-chat-quick-settings { flex:1 1 100%; width:100%; max-width:100%; }
+.resizable-composer.compact .agent-chat-quick-button { flex:1 1 0; overflow:hidden; }

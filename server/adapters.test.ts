@@ -186,10 +186,10 @@ test('DSH native API uses precise identity and refuses fork cwd mismatch', async
   } finally {await bridge.close();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
 
-test('DSH deep link waits for native session list and opens only the specified contact once', () => {
-  const id=`session-${randomUUID()}`;let plugin: {apply:(ctx:unknown)=>void}|undefined;
+for (const fragment of [false, true]) for (const prefix of ['session-', '']) test(`DSH deep link ${fragment ? 'fragment' : 'query'} supports ${prefix ? 'legacy' : 'current'} session IDs and opens only the specified contact once`, () => {
+  const id=`${prefix}${randomUUID()}`;let plugin: {apply:(ctx:unknown)=>void}|undefined;
   let change=()=>{};const opened:string[]=[];const state:{byId:Record<string,unknown>}={byId:{}};
-  runInNewContext(dshDeepLinkClient('test-link'),{URLSearchParams,location:{search:`?sessiondeckSession=${id}`},window:{__ModuleLoader__:{load:({factory}:{factory:()=>typeof plugin})=>{plugin=factory();}}}});
+  runInNewContext(dshDeepLinkClient('test-link'),{URLSearchParams,location:{search:fragment ? '' : `?sessiondeckSession=${id}`,hash:fragment ? `#sessiondeckSession=${id}` : ''},window:{__ModuleLoader__:{load:({factory}:{factory:()=>typeof plugin})=>{plugin=factory();}}}});
   plugin!.apply({sessions:{list:{getSnapshot:()=>state,subscribe:(listener:()=>void)=>{change=listener;return()=>{};}},open:(value:string)=>opened.push(value)},effect:(effect:()=>unknown)=>effect()});
   assert.deepEqual(opened,[]);
   state.byId[id]={};change();change();assert.deepEqual(opened,[id]);

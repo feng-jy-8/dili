@@ -28,6 +28,8 @@ export const ROUTES: Route[] = [
   { method: 'DELETE', path: '/api/remote/pair', access: 'local' },
   { method: 'GET', path: '/api/sessions/:id/shares', access: 'owner' },
   { method: 'POST', path: '/api/sessions/:id/shares', access: 'owner' },
+  { method: 'GET', path: '/api/groups/:id/shares', access: 'owner' },
+  { method: 'POST', path: '/api/groups/:id/shares', access: 'owner' },
   { method: 'DELETE', path: '/api/shares/:id', access: 'owner' },
 
   { method: 'GET', path: '/api/config', access: 'read' },
@@ -91,9 +93,12 @@ export const ROUTES: Route[] = [
   { method: 'POST', path: '/api/groups', access: 'owner' },
   { method: 'PATCH', path: '/api/groups/:id', access: 'owner' },
   { method: 'POST', path: '/api/groups/:id/read', access: 'owner' },
-  { method: 'GET', path: '/api/groups/:id', access: 'owner' },
-  { method: 'GET', path: '/api/groups/:id/messages/:messageId', access: 'owner' },
-  { method: 'POST', path: '/api/groups/:id/messages', access: 'owner' },
+  { method: 'GET', path: '/api/groups/:id', access: 'read' },
+  { method: 'POST', path: '/api/groups/:id/attachments', access: 'write' },
+  { method: 'GET', path: '/api/groups/:id/attachments/:attachmentId', access: 'read' },
+  { method: 'GET', path: '/api/groups/:id/voice', access: 'write' },
+  { method: 'GET', path: '/api/groups/:id/messages/:messageId', access: 'read' },
+  { method: 'POST', path: '/api/groups/:id/messages', access: 'write' },
   { method: 'POST', path: '/api/deliveries/:id/send', access: 'owner' },
   { method: 'POST', path: '/api/deliveries/:id/resolve', access: 'owner' },
   { method: 'POST', path: '/api/deliveries/:id/cancel', access: 'owner' },
@@ -123,8 +128,8 @@ export function matchRoute(method: string, path: string) {
 export type Decision = { allowed: true } | { allowed: false; status: 401 | 403 | 404; error: string };
 
 /**
- * Decides one API request. Shares are scoped to exactly one session: every
- * `:id` must be theirs, and workspace-wide reads are filtered by the caller.
+ * Decides one API request. A share targets one session or one group. Group
+ * guests cannot use session APIs; global snapshots are filtered by the caller.
  */
 export function authorize(principal: Principal | null, remote: boolean, method: string, path: string): Decision {
   const matched = matchRoute(method, path);
@@ -136,6 +141,13 @@ export function authorize(principal: Principal | null, remote: boolean, method: 
   if (principal.kind === 'owner') return { allowed: true };
   if (route.access === 'owner') return { allowed: false, status: 403, error: '分享链接无权执行此操作' };
   if (route.access === 'write' && principal.mode !== 'write') return { allowed: false, status: 403, error: '这是只读分享' };
+  if (principal.groupId) {
+    const groupRoute = path.startsWith('/api/groups/');
+    const globalRead = ['/api/config', '/api/state', '/api/events'].includes(path);
+    if (!globalRead && (!groupRoute || params.id !== principal.groupId)) return { allowed: false, status: 404, error: '群聊不存在' };
+    return { allowed: true };
+  }
+  if (path.startsWith('/api/groups/')) return { allowed: false, status: 404, error: '群聊不存在' };
   // Session-bound routes must target the shared session; the rest are filtered.
   if (params.id !== undefined && params.id !== principal.sessionId) return { allowed: false, status: 404, error: '会话不存在' };
   return { allowed: true };

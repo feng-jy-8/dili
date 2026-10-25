@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Check, CircleAlert, Copy, Globe, KeyRound, Link2, LoaderCircle, LogOut, MonitorSmartphone, Plug, ShieldCheck, Trash2, Unplug } from 'lucide-react';
-import type { Session } from '../shared/types';
+import type { Session, Group } from '../shared/types';
 import type { AuthDevice, AuthStatus, RemoteSettings, RemoteStatus, Share, ShareMode } from '../shared/auth';
 import { api } from './api';
 import { copyToClipboard } from './clipboard';
@@ -11,7 +11,9 @@ const device = (agent: string) => /iPhone|iPad|Android/i.test(agent) ? '手机' 
 // A share covers the session directory. Warn when that is a whole home or root.
 const broadDirectory = (cwd: string) => cwd === '/' || /^\/(?:Users|home)\/[^/]+\/?$/.test(cwd) || /^[A-Z]:\\?$/i.test(cwd);
 
-export function ShareDialog({ session, close, notify }: { session: Session; close: () => void; notify: (message: string) => void }) {
+export function ShareDialog({ session, group, close, notify }: { session?: Session; group?: Group; close: () => void; notify: (message: string) => void }) {
+  const target = group ?? session!;
+  const endpoint = group ? 'groups' : 'sessions';
   const [shares, setShares] = useState<Share[] | null>(null);
   const [mode, setMode] = useState<ShareMode>('read');
   const [ttl, setTtl] = useState<string>('7');
@@ -19,12 +21,12 @@ export function ShareDialog({ session, close, notify }: { session: Session; clos
   const [created, setCreated] = useState<{ url: string; remoteReady: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const load = useCallback(() => api<Share[]>(`/sessions/${session.id}/shares`).then(setShares).catch(cause => setError(cause.message)), [session.id]);
+  const load = useCallback(() => api<Share[]>(`/${endpoint}/${target.id}/shares`).then(setShares).catch(cause => setError(cause.message)), [endpoint, target.id]);
   useEffect(() => { void load(); }, [load]);
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
-      const result = await api<{ share: Share; url: string; remoteReady: boolean }>(`/sessions/${session.id}/shares`, { mode, ttlDays: ttl === 'never' ? null : Number(ttl), label: label.trim() });
+      const result = await api<{ share: Share; url: string; remoteReady: boolean }>(`/${endpoint}/${target.id}/shares`, { mode, ttlDays: ttl === 'never' ? null : Number(ttl), label: label.trim() });
       setCreated(result); setLabel('');
       await copyToClipboard(result.url).then(() => notify('分享链接已复制')).catch(() => {});
       await load();
@@ -37,14 +39,14 @@ export function ShareDialog({ session, close, notify }: { session: Session; clos
     catch (cause) { setError(cause instanceof Error ? cause.message : '无法撤销'); }
     finally { setBusy(false); }
   };
-  return <ModalShell title="分享会话" subtitle={`把「${session.title}」分享给同事。对方打开链接、留下名字即可进入，只能访问这一个会话。`} close={close}>
+  return <ModalShell title={group ? "分享群聊" : "分享会话"} subtitle={`把「${target.title}」分享给同事。对方打开链接、留下名字即可进入。`} close={close}>
     <form onSubmit={submit}><div className="modal-fields">
       <div className="segmented-control" role="group" aria-label="分享权限">
         <button type="button" aria-pressed={mode === 'read'} className={mode === 'read' ? 'selected' : ''} onClick={() => setMode('read')}>只读</button>
         <button type="button" aria-pressed={mode === 'write'} className={mode === 'write' ? 'selected' : ''} onClick={() => setMode('write')}>可协作</button>
       </div>
-      <p className="form-note">{mode === 'read' ? '可以查看终端输出、对话记录、文件和改动，不能输入或操作。' : '和你一样操作这个会话：输入、处理审批、启动和停止。Agent 能在你的电脑上执行命令，只分享给完全信任的人。'}</p>
-      {mode === 'write' && broadDirectory(session.cwd) && <p className="form-error"><CircleAlert size={14} />工作目录是 {session.cwd}，范围过大。建议先把会话放到具体项目目录再分享。</p>}
+      <p className="form-note">{group ? (mode === 'read' ? '可以查看群消息和成员状态。' : '可以发送群消息、选择成员分派任务；任务可能启动 Agent 并在本机执行命令。只分享给信任的人。') : mode === 'read' ? '可以查看终端输出、对话记录、文件和改动，不能输入或操作。' : '和你一样操作这个会话：输入、处理审批、启动和停止。Agent 能在你的电脑上执行命令，只分享给完全信任的人。'}</p>
+      {mode === 'write' && session && broadDirectory(session.cwd) && <p className="form-error"><CircleAlert size={14} />工作目录是 {session.cwd}，范围过大。建议先把会话放到具体项目目录再分享。</p>}
       <div className="share-form-row">
         <label className="form-label">有效期<select value={ttl} onChange={event => setTtl(event.target.value)}><option value="1">1 天</option><option value="7">7 天</option><option value="30">30 天</option><option value="never">永久</option></select></label>
         <label className="form-label">备注（可选）<input maxLength={80} placeholder="例如：给前端同事" value={label} onChange={event => setLabel(event.target.value)} /></label>

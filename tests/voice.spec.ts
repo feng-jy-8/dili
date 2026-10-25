@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import type { AppState, Session } from '../shared/types';
 
-async function fixture(page: Page, backend: 'codex' | 'claude' | 'dsh', options: { installed?: boolean; holdReady?: boolean; deny?: boolean } = {}) {
+async function fixture(page: Page, backend: 'codex' | 'claude' | 'dsh', options: { installed?: boolean; holdReady?: boolean; deny?: boolean; group?: boolean } = {}) {
   const seed = await (await page.request.get('/api/state')).json() as AppState;
   const contact: Session = { ...seed.sessions[0], id: 'voice-' + backend, backend, title: backend + ' 语音测试', running: true, status: 'waiting_input', statusSource: 'native', interactionMode: backend === 'dsh' ? 'terminal' : 'chat', executionTransport: backend === 'dsh' ? 'pty' : 'structured', nativeSessionId: 'voice-thread', forkPending: false };
   const snapshot = { nativeSessionId: contact.nativeSessionId, connected: true, activeTurnId: null, revision: 1, items: [], requests: [], truncated: false };
@@ -30,14 +30,19 @@ async function fixture(page: Page, backend: 'codex' | 'claude' | 'dsh', options:
     }
     Object.defineProperty(window, 'MediaRecorder', { value: Recorder });
   }, { backend, snapshot, deny: options.deny });
-  await page.route('**/api/state', route => route.fulfill({ json: { ...seed, demo: false, sessions: [contact], groups: [], activities: [], backends: seed.backends.map(item => ({ ...item, installed: true, capabilities: { ...item.capabilities, terminal: true, graphicalChat: true } })) } }));
+  const group = { ...seed.groups[0], id: 'voice-group', title: '群语音测试' };
+  if (options.group) contact.groupId = group.id;
+  await page.route('**/api/groups/' + group.id, route => route.fulfill({ json: { group, messages: [], deliveries: [] } }));
+  await page.route('**/api/groups/' + group.id + '/read', route => route.fulfill({ json: group }));
+  await page.route('**/api/state', route => route.fulfill({ json: { ...seed, demo: false, sessions: [contact], groups: options.group ? [group] : [], activities: [], backends: seed.backends.map(item => ({ ...item, installed: true, capabilities: { ...item.capabilities, terminal: true, graphicalChat: true } })) } }));
   await page.route('**/api/config', route => route.fulfill({ json: { csrfToken: 'test-token' } }));
   await page.route('**/api/sessions/' + contact.id + '/read', route => route.fulfill({ json: contact }));
   await page.route('**/api/sessions/' + contact.id + '/conversation', route => route.fulfill({ json: { messages: [], truncated: false } }));
   await page.route('**/api/sessions/' + contact.id + '/chat', route => route.fulfill({ json: snapshot }));
   await page.route('**/api/sessions/' + contact.id + '/voice', route => route.fulfill({ json: { installed: options.installed !== false, enabled: options.installed !== false, phase: 'ready', maxSeconds: 120, message: '' } }));
+  await page.route('**/api/groups/' + group.id + '/voice', route => route.fulfill({ json: { installed: true, enabled: true, phase: 'ready', maxSeconds: 120, message: '' } }));
   const traffic: { controls: string[]; audio: string[]; send?: (message: object) => void; disconnected: boolean } = { controls: [], audio: [], disconnected: false };
-  await page.routeWebSocket(/\/api\/sessions\/[^/]+\/voice\?/, ws => {
+  await page.routeWebSocket(/\/api\/(sessions|groups)\/[^/]+\/voice\?/, ws => {
     traffic.send = message => ws.send(JSON.stringify(message));
     ws.onClose(() => { traffic.disconnected = true; });
     ws.onMessage(message => {
@@ -49,8 +54,8 @@ async function fixture(page: Page, backend: 'codex' | 'claude' | 'dsh', options:
   });
   let sends = 0;
   await page.route(/\/api\/sessions\/[^/]+\/(input|chat\/messages)$/, route => { if (route.request().method() === 'POST') sends++; return route.fulfill({ json: { generation: 'voice-generation', directSubmit: true, status: 'accepted', submitted: true } }); });
-  await page.goto('/#/contacts?session=' + contact.id);
-  const input = page.getByLabel(backend === 'dsh' ? '原生会话消息草稿' : backend === 'claude' ? '给 Claude 发送消息' : '给 Codex 发送消息');
+  await page.goto(options.group ? '/#/groups/' + group.id : '/#/contacts?session=' + contact.id);
+  const input = page.getByLabel(options.group ? '群组消息' : backend === 'dsh' ? '原生会话消息草稿' : backend === 'claude' ? '给 Claude 发送消息' : '给 Codex 发送消息');
   await expect(input).toBeVisible();
   return { input, traffic, sends: () => sends, stats: () => page.evaluate(() => (window as unknown as { voiceStats: { opened: number; stopped: number } }).voiceStats) };
 }
@@ -183,4 +188,23 @@ test('voice transcript respects interface zoom and stays above recording control
   expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.y).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(1440);
   await page.getByRole('button', { name: '取消录音', exact: true }).click();
+});
+
+ test('group speech appends to current draft, blocks sending during recording and supports cancellation', async ({ page }) => {
+  const app = await fixture(page, 'codex', { group: true });
+  await app.input.fill('群草稿');
+  await page.getByRole('button', { name: '语音输入', exact: true }).click();
+  await expect(page.getByRole('button', { name: '结束录音', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '发送', exact: true })).toBeDisabled();
+  await app.input.fill('修改后的群草稿');
+  await page.getByRole('button', { name: '结束录音', exact: true }).click();
+  await expect(app.input).toHaveValue('修改后的群草稿\n你好世界');
+  await page.getByRole('button', { name: '语音输入', exact: true }).click();
+  await expect(page.getByRole('button', { name: '结束录音', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '取消录音', exact: true }).click();
+  await expect(app.input).toHaveValue('修改后的群草稿\n你好世界');
+  expect(app.sends()).toBe(0);
+  expect((await app.stats()).stopped).toBeGreaterThan(1);
+  await page.reload();
+  await expect(app.input).toHaveValue('修改后的群草稿\n你好世界');
 });

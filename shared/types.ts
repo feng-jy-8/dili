@@ -1,3 +1,4 @@
+import type { ChatAttachment } from './attachments.ts';
 import type { ExecutionMode } from './execution.ts';
 
 export type Backend = 'claude' | 'codex' | 'dsh';
@@ -118,6 +119,7 @@ export interface Group {
 }
 
 export interface GroupMessage {
+  attachments?: ChatAttachment[];
   id: string;
   groupId: string;
   senderId: string | null;

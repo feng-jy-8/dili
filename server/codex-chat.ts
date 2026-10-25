@@ -33,7 +33,7 @@ export function nativeChatItem(value: unknown, turnId?: string, done = false): C
   }
 }
 
-interface View { snapshot: CodexChatSnapshot; versions: Map<string, number>; turnVersion: number }
+interface View { snapshot: CodexChatSnapshot; versions: Map<string, number>; turnVersion: number; observedTurnId?: string }
 export class CodexChatState {
   private views = new Map<string, View>();
   private listeners = new Set<(threadId: string, snapshot: CodexChatSnapshot) => void>();
@@ -52,15 +52,17 @@ export class CodexChatState {
   private publish(id: string, patch: Partial<CodexChatSnapshot>, changed: string[] = []): CodexChatSnapshot {
     const view = this.view(id), old = view.snapshot;
     let items = patch.items ?? old.items, truncated = patch.truncated ?? old.truncated;
-    if (items.length > 200) { items = items.slice(-200); truncated = true; }
-    let total = 0;
-    const bounded: CodexChatItem[] = [];
+    // Reserve space for the latest prompt before trimming verbose tool output.
+    const prompt = items.findLast(item => item.type === 'user');
+    const sizeOf = (item: CodexChatItem) => item.text.length + (item.output?.length ?? 0) + (item.title?.length ?? 0);
+    let total = prompt ? sizeOf(prompt) : 0;
+    const retained = new Set(prompt ? [prompt.id] : []);
     for (const item of items.toReversed()) {
-      const size = item.text.length + (item.output?.length ?? 0) + (item.title?.length ?? 0);
-      if (total + size > 512_000) { truncated = true; break; }
-      total += size; bounded.push(item);
+      if (item === prompt) continue;
+      if (retained.size >= 200 || total + sizeOf(item) > 512_000) { truncated = true; continue; }
+      total += sizeOf(item); retained.add(item.id);
     }
-    items = bounded.reverse();
+    items = items.filter(item => retained.has(item.id));
     const revision = old.revision + 1;
     view.snapshot = { ...old, ...patch, items, truncated, revision };
     if (patch.activeTurnId !== undefined) view.turnVersion = revision;
@@ -99,9 +101,14 @@ export class CodexChatState {
       if (turn.status === 'inProgress') active = turn.id;
       if (turn.itemsView && turn.itemsView !== 'full') truncated = true;
       if (Array.isArray(turn.items)) for (const entry of turn.items) { const item = nativeChatItem(entry, turn.id, turn.status !== 'inProgress'); if (item) items.push(item); }
-      if (items.length > 400) { items = items.slice(-200); truncated = true; }
     }
-    const live = view.snapshot.items.filter(item => (view.versions.get(item.id) ?? 0) > basis);
+    const observed = view.observedTurnId;
+    const observedHistory = turns.map(object).find(turn => turn?.id === observed);
+    const observedMissing = observed && !observedHistory;
+    const retainObserved = observed && (!observedHistory || observedHistory.status === 'inProgress');
+    if (observedHistory && observedHistory.status !== 'inProgress' && view.turnVersion <= basis) view.observedTurnId = undefined;
+    if (observedMissing) active = observed;
+    const live = view.snapshot.items.filter(item => (view.versions.get(item.id) ?? 0) > basis || (retainObserved && item.turnId === observed));
     // History can give a live prompt a different ID, even when item/started
     // arrived BEFORE this read began. Keep established identities so a later
     // item/completed still updates the same bubble (and client history caches
@@ -137,11 +144,19 @@ export class CodexChatState {
     const view = this.view(id), turnId = string(params.turnId), itemId = string(params.itemId);
     if (method === 'turn/started') {
       const turn = object(params.turn);
-      if (typeof turn?.id === 'string' && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(turn.id)) this.publish(id, { activeTurnId: turn.id, notice: undefined });
+      if (typeof turn?.id === 'string' && /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(turn.id)) {
+        view.observedTurnId = turn.id;
+        this.publish(id, { activeTurnId: turn.id, notice: undefined });
+        if (Array.isArray(turn.items)) for (const entry of turn.items) {
+          const item = nativeChatItem(entry, turn.id);
+          if (item) this.upsert(id, item);
+        }
+      }
     } else if (method === 'turn/completed') {
       const turn = object(params.turn);
       if (!turn || typeof turn.id !== 'string' || (view.snapshot.activeTurnId && view.snapshot.activeTurnId !== turn.id)) return;
       if (Array.isArray(turn.items)) for (const entry of turn.items) { const item = nativeChatItem(entry, turn.id, true); if (item) this.upsert(id, item); }
+      view.observedTurnId = undefined;
       this.publish(id, { activeTurnId: null, items: this.view(id).snapshot.items.map(item => item.turnId === turn.id && item.status === 'inProgress' ? { ...item, status: status(turn.status, true) } : item), notice: string(object(turn.error)?.message) || undefined });
     } else if (method === 'item/started' || method === 'item/completed') {
       const item = nativeChatItem(params.item, turnId || undefined, method === 'item/completed');

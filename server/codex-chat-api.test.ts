@@ -783,3 +783,41 @@ test('Claude stopped history pages never launch a CLI; live and restored IDs agr
   assert.equal([...seen.values()].filter(item => item.text === 'history 0').length, 1);
   assert.equal((await snapshot(contact.id)).items.length, recent.items.length, 'Paging must not mutate the live snapshot');
 });
+
+test('failed terminal attachment leaves the graphical Codex turn running', { timeout: 30_000 }, async t => {
+  const f = await launch(t), source = await f.create('Viewer failure');
+  const path = `/api/sessions/${source.id}`;
+  await f.request(path + '/start', 'POST', { mode: 'chat' });
+  await f.request(path + '/chat/messages', 'POST', { requestId: randomUUID(), text: 'HOLD live task' });
+  await until(async () => !!(await f.snapshot(source.id)).activeTurnId, 'Turn did not start');
+  const active = (await f.snapshot(source.id)).activeTurnId;
+  await writeFile(join(f.directory, 'fail-tui'), '1');
+  await f.request(path + '/start', 'POST', { mode: 'terminal' });
+  await until(async () => (await f.calls()).some(call => call.event === 'tui'), 'TUI did not launch');
+  await until(async () => (await f.current(source.id)).interactionMode === 'chat', 'Did not return to graphical executor');
+  assert.equal((await f.current(source.id)).running, true);
+  assert.equal((await f.snapshot(source.id)).activeTurnId, active);
+  assert.equal((await f.calls()).filter(call => call.method === 'turn/interrupt').length, 0);
+});
+
+test('group image-only tasks persist server metadata and deliver native images to Codex', { timeout: 30000 }, async t => {
+  const f = await launch(t);
+  const group = await f.request<Group>('/api/groups', 'POST', { title: 'Image tasks' }, 201);
+  const member = await f.request<Session>('/api/sessions', 'POST', { backend: 'codex', title: 'Image receiver', cwd: f.directory, groupId: group.id, briefing: false }, 201);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  const upload = await fetch(`${f.base}/api/groups/${group.id}/attachments`, { method: 'POST', headers: { 'content-type': 'image/png', 'x-sessiondeck-token': f.csrfToken }, body: png });
+  assert.equal(upload.status, 201);
+  const image = await upload.json() as { id: string };
+  const message = await f.request<GroupMessage & { deliveryErrors?: unknown[] }>(`/api/groups/${group.id}/messages`, 'POST', { text: '', kind: 'task', recipientIds: [member.id], attachments: [image.id], deliverNow: true }, 201);
+  assert.equal(message.text, '');
+  assert.equal(message.attachments?.[0].id, image.id);
+  assert.equal(message.deliveryErrors, undefined);
+  const input = (await f.calls()).filter(call => call.method === 'turn/start').at(-1)?.params?.input as { type: string; path?: string }[];
+  const nativeImage = input.find(item => item.type === 'localImage');
+  assert.ok(nativeImage?.path);
+  assert.deepEqual(await readFile(nativeImage.path), png);
+  const detail = await f.request<GroupDetail>(`/api/groups/${group.id}`);
+  assert.equal(detail.messages.find(item => item.id === message.id)?.attachments?.[0].id, image.id);
+  await f.request(`/api/groups/${group.id}/messages`, 'POST', { text: '', attachments: [] }, 400);
+  await f.request(`/api/groups/${group.id}/messages`, 'POST', { attachments: [image.id, image.id] }, 400);
+});

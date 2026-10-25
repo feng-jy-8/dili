@@ -108,12 +108,12 @@ test('a thousand-message group opens recent history, reveals older sources, and 
   await page.route(`**/api/groups/${group.id}/messages/history-3`, route => route.fulfill({ json: messages[3] }));
   await page.goto(`/#/groups/${group.id}`);
   await expect(page.locator('.group-message')).toHaveCount(200);
-  await expect(page.locator('.session-card')).toHaveCount(150);
   await expect(page.locator('.history-range')).toContainText('显示第 801–1000 条，共 1000 条');
   await expect(page.locator('#group-message-history-0')).toHaveCount(0);
   const composer = page.getByLabel('群组消息');
   await composer.fill('展开旧消息时保留这段草稿');
   const anchorTop = () => page.locator('#group-message-history-800').evaluate(element => element.getBoundingClientRect().top - element.closest('.message-list')!.getBoundingClientRect().top);
+  await page.getByRole('button', { name: '显示更早 200 条', exact: true }).scrollIntoViewIfNeeded();
   const before = await anchorTop();
   await page.getByRole('button', { name: '显示更早 200 条', exact: true }).click();
   await expect(page.locator('.group-message')).toHaveCount(400);

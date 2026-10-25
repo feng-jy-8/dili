@@ -57,8 +57,8 @@ export async function api<T>(path: string, body?: unknown, method?: string): Pro
   return result as T;
 }
 
-export async function uploadChatImage(sessionId: string, image: File): Promise<import('../shared/attachments').ChatAttachment> {
-  const send = async () => request('/api/sessions/' + encodeURIComponent(sessionId) + '/attachments', {
+export async function uploadChatImage(sessionId: string, image: File, scope: 'sessions' | 'groups' = 'sessions'): Promise<import('../shared/attachments').ChatAttachment> {
+  const send = async () => request('/api/' + scope + '/' + encodeURIComponent(sessionId) + '/attachments', {
     method: 'POST', headers: { 'Content-Type': image.type, 'X-SessionDeck-Token': await getToken(), 'X-Dili-Filename': encodeURIComponent(image.name.slice(0,120)) }, body: image,
   }, 60_000);
   let response = await send();

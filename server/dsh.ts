@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -25,14 +25,18 @@ export interface DshBridgeOptions {
   startupTimeoutMs?: number;
 }
 interface NativeSession { nativeSessionId: string; nativeUrl: string }
-interface DshSummary { sessionId: string; running?: boolean; cwd?: string; updatedAt?: number }
+interface DshSummary { sessionId: string; running?: boolean; agentAvailable?: boolean; cwd?: string; updatedAt?: number }
 export interface DshStatus { status: SessionStatus; detail?: string; attentionKey?: string }
 interface TurnBoundary { type: 'turn/start' | 'turn/end'; seq: number; reason?: string }
+class DshCompatibilityError extends Error {}
 
 /** Read-only invocation identity. A page returning 200 is not proof that the
  * process we spawned owns the port (another service may win the bind race). */
 function dshHostPlugin(token: string): string {
-  return `export default function sessiondeckLink(ctx){ctx.inject(['webServer'],function(ctx){ctx.effect(function(){return ctx.webServer.register({kind:'exact',path:'/sessiondeck/instance',handler:function(req,res){res.setHeader('content-type','text/plain');res.setHeader('cache-control','no-store');res.end(${JSON.stringify(token)});}});});});}\n`;
+  return `import {writeFileSync} from 'node:fs';
+export default function sessiondeckLink(ctx){
+ctx.inject(['connection'],function(ctx){if(typeof ctx.connection.authenticatedUrl==='function')writeFileSync(process.env.SESSIONDECK_DSH_AUTH_FILE,ctx.connection.authenticatedUrl(process.env.SESSIONDECK_DSH_BASE_URL),{mode:0o600});});
+ctx.inject(['webServer'],function(ctx){ctx.effect(function(){return ctx.webServer.register({kind:'exact',path:'/sessiondeck/instance',handler:function(req,res){res.setHeader('content-type','text/plain');res.setHeader('cache-control','no-store');res.end(${JSON.stringify(token)});}});});});}\n`;
 }
 
 async function prepareLaunch(dataDir: string, token: string): Promise<{ directory: string; loaderPath: string; patchPath: string }> {
@@ -49,7 +53,9 @@ async function prepareLaunch(dataDir: string, token: string): Promise<{ director
     await writeFile(loaderPath, `import { registerHooks } from 'node:module';\nconst urls=${JSON.stringify(moduleUrls)};\nregisterHooks({resolve(specifier,context,next){return Object.hasOwn(urls,specifier)?{url:urls[specifier],shortCircuit:true}:next(specifier,context);}});\n`, { mode: 0o600 });
     const patchPath = join(directory, 'patch.yml');
     // JSON is a YAML subset; the overlay adds only this invocation's plugin.
-    await writeFile(patchPath, JSON.stringify([{ insert: [{ id: 'sessiondeck-link', name: 'dsh-sessiondeck-link' }] }]), { mode: 0o600 });
+    // A file URL also lets 0.2's request inventory find its owning manifest;
+    // a synthetic bare name resolves through hooks but not packageOf().
+    await writeFile(patchPath, JSON.stringify([{ insert: [{ id: 'sessiondeck-link', name: pathToFileURL(join(directory, 'index.js')).href }] }]), { mode: 0o600 });
     return { directory, loaderPath, patchPath };
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
@@ -61,8 +67,8 @@ async function prepareLaunch(dataDir: string, token: string): Promise<{ director
  * This invocation-only client plugin adds a deep link without copying any UI. */
 export function dshDeepLinkClient(moduleId: string): string {
   return `window.__ModuleLoader__.load({id:${JSON.stringify(moduleId)},factory:function(){return {inject:['sessions'],apply:function(ctx){
-    const target=new URLSearchParams(location.search).get('sessiondeckSession');
-    if(!target || !/^session-[a-f\\d-]{36}$/i.test(target))return;
+    const target=new URLSearchParams(location.search).get('sessiondeckSession')||new URLSearchParams((location.hash||'').slice(1)).get('sessiondeckSession');
+    if(!target || !/^(?:session-)?[a-f\\d]{8}-[a-f\\d]{4}-[a-f\\d]{4}-[a-f\\d]{4}-[a-f\\d]{12}$/i.test(target))return;
     let opened=false;
     const tryOpen=function(){if(opened)return;const state=ctx.sessions.list.getSnapshot();if(state.byId && state.byId[target]){opened=true;ctx.sessions.open(target);}};
     ctx.effect(function(){const unsubscribe=ctx.sessions.list.subscribe(tryOpen);tryOpen();return unsubscribe;});
@@ -81,6 +87,11 @@ export class DshBridge {
   private bootAbort: AbortController | null = null;
   private bootGeneration = 0;
   private ready = false;
+  private modern = false;
+  private cookie = '';
+  private authenticatedUrl = '';
+  private followed = new Map<string, string>();
+  private synchronized = new Set<string>();
   private closed = false;
   private retiring: Promise<void> = Promise.resolve();
   private cleanups = new Set<Promise<void>>();
@@ -167,7 +178,9 @@ export class DshBridge {
     try { assertActive(); }
     catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
     const baseEnv = this.options.env ?? process.env;
-    const env = { ...baseEnv, SESSIONDECK_DSH_LAUNCH_TOKEN: launchToken, NODE_OPTIONS: `${baseEnv.NODE_OPTIONS ?? ''} --import ${JSON.stringify(pathToFileURL(loaderPath).href)}`.trim() };
+    const authFile = join(directory, 'auth-url');
+    this.modern = false; this.cookie = ''; this.authenticatedUrl = '';
+    const env = { ...baseEnv, SESSIONDECK_DSH_LAUNCH_TOKEN: launchToken, SESSIONDECK_DSH_AUTH_FILE: authFile, SESSIONDECK_DSH_BASE_URL: this.baseUrl, NODE_OPTIONS: `${baseEnv.NODE_OPTIONS ?? ''} --import ${JSON.stringify(pathToFileURL(loaderPath).href)}`.trim() };
     const child = spawn(file, ['--profile', 'web', '--patch', patchPath, '--host', '127.0.0.1', '--port', String(port), '--no-open'], { cwd: this.options.cwd ?? process.cwd(), env, stdio: ['ignore', 'ignore', 'pipe'] });
     const closed = new Promise<void>(accept => child.once('close', () => accept()));
     const cleaned = closed.then(() => rm(directory, { recursive: true, force: true }));
@@ -185,6 +198,7 @@ export class DshBridge {
       if (this.process !== child) return;
       this.ready = false; this.process = null; this.closeStreams();
       this.clearStatus(); this.abortRequests();
+      this.cookie = ''; this.authenticatedUrl = ''; this.modern = false;
     });
     try {
       while (Date.now() < deadline) {
@@ -196,17 +210,34 @@ export class DshBridge {
           assertActive();
           if (failure) throw failure;
           if (token === launchToken) {
+            const authUrl = await readFile(authFile, 'utf8').catch(() => '');
+            assertActive();
+            if (authUrl && !this.cookie) {
+              const url = new URL(authUrl);
+              if (url.origin !== this.baseUrl || url.pathname !== '/' || !url.searchParams.get('token')) throw new DshCompatibilityError('DeepSeek Harness 返回了无效的本地认证地址');
+              const exchange = await fetch(url, { signal: probeSignal(), redirect: 'manual' });
+              assertActive();
+              if (exchange.status !== 303) throw new DshCompatibilityError('DeepSeek Harness 本地认证失败');
+              this.cookie = exchange.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+              if (!this.cookie) throw new DshCompatibilityError('DeepSeek Harness 未返回本地认证凭据');
+              this.modern = true; this.authenticatedUrl = url.href;
+            }
             // The plugin route can become available before the native API has
             // finished mounting. Probe a read-only native method as well.
             const rpcId = randomUUID();
-            const api = await fetch(`${this.baseUrl}/api/session.list`, { method: 'POST', headers: { 'content-type': 'application/json', origin: this.baseUrl }, body: JSON.stringify({ type: 'client-request', rpcId, method: 'session.list', payload: {} }), signal: probeSignal(), redirect: 'error' });
+            const method = this.modern ? 'session/list' : 'session.list';
+            const api = await fetch(`${this.baseUrl}/api/${method}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: this.baseUrl, ...(this.cookie ? { cookie: this.cookie } : {}) }, body: JSON.stringify({ type: 'client-request', rpcId, method, payload: this.modern ? { args: { _request: {} } } : {} }), signal: probeSignal(), redirect: 'error' });
+            if (api.status === 401 || api.status === 403) throw new DshCompatibilityError(`DeepSeek Harness 原生 API 拒绝桥接访问（HTTP ${api.status}）。请检查原生认证与桥接版本兼容性；这不是模型服务超时。`);
             if (api.ok) {
               const result = await api.json() as { type?: string; rpcId?: string; result?: { ok?: boolean; value?: { items?: unknown } } };
               assertActive();
               if (!failure && result.type === 'server-response' && result.rpcId === rpcId && result.result?.ok === true && Array.isArray(result.result.value?.items)) { this.ready = true; this.connectEvents(); return; }
             }
           }
-        } catch { /* boot not yet bound */ }
+        } catch (error) {
+          if (error instanceof DshCompatibilityError) throw error;
+          /* boot not yet bound */
+        }
         assertActive();
         await delay(Math.min(200, deadline - Date.now()), undefined, { signal: abort.signal });
       }
@@ -232,6 +263,7 @@ export class DshBridge {
     this.starting = null;
     this.closeStreams();
     this.clearStatus(); this.abortRequests();
+    this.cookie = ''; this.authenticatedUrl = ''; this.modern = false;
     if (this.process) this.retire(this.process);
     this.process = null;
     this.ready = false;
@@ -263,9 +295,11 @@ export class DshBridge {
     this.pending.clear();
     this.streamReady = false;
     this.muxSynchronized = false;
+    this.followed.clear(); this.synchronized.clear();
   }
 
   private connectEvents(): void {
+    if (this.modern) { this.connectModernEvents(); return; }
     const generation = ++this.streamGeneration;
     this.pending.clear();
     this.historyFresh.clear();
@@ -324,14 +358,90 @@ export class DshBridge {
     });
   }
 
+  /** 0.2 multiplexes named Remote streams on one authenticated socket. Only
+   * already attached agents are followed: following a cold session activates it. */
+  private connectModernEvents(): void {
+    const generation = ++this.streamGeneration;
+    this.followed.clear(); this.synchronized.clear(); this.pending.clear();
+    this.historyFresh.clear(); this.streamReady = false; this.muxSynchronized = false;
+    const socket = new WebSocket(`${this.baseUrl.replace('http:', 'ws:')}/api/remote.mux`, { origin: this.baseUrl, headers: { cookie: this.cookie }, handshakeTimeout: 5000, maxPayload: 16 * 1024 * 1024 });
+    this.streams = [socket];
+    let reconnecting = false;
+    const reconnect = () => {
+      if (generation !== this.streamGeneration || reconnecting) return;
+      reconnecting = true; this.streamReady = false; this.muxSynchronized = false;
+      this.pending.clear(); this.followed.clear(); this.synchronized.clear(); socket.terminate();
+      const timer = setTimeout(() => { if (this.ready && generation === this.streamGeneration) this.connectModernEvents(); }, 2000);
+      timer.unref();
+    };
+    socket.on('open', () => socket.send(JSON.stringify({ type: 'open', streamId: 'control', endpoint: 'session/control', payload: { args: {} } })));
+    socket.on('message', raw => {
+      if (generation !== this.streamGeneration || reconnecting) return;
+      try {
+        const message = JSON.parse(raw.toString());
+        if (message.type !== 'item') { if (['error', 'end'].includes(message.type)) reconnect(); return; }
+        const frame = message.value;
+        if (message.streamId === 'control') {
+          if (frame?.type === 'baseline') {
+            this.streamReady = true; this.muxSynchronized = true;
+            for (const [id, block] of Object.entries(frame.value?.projections ?? {})) this.observeQuestions(id, (block as { values?: { questions?: unknown } }).values?.questions);
+          } else if (frame?.type === 'projection' && frame.key === 'questions') this.observeQuestions(frame.sessionId, frame.value);
+        } else {
+          const id = this.followed.get(message.streamId);
+          if (!id) return;
+          if (frame?.type === 'snapshot') {
+            this.pending.delete(id);
+            for (const record of frame.records ?? []) if (record.type === 'event') this.observeModernEvent(id, record.event);
+            this.observeQuestions(id, frame.projections?.values?.questions);
+            this.synchronized.add(id);
+          } else if (frame?.type === 'event') this.observeModernEvent(id, frame.event);
+        }
+        for (const listener of this.statusListeners) listener();
+      } catch { /* Unsupported frames never manufacture status. */ }
+    });
+    socket.on('error', reconnect); socket.on('close', reconnect);
+  }
+
+  private observeQuestions(id: string, value: unknown): void {
+    if (!value || typeof value !== 'object' || !Array.isArray((value as { active?: unknown }).active)) return;
+    const requests = this.pending.get(id) ?? new Map<string, 'waiting_approval' | 'waiting_input'>();
+    for (const key of requests.keys()) if (key.startsWith('question:')) requests.delete(key);
+    for (const question of (value as { active: { callId?: unknown }[] }).active) if (typeof question.callId === 'string') requests.set(`question:${question.callId}`, 'waiting_input');
+    this.pending.set(id, requests);
+  }
+
+  private observeModernEvent(id: string, event: { type?: string; data?: { id?: string }; seq?: number }): void {
+    this.observeBoundary(id, event);
+    const requests = this.pending.get(id) ?? new Map<string, 'waiting_approval' | 'waiting_input'>();
+    if (event.type === 'approval/asked' && event.data?.id) requests.set(`approval:${event.data.id}`, 'waiting_approval');
+    if (event.type === 'approval/decided' && event.data?.id) requests.delete(`approval:${event.data.id}`);
+    if (event.type === 'turn/end') requests.clear();
+    this.pending.set(id, requests);
+  }
+
+  private followAttached(id: string): void {
+    const socket = this.streams[0];
+    if (!this.modern || socket?.readyState !== WebSocket.OPEN || [...this.followed.values()].includes(id)) return;
+    const streamId = randomUUID(); this.followed.set(streamId, id);
+    socket.send(JSON.stringify({ type: 'open', streamId, endpoint: 'session/follow', payload: { args: { request: { address: { kind: 'session', sessionId: id }, maxMessages: 1 } } } }));
+  }
+
   private async rpc<T>(method: string, payload: Record<string, unknown>): Promise<T> {
     if (!this.ready) throw new Error('DeepSeek Harness 原生服务尚未启动');
+    if (this.modern && method === 'session.history') {
+      const projection = await this.rpc<{ asOfSeq: number } | null>('session.projections', { sessionId: payload.sessionId });
+      if (!projection) throw new Error('DeepSeek Harness 未返回会话历史游标');
+      const page = await this.rpc<{ records: { type: string; event?: unknown }[]; hasMore: boolean }>('session.page', { address: { kind: 'session', sessionId: payload.sessionId }, throughSeq: projection.asOfSeq, maxMessages: payload.maxMessages });
+      return { events: page.records.filter(record => record.type === 'event'), hasMore: page.hasMore } as T;
+    }
     const generation = this.bootGeneration;
     const abort = new AbortController();
     this.requests.add(abort);
     const rpcId = randomUUID();
     try {
-      const response = await fetch(`${this.baseUrl}/api/${method}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: this.baseUrl }, body: JSON.stringify({ type: 'client-request', rpcId, method, payload }), signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15000)]), redirect: 'error' });
+      const endpoint = this.modern ? method.replace('.', '/') : method;
+      const args = method === 'commands.execute' ? { agentId: payload.agentId, line: payload.line, submittedAttachments: payload.submittedAttachments } : { [method === 'session.list' ? '_request' : 'request']: payload };
+      const response = await fetch(`${this.baseUrl}/api/${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json', origin: this.baseUrl, ...(this.cookie ? { cookie: this.cookie } : {}) }, body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: this.modern ? { args } : payload }), signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15000)]), redirect: 'error' });
       if (!response.ok) throw new Error(`DeepSeek Harness API 请求失败（HTTP ${response.status}）`);
       const chunks: Uint8Array[] = []; let length = 0;
       if (!response.body) throw new Error('DeepSeek Harness 返回了空响应');
@@ -353,7 +463,7 @@ export class DshBridge {
         const message = `DeepSeek Harness：${result.result.error?.message ?? result.result.error?.code ?? '原生接口拒绝了请求'}`;
         // Generic native errors may occur after queue acceptance. Only a
         // documented pre-dispatch missing-session rejection permits retry.
-        if (method === 'session.prompt' && result.result.error?.code === 'session-not-found') throw new DeliveryNotAcceptedError(message);
+        if (method === 'session.prompt' && ['session-not-found', 'session/not-found'].includes(result.result.error?.code ?? '')) throw new DeliveryNotAcceptedError(message);
         throw new Error(message);
       }
       if (result.result?.ok !== true) throw new Error('DeepSeek Harness 返回了无效的 API 响应');
@@ -363,7 +473,7 @@ export class DshBridge {
 
   private reference(id: string): NativeSession {
     validateNativeId('dsh', id);
-    return { nativeSessionId: id, nativeUrl: `${this.baseUrl}/?sessiondeckSession=${encodeURIComponent(id)}` };
+    return { nativeSessionId: id, nativeUrl: this.authenticatedUrl ? `${this.authenticatedUrl}#sessiondeckSession=${encodeURIComponent(id)}` : `${this.baseUrl}/?sessiondeckSession=${encodeURIComponent(id)}` };
   }
 
   async createSession(cwd: string, _title?: string): Promise<NativeSession> {
@@ -403,7 +513,7 @@ export class DshBridge {
     validateNativeId('dsh', id);
     if (!text.trim()) throw new Error('消息不能为空');
     if (!this.ready) throw new Error('请先打开 DeepSeek Harness 会话');
-    await this.rpc('session.prompt', { sessionId: id, mode: 'queue', content: [{ type: 'text', text }] });
+    await this.rpc('session.prompt', { sessionId: id, ...(this.modern ? { requestId: randomUUID() } : {}), mode: 'queue', content: [{ type: 'text', text }] });
   }
 
   /** Native history is explicitly read-only: it never attaches or resumes an
@@ -487,6 +597,7 @@ export class DshBridge {
       const revisions = new Map(unique.map(id => [id, this.revisions.get(id) ?? 0]));
       const result = await this.rpc<{ items: DshSummary[] }>('session.list', {});
       const items = new Map((Array.isArray(result.items) ? result.items : []).filter(row => row?.sessionId).map(row => [row.sessionId, row]));
+      if (this.modern) for (const id of unique) if (items.get(id)?.agentAvailable) this.followAttached(id);
       const statuses = new Map<string, DshStatus>();
       const pending = [...unique];
       await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
@@ -527,7 +638,7 @@ export class DshBridge {
     if (approval) return { status: 'waiting_approval', detail: 'DeepSeek Harness 正在等待审批', attentionKey: `dsh:${id}:${approval[0]}` };
     if (question) return { status: 'waiting_input', detail: 'DeepSeek Harness 正在等待回答', attentionKey: `dsh:${id}:${question[0]}` };
     if (this.failed.has(id)) return { status: 'error', detail: 'DeepSeek Harness 报告执行错误，请进入原生会话查看', attentionKey: this.failed.get(id) };
-    if (running && this.options.manageProcess !== false && (!this.streamReady || !this.muxSynchronized)) return { status: 'unknown', detail: '原生服务正在运行；等待事件流确认执行或审批状态' };
+    if (running && this.options.manageProcess !== false && (!this.streamReady || !this.muxSynchronized || (this.modern && !this.synchronized.has(id)))) return { status: 'unknown', detail: '原生服务正在运行；等待事件流确认执行或审批状态' };
     if (!running && this.completed.has(id)) return { status: 'waiting_input', detail: 'DeepSeek Harness 本轮已结束，可以继续或验收', attentionKey: this.completed.get(id) };
     return { status: running ? 'running' : 'idle', detail: running ? 'DeepSeek Harness 报告运行中' : 'DeepSeek Harness 报告空闲' };
   }

@@ -45,25 +45,38 @@ export class Attachments {
 export function registerAttachments(app: express.Express, raw: typeof express.raw, files: Attachments, options: {
   csrf(req: express.Request, res: express.Response): boolean;
   allowed(id: string): boolean;
+  allowedGroup?(id: string): boolean;
 }) {
-  app.post('/api/sessions/:id/attachments', (req, res, next) => {
-    if (!options.csrf(req,res)) return res.status(403).json({error:'操作凭证已过期，请刷新页面'});
-    if (!options.allowed(String(req.params.id))) return res.status(409).json({error:'当前平台暂不支持图形图片附件'});
-    const type = req.headers['content-type']?.split(';',1)[0];
-    if (!(TERMINAL_IMAGE_TYPES as readonly string[]).includes(type ?? '')) return res.status(415).json({error:'仅支持 PNG、JPEG、GIF 或 WebP 图片'});
-    const length = Number(req.headers['content-length']);
-    if (Number.isFinite(length) && length > MAX_TERMINAL_IMAGE_BYTES) return res.status(413).json({error:'图片不能超过 10 MiB'});
-    next();
-  }, raw({type:()=>true,limit:MAX_TERMINAL_IMAGE_BYTES}), async (req,res) => {
-    const id = String(req.params.id);
-    if (!options.allowed(id)) fail('会话状态已变化，请重新添加图片',409);
-    let name = '图片';
-    try { name = decodeURIComponent(String(req.headers['x-dili-filename'] ?? name)); } catch { /* fallback name */ }
-    res.status(201).json(await files.add(id, req.headers['content-type']!.split(';',1)[0] as TerminalImageType, req.body, name));
-  });
-  app.get('/api/sessions/:id/attachments/:attachmentId', async (req,res) => {
-    const item = files.get(String(req.params.id),String(req.params.attachmentId));
+
+  const upload = (group: boolean): express.RequestHandler[] => [
+    (req, res, next) => {
+      if (!options.csrf(req,res)) { res.status(403).json({error:'操作凭证已过期，请刷新页面'}); return; }
+      const allowed = group ? options.allowedGroup : options.allowed;
+      if (!allowed?.(String(req.params.id))) { res.status(409).json({error:'当前会话或群聊不可用'}); return; }
+      const type = req.headers['content-type']?.split(';',1)[0];
+      if (!(TERMINAL_IMAGE_TYPES as readonly string[]).includes(type ?? '')) { res.status(415).json({error:'仅支持 PNG、JPEG、GIF 或 WebP 图片'}); return; }
+      const length = Number(req.headers['content-length']);
+      if (Number.isFinite(length) && length > MAX_TERMINAL_IMAGE_BYTES) { res.status(413).json({error:'图片不能超过 10 MiB'}); return; }
+      next();
+    },
+    raw({type:()=>true,limit:MAX_TERMINAL_IMAGE_BYTES}),
+    async (req,res) => {
+      const id = String(req.params.id);
+      if (!(group ? options.allowedGroup : options.allowed)?.(id)) fail('状态已变化，请重新添加图片',409);
+      let name = '图片';
+      try { name = decodeURIComponent(String(req.headers['x-dili-filename'] ?? name)); } catch { /* fallback name */ }
+      res.status(201).json(await files.add(group ? groupAttachmentScope(id) : id, req.headers['content-type']!.split(';',1)[0] as TerminalImageType, req.body, name));
+    },
+  ];
+  const download = (group: boolean): express.RequestHandler => async (req,res) => {
+    const item = files.get(group ? groupAttachmentScope(String(req.params.id)) : String(req.params.id),String(req.params.attachmentId));
     res.setHeader('Content-Type',item.type); res.setHeader('Cache-Control','private, no-store');
     res.send(await readFile(files.path(item)));
-  });
+  };
+  app.post('/api/sessions/:id/attachments', ...upload(false));
+  app.get('/api/sessions/:id/attachments/:attachmentId', download(false));
+  app.post('/api/groups/:id/attachments', ...upload(true));
+  app.get('/api/groups/:id/attachments/:attachmentId', download(true));
 }
+/** Separate storage namespace; a group upload never grants session attachment access. */
+export const groupAttachmentScope = (id: string) => 'group:' + id;

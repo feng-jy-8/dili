@@ -33,18 +33,77 @@ test('groups are contact-list cards with a tiled avatar; "+" starts a group chat
   await page.getByRole('button', { name: '新建', exact: true }).click();
   await page.getByRole('menuitem', { name: '发起群聊', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '创建协作群组' });
-  await expect(dialog.getByLabel('群 prompt')).toHaveValue(/## 结论/);
+  await expect(dialog.getByLabel('群 prompt')).toHaveValue(/你对任务的最后回答会自动显示在群里/);
   await dialog.getByLabel('群组名称').fill('新建群聊回归');
   await dialog.getByRole('button', { name: '创建群组', exact: true }).click();
   await expect(page.locator('.group-card').filter({ hasText: '新建群聊回归' })).toBeVisible();
   await page.getByRole('button', { name: '添加成员', exact: true }).first().click();
   const member = page.getByRole('dialog', { name: '添加群组成员' });
   // The new group took the default directory as its workspace: members share it by default.
-  await expect(member.getByRole('radio', { name: /群工作区/ })).toBeChecked();
+  await expect(member.getByRole('radio', { name: /^群工作区/ })).toBeChecked();
   await expect(member.getByRole('radio', { name: /独立工作树/ })).toBeVisible();
   await expect(member.getByLabel('工作目录', { exact: true })).toBeHidden();
   await member.getByRole('radio', { name: /其他目录/ }).check();
   await expect(member.getByLabel('工作目录', { exact: true })).toBeVisible();
+});
+
+test('@ member picker supports keyboard navigation, filtering and confirmation without sending', async ({ page }) => {
+  const { group } = await createGroup(page.request, '键盘群聊');
+  await page.goto(`/#/groups/${group.id}`);
+  const composer = page.getByLabel('群组消息');
+  const menu = page.getByRole('listbox', { name: '选择要 @ 的成员' });
+  await composer.fill('请@');
+  const options = menu.getByRole('option');
+  await expect(options).toHaveCount(3);
+  await expect(options.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await composer.press('ArrowUp');
+  await expect(options.nth(2)).toHaveAttribute('aria-selected', 'true');
+  await composer.press('ArrowDown');
+  await expect(options.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await composer.press('ArrowDown');
+  const selectedName = await options.nth(1).innerText();
+  await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await composer.press('Enter');
+  await expect(menu).toBeHidden();
+  await expect(composer).toHaveValue(`请@${selectedName.trim()} `);
+  await composer.press('Backspace');
+  await expect(composer).toHaveValue('请');
+  await expect(page.locator('.recipient-picker').getByRole('button', { name: selectedName.trim() })).toHaveAttribute('aria-pressed', 'false');
+  await composer.fill('请@');
+  await composer.press('ArrowDown');
+  await composer.press('Enter');
+  await expect(page.locator('.recipient-picker').getByRole('button', { name: selectedName.trim() })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.group-message').filter({ hasText: '请' })).toHaveCount(0);
+  await composer.fill('请@验证');
+  await expect(menu.getByRole('option')).toHaveAttribute('aria-selected', 'true');
+  await composer.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(composer).toHaveValue('请@验证');
+});
+
+test('inline @ survives draft reload and deleting it cancels delivery while preserving text', async ({ page }) => {
+  const { group, members } = await createGroup(page.request, '行内指派');
+  await page.goto(`/#/groups/${group.id}`);
+  const composer = page.getByLabel('群组消息');
+  const recipient = page.locator('.recipient-picker').getByRole('button', { name: members[0].title });
+  await composer.fill('保留正文');
+  await recipient.click();
+  await expect(composer).toHaveValue(`@${members[0].title} 保留正文`);
+  await page.reload();
+  await expect(composer).toHaveValue(`@${members[0].title} 保留正文`);
+  await expect(recipient).toHaveAttribute('aria-pressed', 'true');
+  await composer.focus();
+  await composer.press('Home');
+  await composer.press('Delete');
+  await expect(composer).toHaveValue('保留正文');
+  await expect(recipient).toHaveAttribute('aria-pressed', 'false');
+  const sent = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith(`/groups/${group.id}/messages`));
+  await composer.press('End');
+  await composer.press('Enter');
+  const body = (await sent).postDataJSON();
+  expect(body.recipientIds).toEqual([]);
+  expect(body.kind).toBe('note');
+  expect(body.text).toBe('保留正文');
 });
 
 test('only-one-member filter, @ mention, quote chips and split columns', async ({ page }) => {
@@ -52,20 +111,20 @@ test('only-one-member filter, @ mention, quote chips and split columns', async (
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(`/#/groups/${group.id}`);
   await expect(page.getByText('方案成员的结论')).toBeVisible();
-  await expect(page.getByText('我的记录')).toBeVisible();
+  await expect(page.getByText('我的记录', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: `只看 ${members[0].title}` }).click();
   await expect(page.locator('.group-only-bar')).toContainText(members[0].title);
   await expect(page.getByText('方案成员的结论')).toBeVisible();
-  await expect(page.getByText('我的记录')).toBeHidden();
+  await expect(page.getByText('我的记录', { exact: true })).toBeHidden();
   await page.getByRole('button', { name: '查看全部' }).click();
-  await expect(page.getByText('我的记录')).toBeVisible();
+  await expect(page.getByText('我的记录', { exact: true })).toBeVisible();
 
   const composer = page.getByLabel('群组消息');
   // No space is needed before "@".
   await composer.fill('请@实现');
   await page.getByRole('listbox', { name: '选择要 @ 的成员' }).getByRole('option', { name: /实现成员/ }).click();
-  await expect(composer).toHaveValue('请');
+  await expect(composer).toHaveValue(`请@${members[1].title} `);
   await expect(page.locator('.recipient-picker').getByRole('button', { name: /实现成员/ })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: '发送任务', exact: true })).toBeVisible();
   await page.locator('.group-message.kind-result').getByRole('button', { name: '引用' }).click();
@@ -73,7 +132,7 @@ test('only-one-member filter, @ mention, quote chips and split columns', async (
 
   // Enter sends; Shift+Enter is a newline.
   await composer.fill('');
-  await page.locator('.recipient-picker').getByRole('button', { name: /实现成员/ }).click();
+  await expect(page.locator('.recipient-picker').getByRole('button', { name: /实现成员/ })).toHaveAttribute('aria-pressed', 'false');
   await composer.pressSequentially('第一行');
   await composer.press('Shift+Enter');
   await composer.pressSequentially('第二行');
@@ -106,6 +165,14 @@ test.describe('phone group chat', () => {
     await expect(page).toHaveURL(new RegExp(`groups/${group.id}`));
     await expect(page.locator('.contacts-pane')).toBeHidden();
     await expect(page.getByLabel('群组消息')).toBeInViewport();
+    const toolbar = page.locator('.group-composer .attachment-actions');
+    const imageButton = await toolbar.getByRole('button', { name: '添加图片', exact: true }).boundingBox();
+    const voiceButton = await toolbar.getByRole('button', { name: '语音输入', exact: true }).boundingBox();
+    const sendButton = await toolbar.getByRole('button', { name: '发送', exact: true }).boundingBox();
+    expect(imageButton && voiceButton && sendButton).toBeTruthy();
+    expect(Math.abs(imageButton!.y + imageButton!.height / 2 - voiceButton!.y - voiceButton!.height / 2)).toBeLessThan(2);
+    expect(Math.abs(imageButton!.y + imageButton!.height / 2 - sendButton!.y - sendButton!.height / 2)).toBeLessThan(2);
+
     await page.getByRole('button', { name: '一键分栏' }).click();
     await expect(page.getByRole('tab')).toHaveCount(3);
     await expect(page.locator('.group-split-pane')).toHaveCount(1);
@@ -113,4 +180,59 @@ test.describe('phone group chat', () => {
     await expect(page.locator('.group-card').filter({ hasText: '手机群聊' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
+});
+
+test('confirmed inline @ is routing only and is excluded from submitted task text', async ({ page }) => {
+  const { group, members } = await createGroup(page.request, '正文去除指派');
+  await page.goto(`/#/groups/${group.id}`);
+  const composer = page.getByLabel('群组消息');
+  await composer.fill('检查接口');
+  await page.locator('.recipient-picker').getByRole('button', { name: members[0].title }).click();
+  await expect(composer).toHaveValue(`@${members[0].title} 检查接口`);
+  let submitted: Record<string, unknown> | undefined;
+  await page.route(`**/api/groups/${group.id}/messages`, async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    submitted = route.request().postDataJSON();
+    await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'test interception' }) });
+  });
+  await composer.press('Enter');
+  await expect.poll(() => submitted).toBeTruthy();
+  expect(submitted!.text).toBe('检查接口');
+  expect(submitted!.recipientIds).toEqual([members[0].id]);
+  expect(submitted!.kind).toBe('task');
+  await composer.fill(`@${members[0].title} `);
+  submitted = undefined;
+  await composer.press('Enter');
+  await expect(page.getByRole('alert').filter({ hasText: '请输入任务正文' })).toBeVisible();
+  expect(submitted).toBeUndefined();
+});
+
+test('group composer pastes images, restores drafts, sends image-only messages and enforces group scope', async ({ page }) => {
+  const { group } = await createGroup(page.request, '图片群聊');
+  const other = await createGroup(page.request, '隔离图片群聊');
+  await page.goto(`/#/groups/${group.id}`);
+  const input = page.getByLabel('群组消息');
+  await input.evaluate(element => {
+    const clipboardData = new DataTransfer();
+    const data = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='), c => c.charCodeAt(0));
+    clipboardData.items.add(new File([data], '截图.png', { type: 'image/png' }));
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByLabel('待发送图片').locator('img')).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByLabel('待发送图片').locator('img')).toHaveCount(1);
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await expect(page.getByLabel('待发送图片')).toHaveCount(0);
+  await expect(page.getByLabel('消息图片').locator('img')).toHaveCount(1);
+  const detail = await (await page.request.get(`/api/groups/${group.id}`)).json();
+  const message = detail.messages.find((item: { attachments?: unknown[] }) => item.attachments?.length);
+  expect(message.text).toBe('');
+  const id = message.attachments[0].id;
+  expect((await page.request.get(`/api/groups/${group.id}/attachments/${id}`)).status()).toBe(200);
+  expect((await page.request.get(`/api/groups/${other.group.id}/attachments/${id}`)).status()).toBe(404);
+  const headers = await mutationHeaders(page.request);
+  expect((await page.request.post(`/api/groups/${other.group.id}/messages`, { headers, data: { text: '不能跨群借用图片', attachments: [id] } })).status()).toBe(404);
+  await page.getByRole('button', { name: '语音输入', exact: true }).click();
+  await expect(page.locator('.voice-error')).toBeVisible();
+  await expect(input).toHaveValue('');
 });

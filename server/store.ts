@@ -146,7 +146,7 @@ export class Store {
       for (const id of recipientIds) {
         if (this.session(id)?.groupId !== input.groupId || this.session(id)?.archived) throw new Error('接收成员无效或已归档');
       }
-      const preview = replyPreview(input.text);
+      const preview = replyPreview(input.text || (input.attachments?.length ? '[图片]' : ''));
       const group = this.updateGroup(input.groupId, {
         lastMessage: { text: preview, senderName: input.senderName, at: now() },
         // Only member replies are new to the user; their own messages are already read.

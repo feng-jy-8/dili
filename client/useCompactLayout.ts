@@ -25,8 +25,8 @@ export function useAutoGrow(field: RefObject<HTMLTextAreaElement | null>, value:
       const line = parseFloat(style.lineHeight) || 24;
       const chrome = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
       const max = Math.max(line + chrome, Math.min(line * 6 + chrome, viewportHeight() * .35));
-      element.style.height = 'auto';
-      const height = Math.min(element.scrollHeight + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth), max);
+      element.style.height = '0px';
+      const height = Math.min(value ? element.scrollHeight + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth) : line + chrome, max);
       element.style.height = `${height}px`;
       element.style.overflowY = element.scrollHeight > height ? 'auto' : 'hidden';
     };

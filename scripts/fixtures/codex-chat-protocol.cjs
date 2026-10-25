@@ -12,6 +12,7 @@ if (args[0] !== 'app-server') {
   if (!args.includes('--remote')) throw new Error('Unexpected fixture command');
   const id = args[args.indexOf('resume') + 1];
   log({ event: 'tui', nativeId: id });
+  if (fs.existsSync(dir + '/fail-tui')) process.exit(42);
   const socket = new WebSocket(args[args.indexOf('--remote') + 1], { headers: { Authorization: 'Bearer ' + process.env.SESSIONDECK_CODEX_TOKEN } });
   socket.on('error', () => process.exit(1));
   socket.on('open', () => {

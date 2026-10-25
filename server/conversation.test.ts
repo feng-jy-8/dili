@@ -76,6 +76,8 @@ test('Codex uses native user events and excludes duplicate input, system, tools 
     { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '# AGENTS.md instructions for /workspace\nsecret instructions' }] } },
     { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '真实用户问题' }] } },
     { type: 'event_msg', timestamp: date, payload: { type: 'user_message', message: '真实用户问题' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: '# AGENTS.md instructions for /workspace\nsynthetic instructions' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: '<environment_context>synthetic environment</environment_context>' } },
     { type: 'response_item', payload: { type: 'reasoning', summary: [{ text: 'hidden reasoning' }] } },
     { type: 'response_item', payload: { type: 'function_call_output', output: 'hidden output' } },
     { type: 'response_item', timestamp: date, payload: { id: 'answer-1', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '已找到解决办法' }] } },

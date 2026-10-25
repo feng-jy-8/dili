@@ -1,0 +1,55 @@
+import { mutationHeaders, test } from './fixtures';
+import { expect } from '@playwright/test';
+
+test('group share entry, live collaboration, read-only access and revocation', async ({ page, request, browser, baseURL }) => {
+  const headers = await mutationHeaders(request);
+  const groupResponse = await request.post('/api/groups', { headers, data: { title: '群分享验收', goal: '跨浏览器协作' } });
+  expect(groupResponse.ok()).toBeTruthy();
+  const group = await groupResponse.json();
+  const memberResponse = await request.post('/api/sessions', { headers, data: { backend: 'codex', title: '协作成员', cwd: process.cwd(), groupId: group.id, briefing: 'silent' } });
+  expect(memberResponse.ok()).toBeTruthy();
+  await page.goto(`/#/groups/${group.id}`);
+  await page.getByRole('button', { name: '分享群聊', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '分享群聊', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '可协作', exact: true }).click();
+  await page.getByRole('button', { name: '生成并复制链接' }).click();
+  const url = await page.locator('.share-created code').textContent();
+  const remote = new URL(baseURL!); remote.port = String(Number(remote.port) + 1);
+  const context = await browser.newContext();
+  const guest = await context.newPage();
+  try {
+    await guest.goto(`${remote.origin}/#/share/${url!.split('/#/share/')[1]}`);
+    await guest.getByLabel('你的名字').fill('协作访客');
+    await guest.getByRole('button', { name: '进入会话' }).click();
+    await expect(guest.getByRole('heading', { name: '群分享验收' })).toBeVisible();
+    await guest.getByLabel('群消息内容').fill('访客协作消息');
+    await guest.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(guest.getByLabel('群消息', { exact: true })).toContainText('访客协作消息');
+    await expect(guest.getByLabel('群消息', { exact: true })).toContainText('协作访客');
+    await request.post(`/api/groups/${group.id}/messages`, { headers, data: { text: '所有者实时回复' } });
+    await expect(guest.getByLabel('群消息', { exact: true })).toContainText('所有者实时回复');
+    await guest.locator('input[type="file"]').setInputFiles({ name: '协作截图.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') });
+    await expect(guest.getByLabel('待发送图片').locator('img')).toHaveCount(1);
+    await guest.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(guest.getByLabel('消息图片').locator('img')).toHaveCount(1);
+    await expect(guest.getByRole('button', { name: '语音输入', exact: true })).toBeVisible();
+    await guest.getByLabel('@协作成员', { exact: true }).check();
+    await guest.getByLabel('群消息内容').fill('协作任务');
+    await guest.getByRole('button', { name: '发送并分派' }).click();
+    await expect(guest.getByLabel('群消息', { exact: true })).toContainText('协作任务');
+    const readResponse = await request.post(`/api/groups/${group.id}/shares`, { headers, data: { mode: 'read', ttlDays: 1 } });
+    const readLink = await readResponse.json();
+    await guest.getByRole('button', { name: '退出共享' }).click();
+    await guest.goto(`${remote.origin}/#/share/${readLink.url.split('/#/share/')[1]}`);
+    await guest.getByLabel('你的名字').fill('只读访客');
+    await guest.getByRole('button', { name: '进入会话' }).click();
+    await expect(guest.getByLabel('群消息', { exact: true })).toContainText('协作任务');
+    await expect(guest.getByLabel('群消息内容')).toHaveCount(0);
+    const sharedImage = guest.getByLabel('消息图片').locator('img');
+    await expect(sharedImage).toHaveCount(1);
+    expect((await guest.request.get((await sharedImage.getAttribute('src'))!)).status()).toBe(200);
+    await expect(guest.getByRole('button', { name: '语音输入', exact: true })).toHaveCount(0);
+    await request.delete(`/api/shares/${readLink.share.id}`, { headers, data: {} });
+    await expect(guest.getByRole('heading', { name: '群分享验收' })).toHaveCount(0);
+  } finally { await context.close(); }
+});

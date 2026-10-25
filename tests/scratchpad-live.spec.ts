@@ -10,7 +10,10 @@ async function seed(request: APIRequestContext, content: string) {
 }
 async function open(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: '打开随手记', exact: true }).click();
+  if ((page.viewportSize()?.width ?? 1440) <= 720) {
+    await page.locator('.rail').getByRole('button', { name: '更多', exact: true }).click();
+    await page.getByRole('menuitem', { name: '随手记', exact: true }).click();
+  } else await page.getByRole('button', { name: '打开随手记', exact: true }).click();
   const panel = page.getByRole('complementary', { name: '随手记', exact: true });
   const editor = panel.getByRole('textbox', { name: '随手记实时编辑' });
   await expect(editor).toBeVisible();
@@ -46,7 +49,10 @@ test('live Markdown renders without rewriting source; typing survives save ackno
   await panel.getByRole('button', { name: '关闭随手记' }).click();
   await expect.poll(async () => (await read(request)).content).toContain('继续记录，保持光标');
   await page.reload();
-  await page.getByRole('button', { name: '打开随手记', exact: true }).click();
+  if ((page.viewportSize()?.width ?? 1440) <= 720) {
+    await page.locator('.rail').getByRole('button', { name: '更多', exact: true }).click();
+    await page.getByRole('menuitem', { name: '随手记', exact: true }).click();
+  } else await page.getByRole('button', { name: '打开随手记', exact: true }).click();
   await expect(editor).toContainText('继续记录，保持光标');
   await page.screenshot({ path: 'artifacts/scratchpad-live-desktop.png' });
 });
@@ -78,9 +84,18 @@ test('Markdown paste, nested tasks, clear/restore and keyboard undo preserve sav
 test('live editor preserves drafts through offline conflict resolution and theme changes', async ({ page, request }) => {
   await seed(request, '# 初始\n');
   const { panel, editor } = await open(page);
-  // Context routing also covers pagehide's save while the old page unloads.
-  await page.context().route('**/api/scratchpad', route => route.request().method() === 'PATCH' ? route.abort() : route.continue());
-  await editor.press('Control+End'); await page.keyboard.insertText('我的草稿');
+  // Block in-page fetch as well as unload-time saves; browser route interception
+  // may stop observing the old document while pagehide handlers still run.
+  const simulateOffline = () => {
+    const original = window.fetch.bind(window);
+    window.fetch = (input, init) => sessionStorage.getItem('scratchpad-test-offline') === '1' && String(input).endsWith('/api/scratchpad') && init?.method === 'PATCH'
+      ? Promise.resolve(new Response(JSON.stringify({ error: '模拟保存服务离线' }), { status: 503, headers: { 'Content-Type': 'application/json' } }))
+      : original(input, init);
+  };
+  await page.addInitScript(simulateOffline);
+  await page.evaluate(simulateOffline);
+  await page.evaluate(() => sessionStorage.setItem('scratchpad-test-offline', '1'));
+  await editor.click(); await editor.press('Control+End'); await page.keyboard.insertText('我的草稿');
   await expect(panel.getByRole('status')).toHaveText('保存未完成');
   await page.reload();
   await expect(editor).toContainText('我的草稿');
@@ -89,7 +104,7 @@ test('live editor preserves drafts through offline conflict resolution and theme
   // and remove the retry button before this test clicks it.
   await expect(panel.getByRole('status')).toHaveText('保存未完成');
   await seed(request, '# 其他设备更新\n');
-  await page.context().unroute('**/api/scratchpad');
+  await page.evaluate(() => sessionStorage.removeItem('scratchpad-test-offline'));
   await panel.getByRole('button', { name: '重试', exact: true }).click();
   await expect(panel.getByRole('status')).toHaveText('需要核对');
   await panel.getByRole('button', { name: '使用最新内容' }).click();
@@ -159,7 +174,10 @@ test('parser load failure keeps source editing available', async ({ page, reques
   await seed(request, '# 保留笔记\n');
   await page.route('**/lute.min-*.js', route => route.abort());
   await page.goto('/');
-  await page.getByRole('button', { name: '打开随手记', exact: true }).click();
+  if ((page.viewportSize()?.width ?? 1440) <= 720) {
+    await page.locator('.rail').getByRole('button', { name: '更多', exact: true }).click();
+    await page.getByRole('menuitem', { name: '随手记', exact: true }).click();
+  } else await page.getByRole('button', { name: '打开随手记', exact: true }).click();
   const panel = page.getByRole('complementary', { name: '随手记', exact: true });
   await expect(panel.getByRole('alert')).toContainText('编辑器资源加载失败');
   await panel.getByRole('button', { name: '源码', exact: true }).click();

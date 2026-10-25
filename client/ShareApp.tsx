@@ -1,3 +1,4 @@
+import GroupShareApp from './GroupShareApp';
 import { appUrl } from './urls';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Folder, LoaderCircle, LogOut, MessageSquare, Play, Square, TerminalSquare } from 'lucide-react';
@@ -20,6 +21,9 @@ const ignoreSelection = () => {};
  * scope; this view only avoids offering actions that would be refused.
  */
 export default function ShareApp({ status }: { status: ShareStatus }) {
+  return status.groupId ? <GroupShareApp status={status} /> : <SessionShareApp status={status} />;
+}
+function SessionShareApp({ status }: { status: ShareStatus }) {
   const [state, setState] = useState<AppState | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState('');
