@@ -170,6 +170,9 @@ test('mobile live typing defers Chinese composition saves and rejects oversized 
   await page.screenshot({ path: 'artifacts/scratchpad-live-mobile.png' });
 });
 
+test.describe('editor resource failure without cached workers', () => {
+  test.use({ serviceWorkers: 'block' });
+
 test('parser load failure keeps source editing available', async ({ page, request }) => {
   await seed(request, '# 保留笔记\n');
   await page.route('**/lute.min-*.js', route => route.abort());
@@ -182,4 +185,6 @@ test('parser load failure keeps source editing available', async ({ page, reques
   await expect(panel.getByRole('alert')).toContainText('编辑器资源加载失败');
   await panel.getByRole('button', { name: '源码', exact: true }).click();
   await expect(panel.getByRole('textbox')).toHaveValue('# 保留笔记\n');
+});
+
 });

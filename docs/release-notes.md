@@ -1,4 +1,4 @@
-## Dili 0.5.1 — 多机器 PWA
+## Dili 0.5.2 — 多机器 PWA
 
 - 打开机器首页，点 + 输入机器链接，在目标机器验证密码后保存卡片；支持多机器、删除、打开联系人与返回。
 - 电脑 Chrome/Edge、Android Chrome、iPhone Safari 使用同一套界面；提供 manifest、安装图标和离线机器列表。
@@ -7,10 +7,10 @@
 
 ### 下载
 
-- `dili-pwa-0.5.1-all-platforms.tar.gz`：独立静态 PWA，解压部署在 HTTPS 域名根目录，浏览器打开后安装。
-- `dili-0.5.1-linux-x86_64.tar.gz`：机器端工作台，需要 Node.js 24+。
-- `dili-relay-0.5.1-linux-x86_64.tar.gz`：中继服务包，仍需配置 TLS/Caddy/frps。
-- `dili-workbench-0.5.1.tgz`：npm 格式安装包，未发布到 npm registry。
+- `dili-pwa-0.5.2-all-platforms.tar.gz`：独立静态 PWA，解压部署在 HTTPS 域名根目录，浏览器打开后安装。
+- `dili-0.5.2-linux-x86_64.tar.gz`：机器端工作台，需要 Node.js 24+。
+- `dili-relay-0.5.2-linux-x86_64.tar.gz`：中继服务包，仍需配置 TLS/Caddy/frps。
+- `dili-workbench-0.5.2.tgz`：npm 格式安装包，未发布到 npm registry。
 - `SHA256SUMS`：下载校验值。
 
 ### 当前限制
