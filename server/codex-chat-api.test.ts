@@ -388,6 +388,8 @@ test('Claude graphical execution streams once, handles approvals/questions, and 
   const terminal = await request<Session>(path + '/start', 'POST', { mode: 'terminal', handoff: true });
   assert.equal(terminal.nativeSessionId, started.nativeSessionId);
   assert.equal(terminal.executionTransport, 'pty');
+  // Wait for the child to start before handing off and terminating its PTY.
+  await until(async () => !!(await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8').catch(() => '')), 'Claude terminal launch was not recorded');
   assert.equal((await snapshot(source.id)).connected, false);
   await request(path + '/chat/messages', 'POST', { requestId: randomUUID(), text: 'Must not write' }, 409);
   await request(path, 'PATCH', { status: 'waiting_input' });
@@ -396,8 +398,6 @@ test('Claude graphical execution streams once, handles approvals/questions, and 
   assert.equal(restored.nativeSessionId, started.nativeSessionId);
   assert.equal((await snapshot(source.id)).connected, true);
   assert.ok((await snapshot(source.id)).items.some(item => item.text === payload.text));
-  // The fake TUI records its launch asynchronously after the PTY starts.
-  await until(async () => !!(await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8').catch(() => '')), 'Claude terminal launch was not recorded', 30_000);
   assert.equal((await readFile(join(f.directory, 'claude-launches.jsonl'), 'utf8')).trim().split('\n').length, 1);
 });
 
