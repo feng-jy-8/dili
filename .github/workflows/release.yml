@@ -33,7 +33,7 @@ jobs:
           node --input-type=module <<'JS'
           import { existsSync, readFileSync } from 'node:fs';
           if (existsSync('verify.log')) {
-            const log = readFileSync('verify.log', 'utf8').slice(-60000);
+            const log = readFileSync('verify.log', 'utf8').slice(-3500);
             console.log('::error title=Verification diagnostics::' + log.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A'));
           }
           JS
