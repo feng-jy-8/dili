@@ -23,7 +23,7 @@ cd dili
 ```sh
 npm ci
 npm pack
-npm install -g ./dili-workbench-0.5.0.tgz
+npm install -g ./dili-workbench-0.5.1.tgz
 dili
 ```
 

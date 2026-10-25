@@ -1,10 +1,10 @@
 # 正式版发布清单
 
-当前代码版本：0.5.0。通过 GitHub Release 分发安装包；未发布到 npm registry。发布记录不代表下面未勾选的真机或生产环境验收已经完成。
+当前代码版本：0.5.1。通过 GitHub Release 分发安装包；未发布到 npm registry。发布记录不代表下面未勾选的真机或生产环境验收已经完成。
 
 ## 发布范围与承诺
 
-首个正式版优先支持 Linux x86_64 / WSL2 x86_64，Node.js 24+；工作台浏览器以当前 Chromium 为主。0.5.0 新增电脑、Android Chromium 与 iPhone WebKit 的 PWA 入口自动化验证；手机安装和系统权限仍需真机验收。WSL2 沿用 Linux 运行方式，但需要在真实 Windows + WSL2 环境补做安装、中文输入、目录访问和启动验收。Windows 原生、macOS、ARM64 不在本轮正式发行保证内。
+首个正式版优先支持 Linux x86_64 / WSL2 x86_64，Node.js 24+；工作台浏览器以当前 Chromium 为主。0.5.1 新增电脑、Android Chromium 与 iPhone WebKit 的 PWA 入口自动化验证；手机安装和系统权限仍需真机验收。WSL2 沿用 Linux 运行方式，但需要在真实 Windows + WSL2 环境补做安装、中文输入、目录访问和启动验收。Windows 原生、macOS、ARM64 不在本轮正式发行保证内。
 
 Dili 是本地 Web 工作台；工作目录、会话和笔记留在服务主机。Claude / Codex / Harness 仍独立负责认证、付费、模型执行与权限。API 配置保存时不产生模型请求，也不保证账号或服务商兼容。
 
@@ -37,3 +37,5 @@ npm run package:release
 本地 `npm pack` 会先原子构建网页；得到 `dili-workbench-0.4.0-dev.0.tgz`。流水线保存 npm tarball、Linux 工作台/中继 tar.gz 和 SHA256SUMS；此阶段不自动发布 npm。
 
 发布脚本不会为你创建 tag 或上传。收到针对目标仓库、版本和 npm 包的具体授权后，再推送版本 tag 触发 GitHub Release；npm 发布单独执行/配置可信发布。正式版的准入条件是制品、真实 Agent 和远程工作流全部通过，而不是仅有一个版本标签。
+
+服务端测试文件按顺序运行：现有子进程集成测试先探测空闲端口再启动服务，并行运行会产生端口复用竞争。保留所有权限、隔离与协议回归，后续统一改为原子分配端口的测试启动器后再恢复文件级并行。

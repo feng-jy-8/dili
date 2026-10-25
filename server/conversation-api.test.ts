@@ -110,7 +110,12 @@ test('HTTP conversation reads exact stopped native histories and refreshes card 
   t.after(async () => { await stop(child); rmSync(temporary, { recursive: true, force: true }); });
   await until(async () => {
     if (child.exitCode !== null) throw new Error(`Conversation fixture exited: ${output}`);
-    try { return (await fetch(`${base}/api/config`)).ok; } catch { return false; }
+    try {
+      const response = await fetch(`${base}/api/state`);
+      if (!response.ok) return false;
+      const state = await response.json() as AppState;
+      return state.sessions?.some(session => session.id === claude.id) === true;
+    } catch { return false; }
   }, 'Isolated conversation server did not start', 12_000);
 
   async function get<T>(path: string, expected = 200): Promise<T> {
