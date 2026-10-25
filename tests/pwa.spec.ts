@@ -3,6 +3,9 @@ import { test } from './fixtures';
 import { createServer, request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+// PWA assertions require actual workers even in the standard UI regression run.
+test.use({ serviceWorkers: 'allow' });
+
 for (const width of [1440, 412, 390]) test(`machine launcher pairs, persists and opens contacts at ${width}px`, async ({ page, baseURL }) => {
   await page.setViewportSize({ width, height: 844 });
   await page.goto('/#/machines');
