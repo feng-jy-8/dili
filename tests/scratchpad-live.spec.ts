@@ -126,6 +126,9 @@ test('live editor preserves drafts through offline conflict resolution and theme
 test('editor resources stay local; image and HTML source cannot load remote content or execute', async ({ page, request }) => {
   const content = '# 安全记录\n\n![示例](https://example.invalid/image.png)\n\n<img src="https://example.invalid/raw.png" onerror="window.pwned=1">\n\n<iframe src="https://example.invalid/frame"></iframe>\n\n```plantuml\nAlice -> Bob: hello\n```\n';
   const initial = await seed(request, content);
+  // Keep the independent daily update checker dormant: this test audits
+  // requests caused by untrusted editor content, not the application updater.
+  await page.addInitScript(() => localStorage.setItem('dili.version-check.v1', JSON.stringify({ tag: null, time: Date.now() })));
   const external: string[] = [];
   page.on('request', req => { if (/^https?:/.test(req.url()) && new URL(req.url()).hostname !== '127.0.0.1') external.push(req.url()); });
   const { panel, editor } = await open(page);
