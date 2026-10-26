@@ -4,6 +4,7 @@ import { appUrl } from './urls';
 const repository = 'https://github.com/xiaoqiang-cheng/dili';
 const current = __DILI_VERSION__;
 export default function AppVersion() {
+  const [open, setOpen] = useState(false);
   const [latest, setLatest] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,7 +45,9 @@ export default function AppVersion() {
     return () => { disposed = true; clearInterval(timer); document.removeEventListener('visibilitychange', checkBuild); };
   }, []);
   const newer = latest && compareVersions(latest, current) > 0;
-  return <section className="app-version" aria-label="Dili 版本与更新">
+  return <div className="app-version-anchor">
+    <button className={`version-badge ${newer || available ? 'has-update' : ''}`} aria-label="Dili 版本与更新" aria-expanded={open} onClick={() => setOpen(!open)} title="查看版本与更新">v{current}{(newer || available) && <i aria-label="有更新" />}</button>
+    {open && <><button className="version-dismiss" aria-label="关闭版本信息" onClick={() => setOpen(false)} /><section className="app-version" aria-label="Dili 版本与更新">
     <span title={`界面构建 ${__DILI_BUILD__}`}>Dili 界面 v{current}</span>
     <a href={`${repository}/blob/main/docs/installation.md`} target="_blank" rel="noreferrer">电脑安装指南 ↗</a>
     <button className="text-button" disabled={busy} onClick={() => void check()}>{busy ? '正在检查…' : '检查更新'}</button>
@@ -55,5 +58,6 @@ export default function AppVersion() {
     }}>加载新版界面</button>}
     {error && <span role="status">{error}</span>}
     <small>界面支持热更新；后端升级需在电脑端按仓库指南操作，安排服务重启。</small>
-  </section>;
+  </section></>}
+  </div>;
 }

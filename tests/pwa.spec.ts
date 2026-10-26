@@ -251,6 +251,10 @@ test('permanent installation guide and tag/build update prompts preserve the cur
   await page.route('https://api.github.com/repos/xiaoqiang-cheng/dili/tags?per_page=100', route => route.fulfill({ json: [{ name: 'v99.0.0-beta' }, { name: 'v10.0.0' }, { name: 'v9.0.0' }] }));
   await page.route('**/build-info.json', route => route.fulfill({ json: { build: 'a-new-deployment' } }));
   await page.goto('/#/machines');
+  await expect(page.getByRole('button', { name: 'Dili 版本与更新' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: '电脑安装指南' })).toBeVisible();
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Dili 版本与更新' }).click();
   const version = page.getByRole('region', { name: 'Dili 版本与更新' });
   await expect(version.getByRole('link', { name: '电脑安装指南' })).toHaveAttribute('href', 'https://github.com/xiaoqiang-cheng/dili/blob/main/docs/installation.md');
   await expect(version).toContainText('Dili 界面 v');
@@ -258,7 +262,8 @@ test('permanent installation guide and tag/build update prompts preserve the cur
   await expect(version.getByRole('button', { name: '加载新版界面' })).toBeVisible();
   page.once('dialog', dialog => dialog.dismiss());
   await version.getByRole('button', { name: '加载新版界面' }).click();
-  await expect(page.getByRole('heading', { name: '我的机器' })).toBeVisible();
+  await expect(page.getByRole('main', { name: '联系人列表' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.route('https://api.github.com/repos/xiaoqiang-cheng/dili/tags?per_page=100', route => route.fulfill({ status: 429, headers: { 'Access-Control-Allow-Origin': '*' }, json: {} }));
   await version.getByRole('button', { name: '检查更新', exact: true }).click();
   await expect(version).toContainText('仓库查询限流');

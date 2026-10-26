@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Plus, Monitor, Trash2, ArrowLeft } from 'lucide-react';
 import AuthGate from './AuthGate';
 import InstallApp from './InstallApp';
-import AppVersion from './AppVersion';
 import InviteRequest from './InviteRequest';
 import QrScanner from './QrScanner';
 import DeviceQr from './DeviceQr';
@@ -120,7 +119,7 @@ function MachineHome() {
       <button className="machine-add" aria-label="添加机器" onClick={() => { setAdding(true); setError(''); }}><Plus size={38} /><span>发现你的机器</span></button></section>
     {adding && <section className="machine-form" aria-label="添加机器"><button className="text-button" onClick={() => setAdding(false)}><ArrowLeft size={16} />取消</button><h2>连接机器</h2><form onSubmit={add}><label>机器链接<input autoFocus type="url" required placeholder="https://你的机器地址/" value={url} onChange={event => setUrl(event.target.value)} /></label><label>名称（可选）<input maxLength={80} value={name} onChange={event => setName(event.target.value)} placeholder="例如：工作电脑" /></label><p>下一步会打开该机器验证密码。验证后自动保存机器并进入联系人；密码不会存入列表。</p><button className="button primary">下一步：验证机器</button></form></section>}
     <p className="machine-discovery-note">浏览器不能自动扫描局域网。请先填写机器链接；可在机器卡片中填写邀请码，生成并切换到远程链接。首次启用远程连接需在运行 Dili 的电脑上操作。</p>
-    <AppVersion /><footer>电脑与 Android：在浏览器菜单中安装应用。iPhone：Safari → 分享 → 添加到主屏幕。远程安装和麦克风需要 HTTPS。</footer>
+    <a className="machine-install-guide" href="https://github.com/xiaoqiang-cheng/dili/blob/main/docs/installation.md" target="_blank" rel="noreferrer">电脑安装指南 ↗</a><footer>电脑与 Android：在浏览器菜单中安装应用。iPhone：Safari → 分享 → 添加到主屏幕。远程安装和麦克风需要 HTTPS。</footer>
   </main>;
 }
 

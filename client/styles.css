@@ -939,3 +939,14 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .app-version { display:flex; align-items:center; flex-wrap:wrap; gap:10px 16px; padding:16px 0; font-size:12px; color:var(--muted); }
 .app-version>a { color:var(--accent); }
 .app-version>small { flex-basis:100%; line-height:1.6; }
+
+.app-version-anchor { position: relative; flex-shrink: 0; }
+.version-badge { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; border: 1px solid var(--line); border-radius: 20px; padding: 4px 8px; color: var(--muted); background: var(--bg); font-size: 11px; cursor: pointer; }
+.version-badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.version-dismiss { position: fixed; inset: 0; border: 0; background: transparent; z-index: 39; cursor: default; }
+.app-version-anchor .app-version { position: absolute; top: calc(100% + 8px); left: 0; width: min(360px, calc(100vw - 32px)); padding: 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px #0002; z-index: 40; }
+.machine-install-guide { display: inline-block; margin: 12px 0; color: var(--accent); font-size: 12px; }
+@media (max-width: 700px) {
+  .app-version-anchor .app-version { position: fixed; top: calc(64px + var(--safe-top)); left: 16px; right: 16px; width: auto; }
+  .version-badge { padding: 4px 7px; font-size: 10px; }
+}
