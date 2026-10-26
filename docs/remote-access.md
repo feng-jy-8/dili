@@ -63,3 +63,9 @@ SESSIONDECK_RELAY_DATA_DIR=/path/to/private-relay-data npm run relay
 - 远程请求使用独立的监听端口（默认 Web 端口 + 1，可用 `SESSIONDECK_REMOTE_PORT` 指定），只绑定本机回环；隧道只转发这个端口，因此"来自 127.0.0.1"不会被当作本机所有者。
 - 服务器端隧道只绑定 `127.0.0.1`，外网只能经过 Caddy 的 HTTPS 访问；TLS 在你的服务器上解密。
 - DeepSeek Harness 的原生网页界面只在本机可用，远程暂不支持。
+
+### PWA 同域入口与服务依赖
+
+同域静态 PWA 与中继路由见 [PWA 部署说明](pwa.md) 和 `relay/pwa.caddy`。现有中继域名继续保留。中继数据库备份使用 SQLite online backup，不能只复制活跃 WAL 数据库的主文件。
+
+frps 的 systemd 单元应使用 `After=sessiondeck-relay.service` 和 `Wants=sessiondeck-relay.service`，不要使用 `Requires=`：后者会在更新中继管理服务时连带停止隧道。调整单元后仅执行 `systemctl daemon-reload` 即可更新依赖，无需重启 frps。管理服务不可用的短暂窗口仍可能使插件验证失败，应选择低流量维护时间并检查客户端恢复。

@@ -1,0 +1,36 @@
+# Import inside the PWA HTTPS site. Keep the original relay site's routes too.
+# This alias changes browser routing, never SD1, FRP or existing device bindings.
+handle /connect/d/* {
+  route {
+    @foreignOrigin {
+      header Origin *
+      not header Origin https://dili.discoverpaw.com
+    }
+    respond @foreignOrigin "Origin not allowed" 403
+    forward_auth 127.0.0.1:18501 {
+      uri /internal/route
+      copy_headers X-SessionDeck-Upstream X-Dili-Device-Host X-Dili-Device-Origin
+    }
+    @hasOrigin header Origin *
+    request_header @hasOrigin Origin {http.request.header.X-Dili-Device-Origin}
+    uri path_regexp ^/connect/d/[a-z0-9]{16}(/|$) /
+    reverse_proxy {http.request.header.X-SessionDeck-Upstream} {
+      header_up Host {http.request.header.X-Dili-Device-Host}
+      header_up -X-SessionDeck-Upstream
+      header_up -X-SessionDeck-Prefix
+      header_up -X-Dili-Device-Host
+      header_up -X-Dili-Device-Origin
+      flush_interval -1
+    }
+  }
+}
+handle /connect/* {
+  reverse_proxy 127.0.0.1:18501
+}
+@connectRoot path /connect
+redir @connectRoot /connect/ 308
+
+# FRP websocket transport for installations using this relay domain.
+handle /~!frp {
+  reverse_proxy 127.0.0.1:18502
+}

@@ -34,7 +34,8 @@
     "backup": "tsx scripts/backup.ts",
     "prepack": "npm run build",
     "test:package": "npm run build && node scripts/package-smoke.mjs",
-    "test:pwa": "playwright test --config playwright.pwa.config.ts"
+    "test:pwa": "playwright test --config playwright.pwa.config.ts",
+    "build:pwa": "npm run build && tsx scripts/build-pwa.ts"
   },
   "engines": {
     "node": ">=24"

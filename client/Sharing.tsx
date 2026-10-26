@@ -1,3 +1,4 @@
+import DeviceQr from './DeviceQr';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Check, CircleAlert, Copy, Globe, KeyRound, Link2, LoaderCircle, LogOut, MonitorSmartphone, Plug, ShieldCheck, Trash2, Unplug } from 'lucide-react';
 import type { Session, Group } from '../shared/types';
@@ -125,6 +126,7 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
     {remote?.pairing === undefined ? <p className="form-note">本机服务更新后支持邀请码配对。</p> : remote.pairing ? <div className="invite-pairing">
       <strong><MonitorSmartphone size={15} /> {remote.pairing.name}</strong>
       <div className="share-created"><Link2 size={14} /><a href={`${remote.settings.publicUrl}/`} target="_blank" rel="noreferrer">{remote.settings.publicUrl}/</a><button className="icon-button" aria-label="复制远程链接" onClick={() => void copyToClipboard(`${remote.settings.publicUrl}/`).then(() => notify('远程链接已复制'))}><Copy size={14} /></button></div>
+      {remote.settings.enabled && tunnel?.state === 'connected' && <DeviceQr url={remote.settings.publicUrl} name={remote.pairing.name} />}
       <p className="form-note">已配对 · {when(remote.pairing.pairedAt)}</p>
       {local && <button className="button secondary small-button" disabled={!!busy} onClick={() => {
         if (!window.confirm('解除配对将撤销这台电脑的远程链接。继续？')) return;
@@ -136,7 +138,7 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
     }}>
       <label className="form-label">设备名称<input value={deviceName} maxLength={80} required onChange={event => setDeviceName(event.target.value)} placeholder="例如：家里的工作站" /></label>
       <label className="form-label">邀请码<textarea aria-label="邀请码" value={invite} onChange={event => setInvite(event.target.value)} placeholder="粘贴 SD1. 开头的邀请码" rows={3} maxLength={1600} required spellCheck={false} autoComplete="off" /></label>
-      <div className="invite-actions"><button className="button primary small-button" disabled={!!busy || !passwordSet || !invite.trim() || !deviceName.trim()}>{busy === 'pair' ? <LoaderCircle size={13} className="spin" /> : <Link2 size={13} />}{busy === 'pair' ? '正在配对…' : '配对并生成链接'}</button><a href="https://discoverpaw.com/connect/" target="_blank" rel="noreferrer">打开中继管理页</a></div>
+      <div className="invite-actions"><button className="button primary small-button" disabled={!!busy || !passwordSet || !invite.trim() || !deviceName.trim()}>{busy === 'pair' ? <LoaderCircle size={13} className="spin" /> : <Link2 size={13} />}{busy === 'pair' ? '正在配对…' : '配对并生成链接'}</button><a href="https://dili.discoverpaw.com/connect/" target="_blank" rel="noreferrer">打开中继管理页</a></div>
       {(busy === 'pair' || remote?.pairingStage) && <p className="form-note" role="status">{remote?.pairingStage === 'redeeming' ? '正在兑换邀请码…' : remote?.pairingStage === 'connecting' ? '正在启动远程连接…' : '正在准备中继客户端，下载最多等待 90 秒；失败后可重试，邀请码不会被消耗。'}</p>}
     </form>}
     {(!remote?.pairing || remote.settings.mode !== 'invite') && <details className="security-caddy" open={remote?.settings.enabled && remote.settings.mode !== 'invite'}><summary>高级：手动 SSH 连接</summary>

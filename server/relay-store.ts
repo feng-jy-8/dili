@@ -4,13 +4,46 @@ import { encodeInvite, newSecret, secretHash, relayUrl } from './invite.ts';
 
 export interface RelayDevice { id: string; name: string; port: number; createdAt: string; revokedAt: string | null; lastSeenAt: string | null; connected: boolean; serverUrl?: string }
 type DeviceRow = RelayDevice & { credentialHash: string; claimHash: string; inviteHash: string };
+export type InviteRequest = { id: string; email: string; name: string; createdAt: string; status: 'pending' | 'approved' | 'rejected'; reviewedAt: string | null; inviteId?: string };
+type RequestRow = InviteRequest & { claimHash: string; sealedInvite?: string };
 type InviteRow = { id: string; label: string; hash: string; expiresAt: string | null; createdAt: string; usedAt: string | null; revokedAt: string | null; serverUrl?: string };
 function fail(message: string, status = 400): never { throw Object.assign(new Error(message), { status }); }
 
 /** Codes and client credentials are hashed; a redemption can be retried after a lost response. */
 export class RelayStore {
   constructor(private readonly db: DatabaseSync, private readonly firstPort = 18700, private readonly lastPort = 18799) {
-    db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS relay_invites (id TEXT PRIMARY KEY, hash TEXT UNIQUE, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS relay_devices (id TEXT PRIMARY KEY, data TEXT NOT NULL);');
+    db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS relay_invites (id TEXT PRIMARY KEY, hash TEXT UNIQUE, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS relay_devices (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS relay_requests (id TEXT PRIMARY KEY, data TEXT NOT NULL);');
+  }
+  requests(): InviteRequest[] { return this.requestRows().map(({ claimHash: _claim, sealedInvite: _invite, ...row }) => row); }
+  private requestRows(): RequestRow[] { return this.db.prepare('SELECT data FROM relay_requests ORDER BY rowid DESC').all().map(row => JSON.parse(String(row.data)) as RequestRow); }
+  private saveRequest(row: RequestRow) { this.db.prepare('INSERT OR REPLACE INTO relay_requests VALUES (?, ?)').run(row.id, JSON.stringify(row)); }
+  requestInvite(email: unknown, name: unknown, claim: unknown) {
+    if (typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof name !== 'string' || !name.trim() || name.length > 80 || typeof claim !== 'string' || !/^[\w-]{43}$/.test(claim)) fail('请填写有效邮箱和称呼');
+    const rows = this.requestRows();
+    if (rows.filter(row => row.status === 'pending').length >= 1000 || rows.filter(row => row.email === email.trim().toLowerCase() && row.status === 'pending').length >= 3) fail('待处理申请过多，请稍后再试', 429);
+    const row: RequestRow = { id: randomUUID(), email: email.trim().toLowerCase(), name: name.trim(), claimHash: secretHash(claim), createdAt: new Date().toISOString(), reviewedAt: null, status: 'pending' };
+    this.saveRequest(row);
+    return { id: row.id, status: row.status };
+  }
+  requestStatus(id: string, claim: unknown) {
+    const row = this.requestRows().find(row => row.id === id);
+    if (!row || typeof claim !== 'string' || row.claimHash !== secretHash(claim)) fail('申请不存在或领取凭证不正确', 404);
+    const invite = row.inviteId ? this.invites().find(item => item.id === row.inviteId) : undefined;
+    return { status: row.status, sealedInvite: row.sealedInvite, inviteStatus: invite ? invite.revokedAt ? 'revoked' : invite.usedAt ? 'used' : invite.expiresAt && Date.parse(invite.expiresAt) <= Date.now() ? 'expired' : 'ready' : null };
+  }
+  reviewRequest(id: string, approve: boolean, serverUrl: string, seal: (value: string) => string) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.requestRows().find(row => row.id === id);
+      if (!row) fail('申请不存在', 404);
+      if (row.status !== 'pending') fail('该申请已处理，请刷新查看', 409);
+      if (approve) {
+        const invite = this.createInvite(serverUrl, row.email.slice(0, 80), 168);
+        row.inviteId = invite.id; row.sealedInvite = seal(invite.invite);
+      }
+      row.status = approve ? 'approved' : 'rejected'; row.reviewedAt = new Date().toISOString(); this.saveRequest(row);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   invites() { return this.db.prepare('SELECT data FROM relay_invites ORDER BY rowid DESC').all().map(row => { const { hash: _hash, ...data } = JSON.parse(String(row.data)) as InviteRow; return data; }); }
   devices(): RelayDevice[] { return this.rows().map(({ credentialHash: _credential, claimHash: _claim, inviteHash: _invite, ...row }) => ({ ...row, connected: !row.revokedAt && !!row.lastSeenAt && Date.now() - Date.parse(row.lastSeenAt) < 20_000 })); }

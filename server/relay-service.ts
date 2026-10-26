@@ -1,4 +1,5 @@
 import express from 'express';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { RelayStore } from './relay-store.ts';
 import { validToken } from './security.ts';
@@ -20,14 +21,30 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
   app.disable('x-powered-by');
   app.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY'); next(); });
   app.use(express.json({ limit: '16kb' }));
-  const failures = new Map<string, { count: number; until: number }>();
-  const limit: express.RequestHandler = (req, res, next) => {
+  function rateLimiter() {
+    const failures = new Map<string, { count: number; until: number }>();
+    const handler: express.RequestHandler = (req, res, next) => {
     const now = Date.now(), key = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress).slice(0, 100);
     for (const [key, row] of failures) if (row.until <= now) failures.delete(key);
     const row = failures.get(key) ?? { count: 0, until: now + 60_000 };
     if (row.count >= 20 || [...failures.values()].reduce((sum, item) => sum + item.count, 0) >= 200) return res.status(429).json({ error: '尝试次数过多，请稍后重试' });
     row.count++; failures.set(key, row); next();
   };
+    return handler;
+  }
+  const limit = rateLimiter(), requestLimit = rateLimiter();
+  const encryptionKey = createHash('sha256').update(options.adminToken).digest();
+  const seal = (value: string) => {
+    const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', encryptionKey, iv);
+    const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+    return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64url');
+  };
+  const unseal = (value: string) => { const data = Buffer.from(value, 'base64url'), cipher = createDecipheriv('aes-256-gcm', encryptionKey, data.subarray(0, 12)); cipher.setAuthTag(data.subarray(12, 28)); return Buffer.concat([cipher.update(data.subarray(28)), cipher.final()]).toString('utf8'); };
+  app.post('/connect/api/requests', requestLimit, (req, res) => res.status(201).json(store.requestInvite(req.body.email, req.body.name, req.body.claim)));
+  app.post('/connect/api/requests/:id/status', requestLimit, (req, res) => {
+    const { sealedInvite, ...status } = store.requestStatus(String(req.params.id), req.body.claim);
+    res.json({ ...status, ...(sealedInvite && status.inviteStatus === 'ready' ? { invite: unseal(sealedInvite) } : {}) });
+  });
   app.get('/connect/', (_req, res) => res.type('html').send(readFileSync(options.adminHtml, 'utf8')));
   app.get('/connect/health', (_req, res) => res.json({ ok: true }));
   // Only pinned official archives are served; clients independently verify SHA-256.
@@ -57,7 +74,14 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
     if (!validToken(req.headers.authorization?.replace(/^Bearer /, ''), options.adminToken)) return res.status(401).json({ error: '管理密钥不正确' });
     next();
   });
-  app.get('/connect/api/admin/state', (_req, res) => res.json({ devices: store.devices(), invites: store.invites(), domains }));
+  app.get('/connect/api/admin/state', (_req, res) => res.json({ devices: store.devices(), invites: store.invites(), requests: store.requests(), domains }));
+  app.post('/connect/api/admin/requests/:id/review', (req, res) => {
+    if (typeof req.body.approve !== 'boolean') return res.status(400).json({ error: '审批参数无效' });
+    const selectedUrl = domainUrls.get(req.body.domain || domains[0]);
+    if (!selectedUrl) return res.status(400).json({ error: '指定域名未在中继服务白名单中' });
+    store.reviewRequest(String(req.params.id), req.body.approve, selectedUrl, seal);
+    res.json({ ok: true });
+  });
   app.post('/connect/api/admin/invites', (req, res) => {
     const hours = req.body.permanent === true ? null : req.body.hours ?? 24;
     const domain = typeof req.body.domain === 'string' && req.body.domain.trim() ? req.body.domain.trim() : domains[0];
@@ -74,6 +98,9 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
     const match = /^\/connect\/d\/([a-z0-9]{16})(?:\/|\?|$)/.exec(path);
     const device = match && store.device(match[1]!);
     if (!device || device.revokedAt) return res.status(410).send('远程设备不存在或已撤销');
+    const deviceOrigin = new URL(device.serverUrl || serverUrl);
+    res.setHeader('X-Dili-Device-Host', deviceOrigin.host);
+    res.setHeader('X-Dili-Device-Origin', deviceOrigin.origin);
     res.setHeader('X-SessionDeck-Upstream', `127.0.0.1:${device.port}`);
     res.setHeader('X-SessionDeck-Prefix', `/connect/d/${device.id}`);
     res.sendStatus(200);

@@ -104,6 +104,7 @@ Dili 接入的是 **DeepSeek Harness**，不仅是 DeepSeek 模型。平台协�
 | 安装、原生配置、自动启动、可选语音输入 | [安装指南](docs/installation.md) |
 | 使用、数据备份、恢复和故障处理 | [操作指南](docs/operations.md) |
 | 邀请码、域名、中继与管理密码 | [远程访问](docs/remote-access.md) |
+| 本地应用 / 中继 / PWA 三个交付物、安装与扫码 | [PWA 与部署架构](docs/pwa.md) |
 | 当前产品约定、架构和开发验证 | [文档索引](docs/README.md) |
 | 未完成项与正式发行门槛 | [TODO](TODO.md) · [发布清单](docs/releasing.md) |
 

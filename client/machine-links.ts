@@ -8,8 +8,14 @@ export function machineHome() {
   } catch { /* A normal machine visit has no launcher return URL. */ }
   return '';
 }
+/** Only the official relay alias is rewritten; private/custom deployments stay untouched. */
+export function publicMachineUrl(value: string) {
+  const url = new URL(value);
+  if (url.origin === 'https://discoverpaw.com' && /^\/connect\/d\/[a-z0-9]{16}\/?$/.test(url.pathname)) url.hostname = 'dili.discoverpaw.com';
+  return url.href;
+}
 export function openMachine(url: string, home = new URL(appUrl('/#/machines'), location.origin).href) {
-  const target = new URL(url);
+  const target = new URL(publicMachineUrl(url));
   target.searchParams.set('machineHome', home);
   target.hash = '/contacts';
   return target.href;

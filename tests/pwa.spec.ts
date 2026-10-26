@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect } from '@playwright/test';
 import { test } from './fixtures';
 import { createServer, request as httpRequest } from 'node:http';
@@ -173,5 +174,70 @@ test.describe('machine card remote pairing', () => {
     await expect(page.getByRole('button', { name: '重试连接' })).toBeVisible();
     await page.getByRole('link', { name: '返回机器列表' }).click();
     await expect(page.locator('.machine-current-card')).toBeVisible();
+  });
+});
+
+test.describe('device QR and invite applications', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('QR link prefills a canonical machine without silently adding it', async ({ page }) => {
+    const target = 'https://discoverpaw.com/connect/d/abcdefghijklmnop/';
+    await page.goto('/#/machines?add=' + encodeURIComponent(target) + '&name=' + encodeURIComponent('工作电脑'));
+    await expect(page.getByLabel('机器链接')).toHaveValue('https://dili.discoverpaw.com/connect/d/abcdefghijklmnop/');
+    await expect(page.getByLabel('名称（可选）')).toHaveValue('工作电脑');
+    await expect(page.locator('.machine-card')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+  test('QR links reject executable URLs', async ({ page }) => {
+    await page.goto('/#/machines?add=' + encodeURIComponent('javascript:alert(1)'));
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.locator('.machine-card')).toHaveCount(0);
+  });
+  test('email application keeps a private receipt and retrieves approval', async ({ page }) => {
+    let approved = false;
+    await page.route('**/connect/api/requests', async route => {
+      const body = route.request().postDataJSON();
+      expect(body.email).toBe('reader@example.com');
+      expect(body.claim).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      await route.fulfill({ status: 201, json: { id: 'test-request' } });
+    });
+    await page.route('**/connect/api/requests/test-request/status', route => route.fulfill({ json: approved ? { status: 'approved', inviteStatus: 'ready', invite: 'SD1.test.private-code' } : { status: 'pending' } }));
+    await page.goto('/#/machines?apply=1');
+    await page.getByLabel('称呼').fill('申请人');
+    await page.getByLabel('电子邮箱').fill('reader@example.com');
+    await page.getByRole('button', { name: '提交申请' }).click();
+    await expect(page.getByRole('status')).toContainText('等待管理员审核');
+    approved = true;
+    await page.getByRole('button', { name: '刷新申请状态' }).click();
+    await expect(page.locator('.invite-request textarea')).toHaveValue('SD1.test.private-code');
+    expect(await page.evaluate(() => localStorage.getItem('dili.invite-request'))).not.toContain('private-code');
+    expect(page.url()).not.toContain('claim');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+});
+
+
+test.describe('relay console layout', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('administrator reviews email requests and manages invites on mobile and desktop', async ({ page }) => {
+    let reviewed = false;
+    await page.route('**/connect/', route => route.fulfill({ contentType: 'text/html', body: readFileSync('relay/index.html', 'utf8') }));
+    await page.route('**/connect/api/admin/state', route => route.fulfill({ json: { domains: ['discoverpaw.com'], devices: [], invites: [], requests: [{ id: 'request-1', name: '<script>alert(1)</script>', email: 'reader@example.com', createdAt: new Date().toISOString(), status: reviewed ? 'approved' : 'pending' }] } }));
+    await page.route('**/connect/api/admin/requests/request-1/review', route => {
+      expect(route.request().headers().authorization).toBe('Bearer test-admin');
+      expect(route.request().postDataJSON().approve).toBe(true);
+      reviewed = true; return route.fulfill({ json: { ok: true } });
+    });
+    await page.goto('/connect/');
+    await page.getByLabel('管理密钥').fill('test-admin');
+    await page.getByRole('button', { name: '进入管理' }).click();
+    await expect(page.locator('#pendingCount')).toHaveText('1');
+    await expect(page.locator('#requests')).toContainText('<script>alert(1)</script>');
+    await page.getByRole('button', { name: '通过', exact: true }).click();
+    await expect(page.locator('#requests')).toContainText('已通过');
+    await expect(page.locator('#pendingCount')).toHaveText('0');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole('button', { name: '退出', exact: true }).click();
+    await expect(page.getByLabel('管理密钥')).toHaveValue('');
+    await expect(page.locator('#management')).toBeHidden();
   });
 });
