@@ -935,3 +935,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 
 /* Non-translucent iOS standalone status bar already consumes the top inset. */
 :root[data-ios-standalone] { --safe-top: 0px; }
+
+.app-version { display:flex; align-items:center; flex-wrap:wrap; gap:10px 16px; padding:16px 0; font-size:12px; color:var(--muted); }
+.app-version>a { color:var(--accent); }
+.app-version>small { flex-basis:100%; line-height:1.6; }

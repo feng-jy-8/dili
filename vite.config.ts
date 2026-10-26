@@ -1,8 +1,12 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'node:fs';
+const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+const build = new Date().toISOString();
 
 export default defineConfig({
-  plugins: [react()],
+  define: { __DILI_VERSION__: JSON.stringify(version), __DILI_BUILD__: JSON.stringify(build) },
+  plugins: [react(), { name: 'dili-build-info', generateBundle() { this.emitFile({ type: 'asset', fileName: 'build-info.json', source: JSON.stringify({ version, build }) }); } }],
   experimental: {
     // The same build runs at / and /connect/d/<device>. HTML URLs are
     // prefixed by remoteHtml; JS preloads and imported assets must resolve
