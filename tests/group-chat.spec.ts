@@ -81,7 +81,7 @@ test('@ member picker supports keyboard navigation, filtering and confirmation w
   await expect(composer).toHaveValue('请@验证');
 });
 
-test('inline @ survives draft reload and deleting it cancels delivery while preserving text', async ({ page }) => {
+test('inline @ survives draft reload and deleting it restores default routing while preserving text', async ({ page }) => {
   const { group, members } = await createGroup(page.request, '行内指派');
   await page.goto(`/#/groups/${group.id}`);
   const composer = page.getByLabel('群组消息');
@@ -101,8 +101,8 @@ test('inline @ survives draft reload and deleting it cancels delivery while pres
   await composer.press('End');
   await composer.press('Enter');
   const body = (await sent).postDataJSON();
-  expect(body.recipientIds).toEqual([]);
-  expect(body.kind).toBe('note');
+  expect(body.recipientIds).toEqual([members[0].id]);
+  expect(body.kind).toBe('task');
   expect(body.text).toBe('保留正文');
 });
 
@@ -168,7 +168,7 @@ test.describe('phone group chat', () => {
     const toolbar = page.locator('.group-composer .attachment-actions');
     const imageButton = await toolbar.getByRole('button', { name: '添加图片', exact: true }).boundingBox();
     const voiceButton = await toolbar.getByRole('button', { name: '语音输入', exact: true }).boundingBox();
-    const sendButton = await toolbar.getByRole('button', { name: '发送', exact: true }).boundingBox();
+    const sendButton = await toolbar.getByRole('button', { name: '发送任务', exact: true }).boundingBox();
     expect(imageButton && voiceButton && sendButton).toBeTruthy();
     expect(Math.abs(imageButton!.y + imageButton!.height / 2 - voiceButton!.y - voiceButton!.height / 2)).toBeLessThan(2);
     expect(Math.abs(imageButton!.y + imageButton!.height / 2 - sendButton!.y - sendButton!.height / 2)).toBeLessThan(2);
@@ -221,7 +221,7 @@ test('group composer pastes images, restores drafts, sends image-only messages a
   await expect(page.getByLabel('待发送图片').locator('img')).toHaveCount(1);
   await page.reload();
   await expect(page.getByLabel('待发送图片').locator('img')).toHaveCount(1);
-  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await page.getByRole('button', { name: '发送任务', exact: true }).click();
   await expect(page.getByLabel('待发送图片')).toHaveCount(0);
   await expect(page.getByLabel('消息图片').locator('img')).toHaveCount(1);
   const detail = await (await page.request.get(`/api/groups/${group.id}`)).json();
@@ -235,4 +235,28 @@ test('group composer pastes images, restores drafts, sends image-only messages a
   await page.getByRole('button', { name: '语音输入', exact: true }).click();
   await expect(page.locator('.voice-error')).toBeVisible();
   await expect(input).toHaveValue('');
+});
+
+test('member avatars open private chat and unmentioned messages follow the last replying member', async ({ page }) => {
+  const { group, members } = await createGroup(page.request, '继续对话');
+  await page.goto(`/#/groups/${group.id}`);
+  await expect(page.getByLabel('群组消息')).toHaveAttribute('placeholder', new RegExp(members[0].title));
+  let submitted: { recipientIds: string[]; text: string } | undefined;
+  await page.route(`**/api/groups/${group.id}/messages`, async route => {
+    if (route.request().method() === 'POST') submitted = route.request().postDataJSON();
+    await route.continue();
+  });
+  await page.getByLabel('群组消息').fill('继续完成');
+  await page.getByRole('button', { name: '发送任务', exact: true }).click();
+  await expect.poll(() => submitted?.recipientIds).toEqual([members[0].id]);
+  expect(submitted?.text).toBe('继续完成');
+  await expect(page.getByLabel('群组消息')).toHaveValue('');
+  await page.locator('.recipient-picker').getByRole('button', { name: members[1].title }).click();
+  await page.getByLabel('群组消息').fill(`@${members[1].title} 改由你处理`);
+  await page.getByRole('button', { name: '发送任务', exact: true }).click();
+  await expect.poll(() => submitted?.recipientIds).toEqual([members[1].id]);
+  expect(submitted?.text).toBe('改由你处理');
+  await page.getByRole('button', { name: `打开 ${members[0].title} 的私聊`, exact: true }).first().click();
+  await expect(page.getByLabel('群组消息')).toBeHidden();
+  await expect(page.locator('.session-drawer')).toBeVisible();
 });

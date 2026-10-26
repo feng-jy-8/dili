@@ -259,6 +259,11 @@ export default function GroupChat({ onShare, group, detail, members, demo, busy,
   const [posting, setPosting] = useState(false);
   const postingRef = useRef(false);
   const activeRecipients = recipients.filter(id => activeMembers.some(member => member.id === id && mentionRange(text, member.title)));
+  const lastReply = [...detail.messages].reverse().find(message =>
+    (message.kind === 'reply' || message.kind === 'result') && !message.failed && !message.briefing &&
+    activeMembers.some(member => member.id === message.senderId));
+  const defaultMember = activeMembers.find(member => member.id === lastReply?.senderId);
+  const deliveryRecipients = activeRecipients.length ? activeRecipients : defaultMember ? [defaultMember.id] : [];
   const toggleRecipient = (id: string) => {
     const member = membersById.get(id);
     if (!member) return;
@@ -341,10 +346,10 @@ export default function GroupChat({ onShare, group, detail, members, demo, busy,
     if (postingRef.current || busy || uploading || voiceActive) return;
     const submittedDraft = currentDraftRef.current;
     const submittedGroupId = detail.group.id;
-    const task = activeRecipients.length > 0;
+    const task = deliveryRecipients.length > 0;
     postingRef.current = true; setPosting(true);
     try {
-      if (await post({ attachments: images.map(item => item.id), text: messageText, kind: task ? 'task' : 'note', recipientIds: task ? activeRecipients : [], sourceMessageId, references: task ? references.filter(id => messagesById.has(id)) : [], deliverNow: task })) {
+      if (await post({ attachments: images.map(item => item.id), text: messageText, kind: task ? 'task' : 'note', recipientIds: deliveryRecipients, sourceMessageId, references: task ? references.filter(id => messagesById.has(id)) : [], deliverNow: task })) {
         followBottom.current = true;
         try {
           const key = `sessiondeck.group-draft.${submittedGroupId}`;
@@ -372,7 +377,7 @@ export default function GroupChat({ onShare, group, detail, members, demo, busy,
       const long = message.kind === 'reply' && (message.text.length > 900 || message.text.split('\n').length > 14);
       const isMember = message.kind === 'reply' || message.kind === 'result';
       return <article id={`group-message-${message.id}`} tabIndex={-1} key={message.id} className={`group-message kind-${message.kind} ${message.senderId ? '' : 'mine'}${message.failed ? ' failed' : ''}${message.pending ? ' pending' : ''}`}>
-        <span className="message-avatar">{sender ? <BackendAvatar backend={sender.backend} small /> : message.senderId ? <MessageSquare size={16} /> : '我'}</span>
+        {sender ? <button className="message-avatar member-avatar-link" aria-label={`打开 ${sender.title} 的私聊`} onClick={() => open(sender.id, true)}><BackendAvatar backend={sender.backend} small /></button> : <span className="message-avatar">{message.senderId ? <MessageSquare size={16} /> : '我'}</span>}
         <div className="message-body">
           <div className="message-heading"><strong>{message.senderName || '我'}</strong><span className="message-kind">{message.kind === 'task' ? '任务' : message.failed ? '回复失败' : message.briefing ? '入群招呼' : message.pending ? '仍在工作…' : message.kind === 'reply' ? '回复' : message.kind === 'result' ? '结果' : '记录'}</span><time>{relativeTime(message.createdAt)}</time></div>
           <div className="bubble">
@@ -395,8 +400,8 @@ export default function GroupChat({ onShare, group, detail, members, demo, busy,
         </div>
       </article>;
     }) : <div className="board-empty"><p>{only ? '这位成员在当前加载的消息里还没有发言。' : '还没有群聊消息。@ 成员指派任务，他们的回复会自动出现在这里。'}</p></div>}
-    {!only && streaming.map(member => <div className="group-live" key={member.id} aria-live="polite"><span className="message-avatar"><BackendAvatar backend={member.backend} small /></span><div className="message-body"><div className="message-heading"><strong>{member.title}</strong><span className="message-kind">正在回复…</span></div>{live[member.id] ? <div className="bubble group-live-text"><Markdown text={live[member.id]} /></div> : <div className="bubble group-typing"><i /><i /><i /></div>}</div></div>)}
-    {!only && activeMembers.filter(member => member.status === 'running' && member.interactionMode !== 'chat' && detail.deliveries.some(delivery => delivery.sessionId === member.id && (delivery.status === 'sent' || delivery.status === 'staged') && openTask(detail)(delivery))).map(member => <div className="group-live" key={member.id}><span className="message-avatar"><BackendAvatar backend={member.backend} small /></span><div className="message-body"><div className="message-heading"><strong>{member.title}</strong><span className="message-kind">正在执行…</span></div><div className="bubble group-typing"><i /><i /><i /></div></div></div>)}
+    {!only && streaming.map(member => <div className="group-live" key={member.id} aria-live="polite"><button className="message-avatar member-avatar-link" aria-label={`打开 ${member.title} 的私聊`} onClick={() => open(member.id, true)}><BackendAvatar backend={member.backend} small /></button><div className="message-body"><div className="message-heading"><strong>{member.title}</strong><span className="message-kind">正在回复…</span></div>{live[member.id] ? <div className="bubble group-live-text"><Markdown text={live[member.id]} /></div> : <div className="bubble group-typing"><i /><i /><i /></div>}</div></div>)}
+    {!only && activeMembers.filter(member => member.status === 'running' && member.interactionMode !== 'chat' && detail.deliveries.some(delivery => delivery.sessionId === member.id && (delivery.status === 'sent' || delivery.status === 'staged') && openTask(detail)(delivery))).map(member => <div className="group-live" key={member.id}><button className="message-avatar member-avatar-link" aria-label={`打开 ${member.title} 的私聊`} onClick={() => open(member.id, true)}><BackendAvatar backend={member.backend} small /></button><div className="message-body"><div className="message-heading"><strong>{member.title}</strong><span className="message-kind">正在执行…</span></div><div className="bubble group-typing"><i /><i /><i /></div></div></div>)}
   </div>, [totalMessages, earlierCount, loadingOlder, visibleMessages, messagesById, membersById, deliveriesByMessage, busy, posting, demo, open, deliver, cancel, resolveDelivery, jumpToMessage, forwardMessage, quote, reassign, showEarlier, expanded, references, only, streaming, live, activeMembers, detail.deliveries]);
 
   const splitMembers = activeMembers;
@@ -425,7 +430,7 @@ export default function GroupChat({ onShare, group, detail, members, demo, busy,
       </div>
       {membersOpen && <div className="group-members-panel" role="dialog" aria-label="群成员">
         {group.workspace && <div className="group-workspace-line" title={group.workspace}><FolderOpen size={13} />群工作区：{tail(group.workspace)}</div>}
-        {activeMembers.map(member => <div className="group-members-row" key={member.id}><BackendAvatar backend={member.backend} small /><div className="group-members-info"><div><strong>{member.title}</strong><StatusBadge session={member} /></div><MemberPlacement member={member} workspace={group.workspace} busy={!!busy} onChanged={notify} onError={setLocalError} /></div><button className="icon-button" aria-label={`打开 ${member.title} 的工作区`} title="在资源管理器中查看文件与改动" onClick={() => openWorkspace(member)}><FolderOpen size={14} /></button><button className="text-button" onClick={() => { setMembersOpen(false); open(member.id, true); }}>私聊</button><button className="icon-button" aria-label={`将 ${member.title} 移出群聊`} title="移出群聊（保留联系人）" onClick={() => removeMember(member)}><UserMinus size={14} /></button></div>)}
+        {activeMembers.map(member => <div className="group-members-row" key={member.id}><button className="member-avatar-link" aria-label={`打开 ${member.title} 的私聊`} onClick={() => { setMembersOpen(false); open(member.id, true); }}><BackendAvatar backend={member.backend} small /></button><div className="group-members-info"><div><strong>{member.title}</strong><StatusBadge session={member} /></div><MemberPlacement member={member} workspace={group.workspace} busy={!!busy} onChanged={notify} onError={setLocalError} /></div><button className="icon-button" aria-label={`打开 ${member.title} 的工作区`} title="在资源管理器中查看文件与改动" onClick={() => openWorkspace(member)}><FolderOpen size={14} /></button><button className="text-button" onClick={() => { setMembersOpen(false); open(member.id, true); }}>私聊</button><button className="icon-button" aria-label={`将 ${member.title} 移出群聊`} title="移出群聊（保留联系人）" onClick={() => removeMember(member)}><UserMinus size={14} /></button></div>)}
         <button className="text-button" onClick={() => { setMembersOpen(false); addMember(); }}><Plus size={14} />添加成员</button>
       </div>}
     </header>
@@ -441,7 +446,7 @@ export default function GroupChat({ onShare, group, detail, members, demo, busy,
         {references.length > 0 && <div className="composer-references">{references.map(id => { const quoted = messagesById.get(id); return <span key={id} className="reference-chip"><Quote size={12} />{quoted?.senderName || '回答'}：{(quoted?.text || '').slice(0, 40)}<button type="button" className="icon-button" aria-label="取消引用" onClick={() => setReferences(current => current.filter(item => item !== id))}><X size={12} /></button></span>; })}</div>}
         {sourceMessageId && <div className="composer-source"><button type="button" className="text-button" onClick={() => jumpToMessage(sourceMessageId)}><Share2 size={13} />来源：{sourceMessage?.senderName || '原消息'}<span>查看原消息</span></button><button type="button" className="icon-button" disabled={posting} aria-label="解除转交来源" title="解除来源，保留内容" onClick={() => setSourceMessageId(null)}><X size={13} /></button></div>}
         {mentionChoices.length > 0 && <div ref={mentionMenuRef} id={mentionMenuId} className="mention-menu" role="listbox" aria-label="选择要 @ 的成员">{mentionChoices.map((member, index) => <button type="button" role="option" id={`${mentionMenuId}-${index}`} aria-selected={index === selectedMentionIndex} key={member.id} onMouseEnter={() => setMentionIndex(index)} onMouseDown={event => event.preventDefault()} onClick={() => chooseMention(member)}><BackendAvatar backend={member.backend} small />{member.title}</button>)}</div>}
-        <ImageAttachments sessionId={group.id} scope="groups" actions={<><VoiceInput sessionId={group.id} scope="groups" disabled={posting || uploading} onActive={setVoiceActive} insert={speech => setText(current => appendVoiceText(current, speech))} /><span title="草稿保留在当前浏览器标签页；Enter 发送，Shift + Enter 换行">{activeRecipients.length ? `发送后立即投递给 ${activeRecipients.length} 位成员，回复会自动回到群里。` : '不 @ 成员时只作为群记录，不会发给任何成员。'}{text && <small className="draft-note">草稿保留 · Enter 发送 · Shift + Enter 换行</small>}</span><button className="button primary small-button" disabled={!!busy || posting || uploading || voiceActive || (!text.trim() && !images.length)}>{busy === 'message' ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}{activeRecipients.length ? '发送任务' : '发送'}</button></>} items={images} onChange={update => {
+        <ImageAttachments sessionId={group.id} scope="groups" actions={<><VoiceInput sessionId={group.id} scope="groups" disabled={posting || uploading} onActive={setVoiceActive} insert={speech => setText(current => appendVoiceText(current, speech))} /><span title="草稿保留在当前浏览器标签页；Enter 发送，Shift + Enter 换行">{activeRecipients.length ? `发送后立即投递给 ${activeRecipients.length} 位成员，回复会自动回到群里。` : defaultMember ? `未 @，默认发送给 ${defaultMember.title}。` : '尚无成员回复；可 @ 成员指派任务。'}{text && <small className="draft-note">草稿保留 · Enter 发送 · Shift + Enter 换行</small>}</span><button className="button primary small-button" disabled={!!busy || posting || uploading || voiceActive || (!text.trim() && !images.length)}>{busy === 'message' ? <LoaderCircle size={14} className="spin" /> : <Send size={14} />}{deliveryRecipients.length ? '发送任务' : '发送'}</button></>} items={images} onChange={update => {
           const saved = JSON.parse(currentDraftRef.current) as GroupDraft;
           saved.attachments = update(saved.attachments);
           currentDraftRef.current = JSON.stringify(saved);
@@ -478,7 +483,7 @@ export default function GroupChat({ onShare, group, detail, members, demo, busy,
           if (event.key === 'Escape' && mention !== null) { event.preventDefault(); setMention(null); return; }
           // Enter sends, Shift+Enter inserts a newline, like private chats.
           if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
-        }} onSelect={event => { const field = event.currentTarget; if (mention && (field.selectionStart < mention.start || field.selectionStart > mention.end + 1)) setMention(null); }} placeholder={activeRecipients.length ? '描述任务；成员会收到群 prompt、任务和你引用的结论…' : '输入 @ 指派成员，或直接记录想法…'} value={text} onChange={event => onText(event.target.value, event.target.selectionStart)} rows={3} maxLength={30000} />
+        }} onSelect={event => { const field = event.currentTarget; if (mention && (field.selectionStart < mention.start || field.selectionStart > mention.end + 1)) setMention(null); }} placeholder={activeRecipients.length ? '描述任务；成员会收到群 prompt、任务和你引用的结论…' : defaultMember ? `发送给 ${defaultMember.title}，输入 @ 可切换成员…` : '输入 @ 指派成员，或直接记录想法…'} value={text} onChange={event => onText(event.target.value, event.target.selectionStart)} rows={3} maxLength={30000} />
         </ImageAttachments>
         {localError && <p role="alert" className="form-error">{localError}</p>}
       </form>

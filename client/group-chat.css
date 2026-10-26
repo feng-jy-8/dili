@@ -135,3 +135,5 @@
   .group-share-shell .attachment-actions { gap: 8px; }
   .group-composer .attachment-actions > span { font-size: 10px; }
 }
+.member-avatar-link { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 8px; }
+.member-avatar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
