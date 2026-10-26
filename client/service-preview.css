@@ -28,7 +28,7 @@
 @media (max-width: 720px) {
   .service-preview-panel { position: fixed; inset: 0; z-index: 100; width: 100% !important; max-width: none; border: 0; }
   .service-preview-panel>.workspace-splitter { display: none; }
-  .service-preview-header { height: calc(48px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
+  .service-preview-header { height: calc(48px + var(--safe-top)); padding-top: var(--safe-top); }
   .service-preview-form { flex-wrap: wrap; }
   .service-preview-url { flex: 1 1 100%; }
 }

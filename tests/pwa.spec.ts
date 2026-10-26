@@ -225,6 +225,7 @@ test.describe('relay console layout', () => {
     await page.route('**/connect/api/admin/requests/request-1/review', route => {
       expect(route.request().headers().authorization).toBe('Bearer test-admin');
       expect(route.request().postDataJSON().approve).toBe(true);
+      expect(route.request().postDataJSON().permanent).toBe(true);
       reviewed = true; return route.fulfill({ json: { ok: true } });
     });
     await page.goto('/connect/');
@@ -232,6 +233,7 @@ test.describe('relay console layout', () => {
     await page.getByRole('button', { name: '进入管理' }).click();
     await expect(page.locator('#pendingCount')).toHaveText('1');
     await expect(page.locator('#requests')).toContainText('<script>alert(1)</script>');
+    await page.getByLabel('reader@example.com 的邀请码有效期').selectOption('permanent');
     await page.getByRole('button', { name: '通过', exact: true }).click();
     await expect(page.locator('#requests')).toContainText('已通过');
     await expect(page.locator('#pendingCount')).toHaveText('0');

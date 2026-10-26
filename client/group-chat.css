@@ -73,7 +73,7 @@
 @media (max-width: 720px) {
   /* A group opens full screen like a private chat; back returns to the list. */
   .group-chat-back { display: inline-flex; }
-  .group-chat-header { flex-wrap: wrap; gap: 6px; padding: calc(4px + env(safe-area-inset-top)) 8px 6px; }
+  .group-chat-header { flex-wrap: wrap; gap: 6px; padding: calc(4px + var(--safe-top)) 8px 6px; }
   .group-member-strip { order: 3; flex-basis: 100%; }
   .group-chat .group-timeline { padding: 12px; }
   .group-message, .group-live { max-width: 92%; }

@@ -37,3 +37,24 @@ test('email requests require a private receipt, approval is atomic, codes remain
   const used = await (await call(`/api/requests/${created.id}/status`, { claim })).json() as { invite?: string; inviteStatus: string };
   assert.equal(used.inviteStatus, 'used'); assert.equal(used.invite, undefined);
 });
+
+
+test('approval expiry supports one hour, one day, seven days and permanent, rejecting invalid durations atomically', () => {
+  const db = new DatabaseSync(':memory:'), store = new RelayStore(db);
+  try {
+    for (const hours of [1, 24, 168, null]) {
+      const receipt = store.requestInvite('duration@example.com', 'Duration', newSecret());
+      const start = Date.now();
+      store.reviewRequest(receipt.id, true, 'https://relay.example/connect', value => value, hours);
+      const request = store.requests().find(row => row.id === receipt.id)!;
+      const invite = store.invites().find(row => row.id === request.inviteId)!;
+      if (hours === null) assert.equal(invite.expiresAt, null);
+      else assert.ok(Math.abs(Date.parse(invite.expiresAt!) - start - hours * 3600_000) < 1000);
+    }
+    const receipt = store.requestInvite('invalid@example.com', 'Invalid', newSecret());
+    const count = store.invites().length;
+    assert.throws(() => store.reviewRequest(receipt.id, true, 'https://relay.example/connect', value => value, 0));
+    assert.equal(store.invites().length, count);
+    assert.equal(store.requests().find(row => row.id === receipt.id)!.status, 'pending');
+  } finally { db.close(); }
+});

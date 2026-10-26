@@ -32,6 +32,10 @@ function applyZoom() {
   listeners.forEach(listener => listener());
 }
 export function initializeZoom() {
+  // iOS default status-bar style already places the viewport below the status bar.
+  // Adding the notch inset again would leave a second empty strip.
+  const iosStandalone = (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  document.documentElement.toggleAttribute('data-ios-standalone', iosStandalone);
   window.addEventListener('resize', resizeViewport);
   window.visualViewport?.addEventListener('resize', resizeViewport);
   window.visualViewport?.addEventListener('scroll', resizeViewport);

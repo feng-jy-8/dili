@@ -1,5 +1,7 @@
 /* Dili · 嘀哩工作台 — a quiet IM workspace with clear panel hierarchy. */
 :root {
+  --safe-top: calc(env(safe-area-inset-top, 0px) / var(--ui-scale, 1));
+  --safe-bottom: calc(env(safe-area-inset-bottom, 0px) / var(--ui-scale, 1));
   --bg: #ffffff;
   --canvas: #f5f6f8;
   --subtle: #f3f5f7;
@@ -62,7 +64,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .app-shell { height: var(--ui-viewport-height, 100dvh); display: flex; flex-direction: row; overflow: hidden; }
 .app-column { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 /* ——— Left rail ——— */
-.rail { position: relative; z-index: 20; display: flex; flex-shrink: 0; flex-direction: column; width: 64px; padding: 10px 8px calc(10px + env(safe-area-inset-bottom)); background: var(--rail-bg); border-right: 1px solid var(--line); transition: width .16s ease; }
+.rail { position: relative; z-index: 20; display: flex; flex-shrink: 0; flex-direction: column; width: 64px; padding: 10px 8px calc(10px + var(--safe-bottom)); background: var(--rail-bg); border-right: 1px solid var(--line); transition: width .16s ease; }
 .rail.expanded { width: 208px; }
 .rail .brand, .rail-primary, .rail-groups { overflow: hidden; }
 .rail .brand { margin: 0 0 12px 4px; }
@@ -649,10 +651,10 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
      clears the status bar, and the body never rubber-bands. */
   .app-shell { flex-direction: column; height: var(--ui-viewport-height, 100dvh); min-height: 0; }
   .app-column { order: 0; }
-  .rail { order: 1; flex-direction: row; align-items: center; width: 100% !important; height: calc(56px + env(safe-area-inset-bottom)); padding: 0 6px env(safe-area-inset-bottom); border-right: 0; border-top: 1px solid var(--line); transition: none; }
+  .rail { order: 1; flex-direction: row; align-items: center; width: 100% !important; height: calc(48px + var(--safe-bottom)); padding: 0 6px var(--safe-bottom); border-right: 0; border-top: 1px solid var(--line); transition: none; }
   .rail .brand, .rail-groups, .rail-footer .connection-indicator, .rail-toggle { display: none; }
   .rail-primary { flex: 1; flex-direction: row; justify-content: space-around; gap: 0; }
-  .rail button { flex: 1; flex-direction: column; justify-content: center; gap: 3px; width: auto; height: 52px; padding: 0 2px; font-size: 10.5px; border-radius: 8px; }
+  .rail button { flex: 1; flex-direction: column; justify-content: center; gap: 3px; width: auto; height: 44px; padding: 0 2px; font-size: 10.5px; border-radius: 8px; }
   .rail button>b { right: auto; left: calc(50% + 6px); top: 4px; }
   .rail button>b:not(.alert) { display: none; }
   .rail button.active { background: none; }
@@ -670,7 +672,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
   .import-contact>span { display: none; }
   .rail-footer { flex-direction: row; margin: 0; padding: 0; border: 0; }
   .rail-footer .more-menu .dropdown-menu { left: auto; right: 0; bottom: 56px; }
-  .topbar-row { height: auto; min-height: 48px; padding: calc(4px + env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 4px max(12px, env(safe-area-inset-left)); }
+  .topbar-row { height: auto; min-height: 48px; padding: calc(4px + var(--safe-top)) max(10px, env(safe-area-inset-right)) 4px max(12px, env(safe-area-inset-left)); }
   .topbar-title h1 { font-size: 15px; }
   .topbar-actions { margin-left: auto; min-width: 0; }
   .topbar-actions .search-field { width: auto; flex: 1; min-width: 60px; }
@@ -702,7 +704,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
   .session-drawer>.error-banner, .session-drawer>.session-status-detail, .session-drawer>.session-unread-notice { margin: 8px 8px 0; }
   .modal-overlay { padding: 0; align-items: flex-end; }
   /* Modals rise from the bottom like a sheet and stay clear of the home bar. */
-  .modal { width: 100%; max-height: calc(var(--ui-viewport-height, 100dvh) - 24px); border-radius: 16px 16px 0 0; padding-bottom: env(safe-area-inset-bottom); animation: sheetUp .2s ease; }
+  .modal { width: 100%; max-height: calc(var(--ui-viewport-height, 100dvh) - 24px); border-radius: 16px 16px 0 0; padding-bottom: var(--safe-bottom); animation: sheetUp .2s ease; }
   @keyframes sheetUp { from { transform: translateY(24px); opacity: 0; } }
   .modal-heading { padding: 18px 16px 14px 18px; }
   .modal-fields { padding: 0 18px 18px; }
@@ -807,7 +809,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 .terminal-composer-row textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .terminal-send { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 38px; height: 38px; border-radius: 10px; background: var(--accent); color: var(--on-accent); }
 .terminal-send:hover:not(:disabled) { background: var(--accent-dark); }
-@media (max-width: 720px) { .terminal-composer { padding: 6px 8px calc(8px + env(safe-area-inset-bottom)); } }
+@media (max-width: 720px) { .terminal-composer { padding: 6px 8px calc(8px + var(--safe-bottom)); } }
 
 /* Phone, session open: the terminal is the page. The toolbar and bottom bar
    go away (the header back button or × returns to the list), leaving a compact
@@ -815,7 +817,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 @media (max-width: 720px) {
   .session-open .topbar, .session-open .rail { display: none; }
 
-  .session-open .drawer-header { gap: 4px; height: calc(48px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 8px 0; }
+  .session-open .drawer-header { gap: 4px; height: calc(48px + var(--safe-top)); padding: var(--safe-top) 8px 0; }
   .session-open .drawer-heading-text { flex: 1; min-width: 0; }
   .session-open .drawer-title { max-width: none; }
   .session-open .drawer-title h2 { font-size: 13.5px; }
@@ -824,7 +826,7 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
   .session-open .terminal-toolbar { height: 32px; }
   .session-open .terminal-toolbar button { width: 30px; height: 30px; }
   .session-open .terminal-quick-keys button { height: 26px; }
-  .session-open .terminal-composer { gap: 4px; padding: 4px 8px calc(6px + env(safe-area-inset-bottom)); }
+  .session-open .terminal-composer { gap: 4px; padding: 4px 8px calc(6px + var(--safe-bottom)); }
 }
 /* Adapt to the conversation width, including when file previews are open. */
 @container (max-width: 1000px) {
@@ -930,3 +932,6 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
   .card-pin.pinned { display: inline-flex; bottom: 4px; right: 40px; }
   .session-card { padding-bottom: 28px; }
 }
+
+/* Non-translucent iOS standalone status bar already consumes the top inset. */
+:root[data-ios-standalone] { --safe-top: 0px; }

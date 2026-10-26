@@ -31,14 +31,14 @@ export class RelayStore {
     const invite = row.inviteId ? this.invites().find(item => item.id === row.inviteId) : undefined;
     return { status: row.status, sealedInvite: row.sealedInvite, inviteStatus: invite ? invite.revokedAt ? 'revoked' : invite.usedAt ? 'used' : invite.expiresAt && Date.parse(invite.expiresAt) <= Date.now() ? 'expired' : 'ready' : null };
   }
-  reviewRequest(id: string, approve: boolean, serverUrl: string, seal: (value: string) => string) {
+  reviewRequest(id: string, approve: boolean, serverUrl: string, seal: (value: string) => string, hours: number | null = 168) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const row = this.requestRows().find(row => row.id === id);
       if (!row) fail('申请不存在', 404);
       if (row.status !== 'pending') fail('该申请已处理，请刷新查看', 409);
       if (approve) {
-        const invite = this.createInvite(serverUrl, row.email.slice(0, 80), 168);
+        const invite = this.createInvite(serverUrl, row.email.slice(0, 80), hours);
         row.inviteId = invite.id; row.sealedInvite = seal(invite.invite);
       }
       row.status = approve ? 'approved' : 'rejected'; row.reviewedAt = new Date().toISOString(); this.saveRequest(row);

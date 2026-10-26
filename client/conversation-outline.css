@@ -16,6 +16,6 @@
 .conversation-outline-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
 .conversation-outline-empty { padding: 25px 12px; color: var(--muted); text-align: center; font-size: 12px; }
 .conversation-outline-more { margin: 0 12px 10px; padding: 7px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--accent-dark); font-size: 12px; }
-.conversation-outline-dialog { position: fixed; inset: 0 0 0 auto; width: min(360px, calc(100% - 24px)); max-width: none; height: var(--ui-viewport-height, 100dvh); max-height: none; margin: 0; padding-bottom: env(safe-area-inset-bottom); box-shadow: var(--shadow); }
+.conversation-outline-dialog { position: fixed; inset: 0 0 0 auto; width: min(360px, calc(100% - 24px)); max-width: none; height: var(--ui-viewport-height, 100dvh); max-height: none; margin: 0; padding-bottom: var(--safe-bottom); box-shadow: var(--shadow); }
 .conversation-outline-dialog::backdrop { background: #0000004d; }
 .conversation-outline-dialog:not([open]) { display: none; }

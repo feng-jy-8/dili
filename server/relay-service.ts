@@ -79,7 +79,7 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
     if (typeof req.body.approve !== 'boolean') return res.status(400).json({ error: '审批参数无效' });
     const selectedUrl = domainUrls.get(req.body.domain || domains[0]);
     if (!selectedUrl) return res.status(400).json({ error: '指定域名未在中继服务白名单中' });
-    store.reviewRequest(String(req.params.id), req.body.approve, selectedUrl, seal);
+    store.reviewRequest(String(req.params.id), req.body.approve, selectedUrl, seal, req.body.permanent === true ? null : req.body.hours ?? 168);
     res.json({ ok: true });
   });
   app.post('/connect/api/admin/invites', (req, res) => {

@@ -14,6 +14,6 @@
 .image-viewer footer { flex-shrink: 0; padding: 7px 12px; border-top: 1px solid var(--line); font-size: 11px; text-align: center; color: var(--muted); }
 @media (max-width: 720px) {
   .image-viewer { width: var(--ui-viewport-width, 100vw); height: var(--ui-viewport-height, 100dvh); border: 0; border-radius: 0; }
-  .image-viewer-toolbar { gap: 6px; padding: calc(6px + env(safe-area-inset-top)) 8px 6px; }
-  .image-viewer footer { padding-bottom: calc(7px + env(safe-area-inset-bottom)); }
+  .image-viewer-toolbar { gap: 6px; padding: calc(6px + var(--safe-top)) 8px 6px; }
+  .image-viewer footer { padding-bottom: calc(7px + var(--safe-bottom)); }
 }

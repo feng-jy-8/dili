@@ -35,7 +35,7 @@
 .resizable-composer:not(.compact) .composer-hint { grid-column:3; grid-row:4; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .resizable-composer:not(.compact) .chat-composer-footer>div { grid-column:4; grid-row:4; flex-wrap:nowrap; }
 .resizable-composer:not(.compact) :is(.attachment-error,.codex-request-error,.native-input-composer>[role="status"]) { grid-column:1/-1; grid-row:5; }
-.resizable-composer.compact { flex-shrink:0; height:auto; padding-bottom:env(safe-area-inset-bottom); }
+.resizable-composer.compact { flex-shrink:0; height:auto; padding-bottom:var(--safe-bottom); }
 .resizable-composer.compact .resizable-composer-content { display:block; }
 .resizable-composer.compact :is(.codex-composer,.native-input-composer) { display:flex; flex-direction:row; flex-wrap:wrap; align-items:flex-end; gap:6px 8px; padding:8px 10px; overflow:visible; }
 .resizable-composer.compact :is(.image-composer,.chat-composer-footer,.chat-composer-footer>div) { display:contents; }
