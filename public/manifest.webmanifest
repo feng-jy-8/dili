@@ -4,7 +4,7 @@
   "description": "让每一次 AI 对话，都能继续成为工作",
   "start_url": "./#/machines",
   "scope": "./",
-  "display": "standalone",
+  "display": "fullscreen",
   "orientation": "any",
   "background_color": "#f2f2f7",
   "theme_color": "#ffffff",
@@ -29,5 +29,9 @@
       "purpose": "maskable"
     }
   ],
-  "id": "./"
+  "id": "./",
+  "display_override": [
+    "fullscreen",
+    "standalone"
+  ]
 }

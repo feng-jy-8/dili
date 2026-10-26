@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Monitor, Trash2, ArrowLeft } from 'lucide-react';
 import AuthGate from './AuthGate';
+import InstallApp from './InstallApp';
 import { appUrl } from './urls';
 import './machines.css';
 
@@ -30,7 +31,7 @@ export default function MachineRoot() {
   const home = new URLSearchParams(location.search).get('machineHome');
   let returnTo = '';
   try { const target = new URL(home || ''); if (['https:', 'http:'].includes(target.protocol) && !target.username && !target.password && target.hash === '#/machines') returnTo = target.href; } catch { /* Normal workbench visit. */ }
-  return <><AuthGate />{returnTo && <a className="machine-return" href={returnTo} title="返回机器列表"><Monitor size={16} /><span>机器</span></a>}</>;
+  return returnTo ? <div className="machine-workspace"><nav className="machine-navigation" aria-label="机器导航"><a className="machine-return" href={returnTo} title="返回机器列表"><ArrowLeft size={16} /><span>机器</span></a></nav><div className="machine-workspace-content"><AuthGate /></div></div> : <AuthGate />;
 }
 function MachineHome() {
   const [machines, setMachines] = useState(readMachines);
@@ -68,6 +69,7 @@ function MachineHome() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : '无法连接机器'); }
   }
   return <main className="machines-page"><header><div><h1>我的机器</h1><p>连接你的 Dili，继续与 Agent 一起工作。</p></div>{!document.querySelector('meta[name="dili-launcher"]') && <a href={appUrl('/#/contacts')}>当前机器</a>}</header>
+    <InstallApp />
     {error && <p role="alert" className="form-error">{error}</p>}
     <section className="machine-grid" aria-label="机器列表">{machines.map(machine => <article className="machine-card" key={machine.url}><a href={`${machine.url}?machineHome=${encodeURIComponent(new URL(appUrl('/#/machines'), location.origin).href)}#/contacts`}><Monitor size={30} /><strong>{machine.name}</strong><small>{machine.url}</small><span>打开联系人 →</span></a><button aria-label={`移除 ${machine.name}`} onClick={() => { if (confirm(`从列表移除「${machine.name}」？机器上的会话不会删除。`)) persist(machines.filter(item => item.url !== machine.url)); }}><Trash2 size={16} /></button></article>)}
       <button className="machine-add" aria-label="添加机器" onClick={() => { setAdding(true); setError(''); }}><Plus size={38} /><span>发现你的机器</span></button></section>

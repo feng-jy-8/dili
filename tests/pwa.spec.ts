@@ -121,3 +121,16 @@ test('a machine on another origin returns to the launcher and opens its own cont
     expect(new URL(page.url()).origin).toBe(new URL(target).origin);
   } finally { proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); }
 });
+
+test('install entry explains platform steps and machine navigation reserves its own row', async ({ page, baseURL }) => {
+  await page.goto('/#/machines');
+  await page.getByRole('button', { name: '安装到桌面' }).click();
+  await expect(page.getByRole('status')).toContainText('主屏幕');
+  await page.goto(`/?machineHome=${encodeURIComponent(baseURL + '/#/machines')}#/contacts`);
+  const navigation = page.getByRole('navigation', { name: '机器导航' });
+  await expect(navigation).toBeVisible();
+  await expect(page.getByRole('main', { name: '联系人列表' })).toBeVisible();
+  const nav = await navigation.boundingBox();
+  const content = await page.locator('.machine-workspace-content').boundingBox();
+  expect(content!.y).toBeGreaterThanOrEqual(nav!.y + nav!.height);
+});
