@@ -31,14 +31,35 @@ function applyZoom() {
   window.dispatchEvent(new Event('resize'));
   listeners.forEach(listener => listener());
 }
+// WebKit may dispatch resize/focusout before its final keyboard animation
+// metrics are committed, without dispatching another resize afterwards.
+// Re-read for a bounded settling period instead of freezing that intermediate height.
+let viewportFrame = 0;
+let viewportSettleUntil = 0;
+function settleViewport() {
+  viewportSettleUntil = performance.now() + 1200;
+  resizeViewport();
+  if (viewportFrame) return;
+  const tick = () => {
+    resizeViewport();
+    if (performance.now() < viewportSettleUntil) viewportFrame = requestAnimationFrame(tick);
+    else viewportFrame = 0;
+  };
+  viewportFrame = requestAnimationFrame(tick);
+}
 export function initializeZoom() {
   // iOS default status-bar style already places the viewport below the status bar.
   // Adding the notch inset again would leave a second empty strip.
   const iosStandalone = (navigator as Navigator & { standalone?: boolean }).standalone === true;
   document.documentElement.toggleAttribute('data-ios-standalone', iosStandalone);
-  window.addEventListener('resize', resizeViewport);
-  window.visualViewport?.addEventListener('resize', resizeViewport);
-  window.visualViewport?.addEventListener('scroll', resizeViewport);
+  window.addEventListener('resize', settleViewport);
+  window.visualViewport?.addEventListener('resize', settleViewport);
+  window.visualViewport?.addEventListener('scroll', settleViewport);
+  document.addEventListener('focusin', settleViewport);
+  document.addEventListener('focusout', settleViewport);
+  window.addEventListener('pageshow', settleViewport);
+  window.addEventListener('orientationchange', settleViewport);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) settleViewport(); });
   window.addEventListener('storage', event => {
     if (event.key !== key && event.key !== null) return;
     preference = normalize(readLocalPreference(key)); applyZoom();

@@ -38,3 +38,31 @@ test('iPhone standalone uses one status-bar inset and keeps the home inset unsca
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(845);
   await page.screenshot({ path: 'artifacts/iphone-compact-safe-area.png' });
 });
+
+test('keyboard dismissal restores height even when WebKit updates metrics after its last event', async ({ page }) => {
+  await page.addInitScript(() => {
+    const viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0, scale: 1 });
+    Object.defineProperty(window, 'visualViewport', { get: () => viewport });
+    (window as unknown as { testViewport: typeof viewport }).testViewport = viewport;
+  });
+  await page.goto('/#/contacts');
+  const input = page.getByLabel('搜索联系人');
+  await input.focus();
+  await page.evaluate(() => {
+    const viewport = (window as unknown as { testViewport: EventTarget & { height: number; offsetTop: number } }).testViewport;
+    viewport.height = 480; viewport.offsetTop = 90;
+    viewport.dispatchEvent(new Event('resize'));
+  });
+  await expect.poll(() => page.locator('.app-shell').evaluate(node => Math.round(node.getBoundingClientRect().height))).toBe(480);
+  await input.blur();
+  // Final Safari metrics arrive later, with no resize/scroll event.
+  await page.evaluate(() => {
+    setTimeout(() => {
+      const viewport = (window as unknown as { testViewport: { height: number; offsetTop: number } }).testViewport;
+      viewport.height = 844; viewport.offsetTop = 0;
+    }, 180);
+  });
+  await expect.poll(() => page.locator('.app-shell').evaluate(node => {
+    const bounds = node.getBoundingClientRect(); return [Math.round(bounds.height), Math.round(bounds.top)];
+  })).toEqual([844, 0]);
+});
