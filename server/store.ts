@@ -100,7 +100,7 @@ export class Store {
     const date = now();
     return this.put('groups', { id: randomUUID(), title, goal, createdAt: date, updatedAt: date });
   }
-  updateGroup(id: string, patch: Partial<Pick<Group, 'title' | 'goal' | 'prompt' | 'workspace' | 'pinned' | 'unread' | 'lastMessage'>>): Group {
+  updateGroup(id: string, patch: Partial<Pick<Group, 'title' | 'goal' | 'prompt' | 'workspace' | 'pinned' | 'archived' | 'unread' | 'lastMessage'>>): Group {
     const group = this.group(id);
     if (!group) throw new Error('群组不存在');
     // This timestamp also identifies the revision consumed by group viewers.

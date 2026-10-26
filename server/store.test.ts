@@ -197,3 +197,21 @@ test('viewing a group clears replies and finished-turn reminders but keeps appro
   assert.equal(store.markGroupRead(group.id).unread, 0);
   assert.deepEqual([done, approval, failed, outsider].map(item => store.session(item.id)!.unread), [0, 1, 1, 3]);
 });
+
+test('group archive survives reopening and preserves members and messages', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'sessiondeck-group-archive-'));
+  const database = join(directory, 'state.sqlite');
+  let store = new Store(database);
+  t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+  const group = store.addGroup('保留群聊', '保留历史');
+  const member = store.addSession({ backend: 'codex', title: '成员', cwd: '/tmp', groupId: group.id });
+  const message = store.addMessage({ groupId: group.id, senderId: null, senderName: '用户', kind: 'note', text: '保留这条消息', recipientIds: [] });
+  store.updateGroup(group.id, { archived: true });
+  store.close();
+  store = new Store(database);
+  assert.equal(store.group(group.id)?.archived, true);
+  assert.equal(store.session(member.id)?.archived, false);
+  assert.equal(store.groupDetail(group.id).messages[0].id, message.id);
+  store.updateGroup(group.id, { archived: false });
+  assert.equal(store.group(group.id)?.archived, false);
+});

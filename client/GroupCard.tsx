@@ -1,4 +1,4 @@
-import { Ellipsis, Pin, PinOff, Settings2 } from 'lucide-react';
+import { Archive, Ellipsis, Pin, PinOff, Settings2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Group, Session } from '../shared/types';
 import { BackendAvatar, relativeTime } from './App';
@@ -21,8 +21,8 @@ export function GroupAvatar({ members, small = false }: { members: Session[]; sm
 export const memberNeedsAction = (member: Session) => !member.archived && member.unread > 0 && (member.status === 'waiting_approval' || member.status === 'error');
 export const groupNeedsAttention = (group: Group, members: Session[]) => (group.unread ?? 0) > 0 || members.some(memberNeedsAction);
 
-export default function GroupCard({ group, members, active, onOpen, onPin, onEdit }: {
-  group: Group; members: Session[]; active: boolean; onOpen: () => void; onPin: () => void; onEdit: () => void;
+export default function GroupCard({ group, members, active, onOpen, onPin, onEdit, onArchive }: {
+  group: Group; members: Session[]; active: boolean; onOpen: () => void; onPin: () => void; onEdit: () => void; onArchive: () => void;
 }) {
   const [menu, setMenu] = useState(false);
   const menuRef = useRef<HTMLSpanElement>(null);
@@ -36,19 +36,19 @@ export default function GroupCard({ group, members, active, onOpen, onPin, onEdi
   const unread = (group.unread ?? 0) + live.filter(memberNeedsAction).length;
   const running = live.filter(member => member.status === 'running').length;
   const preview = group.lastMessage ? `${group.lastMessage.senderName}：${group.lastMessage.text}` : group.goal || `${live.length} 位成员`;
-  return <article className={`session-card group-card${active ? ' active' : ''}`} onClick={event => { if (!(event.target as Element).closest('button, .dropdown-menu')) onOpen(); }}>
+  return <article className={`session-card group-card${active ? ' active' : ''}${group.archived ? ' archived-card' : ''}`} onClick={event => { if (!(event.target as Element).closest('button, .dropdown-menu')) onOpen(); }}>
     {group.pinned && <button className="icon-button card-pin pinned" aria-label={`取消置顶 ${group.title}`} title="取消置顶" onClick={onPin}><PinOff size={13} /></button>}
     <div className="card-head">
       <span className="avatar-wrap"><GroupAvatar members={live} />{unread > 0 && <span className="unread-badge" aria-label={`${unread} 条未读`}>{unread > 99 ? '99+' : unread}</span>}</span>
       <div className="card-title">
-        <div className="card-title-row"><button className="card-main" aria-current={active ? 'true' : undefined} aria-label={`进入群聊 ${group.title}`} onClick={onOpen}><h3 title={group.title}>{group.title}</h3></button><span className="group-badge">群聊 · {live.length}</span></div>
+        <div className="card-title-row"><button className="card-main" aria-current={active ? 'true' : undefined} aria-label={`进入群聊 ${group.title}`} onClick={onOpen}><h3 title={group.title}>{group.title}</h3></button><span className="group-badge">{group.archived ? '已归档' : '群聊'} · {live.length}</span></div>
         <div className="card-prompt"><p title={preview}>{preview}</p></div>
       </div>
       {running > 0 && <span className="card-state"><span className="status-badge running">{running} 位执行中</span></span>}
     </div>
     <div className="card-activity"><time dateTime={group.lastMessage?.at ?? group.updatedAt}>{relativeTime(group.lastMessage?.at ?? group.updatedAt)}</time>
       <span className="card-menu-anchor" ref={menuRef}><button className="icon-button" aria-label={`${group.title} 的更多操作`} aria-expanded={menu} onClick={() => setMenu(!menu)}><Ellipsis size={15} /></button>
-        {menu && <div className="dropdown-menu"><button onClick={() => { setMenu(false); onPin(); }}>{group.pinned ? <PinOff size={14} /> : <Pin size={14} />}{group.pinned ? '取消置顶' : '置顶群聊'}</button><button onClick={() => { setMenu(false); onEdit(); }}><Settings2 size={14} />群设置</button></div>}
+        {menu && <div className="dropdown-menu"><button onClick={() => { setMenu(false); onPin(); }}>{group.pinned ? <PinOff size={14} /> : <Pin size={14} />}{group.pinned ? '取消置顶' : '置顶群聊'}</button><button onClick={() => { setMenu(false); onEdit(); }}><Settings2 size={14} />群设置</button><span /><button onClick={() => { setMenu(false); onArchive(); }}><Archive size={14} />{group.archived ? '恢复群聊' : '归档群聊'}</button></div>}
       </span>
     </div>
   </article>;

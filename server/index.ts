@@ -1128,12 +1128,13 @@ app.post('/api/groups', (req, res) => {
   store.activity(null, 'group', `创建了群组 ${group.title}`); broadcast(); res.status(201).json(group);
 });
 app.patch('/api/groups/:id', (req, res) => {
-  const patch: { title?: string; goal?: string; prompt?: string; workspace?: string; pinned?: boolean } = {};
+  const patch: { title?: string; goal?: string; prompt?: string; workspace?: string; pinned?: boolean; archived?: boolean } = {};
   if ('title' in req.body) patch.title = text(req.body.title, '群组名称');
   if ('goal' in req.body) patch.goal = text(req.body.goal, '共同目标', 4000, false);
   if ('prompt' in req.body) patch.prompt = text(req.body.prompt ?? '', '群 prompt', 8000, false);
   if ('workspace' in req.body) patch.workspace = req.body.workspace ? directory(req.body.workspace) : '';
   if ('pinned' in req.body) { if (typeof req.body.pinned !== 'boolean') fail('无效的布尔值'); patch.pinned = req.body.pinned; }
+  if ('archived' in req.body) { if (typeof req.body.archived !== 'boolean') fail('无效的布尔值'); patch.archived = req.body.archived; }
   const group = store.updateGroup(String(req.params.id), patch); broadcast(); res.json(group);
 });
 app.post('/api/groups/:id/read', (req, res) => { const group = store.markGroupRead(String(req.params.id)); broadcast(); res.json(group); });

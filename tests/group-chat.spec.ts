@@ -260,3 +260,45 @@ test('member avatars open private chat and unmentioned messages follow the last 
   await expect(page.getByLabel('群组消息')).toBeHidden();
   await expect(page.locator('.session-drawer')).toBeVisible();
 });
+
+test('groups can be archived and restored without losing history or members', async ({ page, request }) => {
+  const { group, members } = await createGroup(request, '归档群聊验收');
+  await page.goto('/#/contacts');
+  const card = page.locator('.group-card').filter({ hasText: group.title });
+  await card.getByRole('button', { name: `${group.title} 的更多操作` }).click();
+  await card.getByRole('button', { name: '归档群聊', exact: true }).click();
+  await expect(card).toHaveCount(0);
+  await page.goto('/#/archive');
+  await expect(card).toBeVisible();
+  await page.reload();
+  await expect(card).toBeVisible();
+  await card.getByRole('button', { name: `${group.title} 的更多操作` }).click();
+  await card.getByRole('button', { name: '恢复群聊', exact: true }).click();
+  await expect(card).toHaveCount(0);
+  await page.goto('/#/contacts');
+  await card.getByRole('button', { name: `进入群聊 ${group.title}` }).click();
+  await expect(page.locator('.group-timeline')).toContainText('我的记录');
+  const detail = await (await request.get(`/api/groups/${group.id}`)).json();
+  expect(detail.group.archived).toBe(false);
+  const state = await (await request.get('/api/state')).json() as AppState;
+  expect(state.sessions.filter(item => members.some(member => member.id === item.id)).every(item => !item.archived)).toBe(true);
+  const headers = await mutationHeaders(request);
+  expect((await request.patch(`/api/groups/${group.id}`, { headers, data: { archived: 'true' } })).ok()).toBe(false);
+});
+
+test('long group history scrolls independently with a visible scrollbar', async ({ page, request }) => {
+  const { group } = await createGroup(request, '长记录滚动验收');
+  const headers = await mutationHeaders(request);
+  for (let i = 0; i < 24; i++) await request.post(`/api/groups/${group.id}/messages`, { headers, data: { kind: 'note', text: `滚动记录 ${i}\n${'长记录内容\n'.repeat(8)}` } });
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto(`/#/groups/${group.id}`);
+    const timeline = page.locator('.group-timeline');
+    await expect(timeline).toContainText('滚动记录 23');
+    await expect.poll(() => timeline.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    await timeline.evaluate(element => { element.scrollTop = 0; });
+    expect(await timeline.evaluate(element => ({ top: element.scrollTop, overflow: getComputedStyle(element).overflowY, width: getComputedStyle(element).scrollbarWidth }))).toEqual({ top: 0, overflow: 'scroll', width: 'auto' });
+    const composer = await page.locator('.group-composer').boundingBox();
+    expect(composer!.y + composer!.height).toBeLessThanOrEqual(viewport.height + 1);
+  }
+});

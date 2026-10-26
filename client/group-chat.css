@@ -137,3 +137,11 @@
 }
 .member-avatar-link { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; border-radius: 8px; }
 .member-avatar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* Keep long history inside its own scroll region, with a discoverable thumb. */
+.group-chat .group-timeline { overflow-y: scroll; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: var(--line-strong) var(--subtle); }
+.group-chat .group-timeline > * { flex-shrink: 0; }
+.group-chat .group-timeline::-webkit-scrollbar { width: 10px; }
+.group-chat .group-timeline::-webkit-scrollbar-track { background: var(--subtle); }
+.group-chat .group-timeline::-webkit-scrollbar-thumb { background: var(--line-strong); border: 2px solid var(--subtle); border-radius: 999px; }
+.group-chat .message-composer { flex-shrink: 0; }

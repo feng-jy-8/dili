@@ -111,6 +111,8 @@ export interface Group {
   /** Shared working directory for members; isolated worktrees branch from its repository. */
   workspace?: string;
   pinned?: boolean;
+  /** Hide from active contacts without deleting history or changing members. */
+  archived?: boolean;
   /** Member replies not yet seen by the user. */
   unread?: number;
   lastMessage?: { text: string; senderName: string; at: string } | null;
