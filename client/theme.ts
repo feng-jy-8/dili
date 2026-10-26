@@ -11,6 +11,10 @@ function applyTheme() {
   document.documentElement.dataset.theme = preference === 'system' ? scheme.matches ? 'dark' : 'light' : preference;
   document.documentElement.dataset.themePreference = preference;
   document.documentElement.dataset.colorScheme = ['dark', 'midnight', 'terminal', 'contrast'].includes(document.documentElement.dataset.theme!) ? 'dark' : 'light';
+  // Safari/Chrome browser chrome must follow explicit app themes as well as OS changes.
+  const background = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim();
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', background);
+  document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]')?.setAttribute('content', document.documentElement.dataset.colorScheme);
 }
 /** Run before mounting the login gate or workspace to avoid a light-theme flash. */
 export function initializeTheme() {
