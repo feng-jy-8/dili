@@ -1,4 +1,5 @@
 import DeviceQr from './DeviceQr';
+import { publicMachineUrl } from './machine-links';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Check, CircleAlert, Copy, Globe, KeyRound, Link2, LoaderCircle, LogOut, MonitorSmartphone, Plug, ShieldCheck, Trash2, Unplug } from 'lucide-react';
 import type { Session, Group } from '../shared/types';
@@ -109,6 +110,7 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
   }, enabled ? '已保存并连接远程访问' : '已停用远程访问');
   const field = (key: keyof RemoteSettings, label: string, placeholder = '', type = 'text') => <label className="form-label">{label}<input disabled={!local} type={type} placeholder={placeholder} value={String(draft?.[key] ?? '')} onChange={event => setDraft(current => current && { ...current, [key]: type === 'number' ? Number(event.target.value) : event.target.value })} /></label>;
   const tunnel = remote?.tunnel;
+  const remoteLink = remote?.settings.publicUrl ? publicMachineUrl(remote.settings.publicUrl.replace(/\/*$/, '/')) : '';
   return <section className="backend-setting-card security-settings" aria-label="远程访问与安全">
     <div className="backend-setting-title"><ShieldCheck size={20} /><div><h2>远程访问与安全</h2><p>{local ? '本机访问无需密码；远程地址需要登录或分享链接。' : '你正在通过远程地址访问。密码和远程配置只能在运行 Dili 的电脑上修改。'}</p></div></div>
     {error && <p role="alert" className="form-error">{error}</p>}
@@ -125,7 +127,7 @@ export function SecuritySettings({ auth, notify }: { auth: Extract<AuthStatus, {
     {local && !passwordSet && <p className="form-note"><CircleAlert size={14} />请先设置所有者密码，再进行配对。</p>}
     {remote?.pairing === undefined ? <p className="form-note">本机服务更新后支持邀请码配对。</p> : remote.pairing ? <div className="invite-pairing">
       <strong><MonitorSmartphone size={15} /> {remote.pairing.name}</strong>
-      <div className="share-created"><Link2 size={14} /><a href={`${remote.settings.publicUrl}/`} target="_blank" rel="noreferrer">{remote.settings.publicUrl}/</a><button className="icon-button" aria-label="复制远程链接" onClick={() => void copyToClipboard(`${remote.settings.publicUrl}/`).then(() => notify('远程链接已复制'))}><Copy size={14} /></button></div>
+      <div className="share-created"><Link2 size={14} /><a href={remoteLink} target="_blank" rel="noreferrer">{remoteLink}</a><button className="icon-button" aria-label="复制远程链接" onClick={() => void copyToClipboard(remoteLink).then(() => notify('远程链接已复制'))}><Copy size={14} /></button></div>
       {remote.settings.enabled && tunnel?.state === 'connected' && <DeviceQr url={remote.settings.publicUrl} name={remote.pairing.name} />}
       <p className="form-note">已配对 · {when(remote.pairing.pairedAt)}</p>
       {local && <button className="button secondary small-button" disabled={!!busy} onClick={() => {
