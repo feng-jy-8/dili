@@ -1,4 +1,5 @@
 import express from 'express';
+import type { RelayBandwidth } from './relay-bandwidth.ts';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { RelayStore } from './relay-store.ts';
@@ -6,7 +7,7 @@ import { validToken } from './security.ts';
 import { relayUrl } from './invite.ts';
 import { FRP_ARCHIVE_HASHES, frpArchive } from '../shared/frp.ts';
 
-export interface RelayOptions { serverUrl: string; domains?: string[]; adminToken: string; pluginToken: string; adminHtml: string; clientsDir?: string }
+export interface RelayOptions { serverUrl: string; domains?: string[]; adminToken: string; pluginToken: string; adminHtml: string; clientsDir?: string; bandwidth?: RelayBandwidth }
 export function createRelayApp(store: RelayStore, options: RelayOptions) {
   const app = express(), serverUrl = relayUrl(options.serverUrl);
   const defaultUrl = new URL(serverUrl), domainUrls = new Map<string, string>();
@@ -74,6 +75,7 @@ export function createRelayApp(store: RelayStore, options: RelayOptions) {
     if (!validToken(req.headers.authorization?.replace(/^Bearer /, ''), options.adminToken)) return res.status(401).json({ error: '管理密钥不正确' });
     next();
   });
+  app.get('/connect/api/admin/bandwidth', (_req, res) => res.json(options.bandwidth?.snapshot() ?? { available: false, error: '带宽采样未启用', history: [], current: null }));
   app.get('/connect/api/admin/state', (_req, res) => res.json({ devices: store.devices(), invites: store.invites(), requests: store.requests(), domains }));
   app.post('/connect/api/admin/requests/:id/review', (req, res) => {
     if (typeof req.body.approve !== 'boolean') return res.status(400).json({ error: '审批参数无效' });

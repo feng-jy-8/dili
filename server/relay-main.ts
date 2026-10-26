@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { newSecret, relayUrl } from './invite.ts';
 import { RelayStore } from './relay-store.ts';
 import { createRelayApp } from './relay-service.ts';
+import { RelayBandwidth } from './relay-bandwidth.ts';
 import { acquireInstanceLock } from './instance-lock.ts';
 
 const directory = resolve(process.env.SESSIONDECK_RELAY_DATA_DIR || join(homedir(), '.local/share/sessiondeck-relay'));
@@ -30,8 +31,16 @@ if (!Number.isInteger(frpsPort) || frpsPort < 1024 || frpsPort > 65535 || frpsPo
 // frps remains loopback-only. Public access goes through Caddy's verified WSS.
 writeFileSync(join(directory, 'frps.json'), JSON.stringify({ bindAddr: '127.0.0.1', bindPort: frpsPort, proxyBindAddr: '127.0.0.1', maxPortsPerClient: 1, allowPorts: [{ start: firstPort, end: lastPort }], transport: { heartbeatTimeout: 20 }, httpPlugins: [{ name: 'sessiondeck-devices', addr: `127.0.0.1:${port}`, path: `/internal/frp/${pluginToken}`, ops: ['Login', 'NewProxy', 'Ping', 'NewWorkConn'] }] }), { mode: 0o600 });
 const adminHtml = process.env.SESSIONDECK_RELAY_HTML || resolve('relay/index.html');
-const app = createRelayApp(store, { serverUrl, domains, adminToken, pluginToken, adminHtml, clientsDir: resolve(process.env.SESSIONDECK_RELAY_CLIENTS_DIR || join(dirname(adminHtml), 'clients')) });
+const interfaces = (process.env.SESSIONDECK_RELAY_NETWORK_INTERFACES || '').split(',').map(value => value.trim()).filter(Boolean);
+const capacityValue = process.env.SESSIONDECK_RELAY_BANDWIDTH_MBPS;
+const capacity = capacityValue ? Number(capacityValue) : null;
+if (capacity !== null && (!Number.isFinite(capacity) || capacity <= 0)) throw new Error('带宽上限必须为正数 Mbps');
+const bandwidth = new RelayBandwidth(interfaces, capacity);
+bandwidth.sample();
+const bandwidthTimer = setInterval(() => bandwidth.sample(), 5000);
+bandwidthTimer.unref();
+const app = createRelayApp(store, { serverUrl, domains, adminToken, pluginToken, adminHtml, bandwidth, clientsDir: resolve(process.env.SESSIONDECK_RELAY_CLIENTS_DIR || join(dirname(adminHtml), 'clients')) });
 const server = app.listen(port, '127.0.0.1', () => console.log(`Dili 配对服务 → ${serverUrl}/\n管理密钥文件：${join(directory, 'admin.token')}`));
 let closing = false;
-function close() { if (closing) return; closing = true; server.close(() => { db.close(); void lock.release().then(() => process.exit(0)); }); server.closeAllConnections(); }
+function close() { if (closing) return; closing = true; clearInterval(bandwidthTimer); server.close(() => { db.close(); void lock.release().then(() => process.exit(0)); }); server.closeAllConnections(); }
 process.on('SIGTERM', close); process.on('SIGINT', close);

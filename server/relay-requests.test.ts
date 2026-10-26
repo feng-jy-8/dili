@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { RelayStore } from './relay-store.ts';
 import { createRelayApp } from './relay-service.ts';
+import { RelayBandwidth } from './relay-bandwidth.ts';
 import { decodeInvite, newSecret } from './invite.ts';
 
 test('email requests require a private receipt, approval is atomic, codes remain encrypted and legacy routing survives', async t => {
@@ -14,8 +15,13 @@ test('email requests require a private receipt, approval is atomic, codes remain
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); db.close(); });
   const address = server.address(); assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}/connect`;
-  server.on('request', createRelayApp(store, { serverUrl: base, adminToken: 'admin-fixture', pluginToken: 'plugin-fixture', adminHtml: resolve('relay/index.html') }));
+  const bandwidth = new RelayBandwidth([], 100, () => 'eth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0'); bandwidth.sample();
+  server.on('request', createRelayApp(store, { serverUrl: base, adminToken: 'admin-fixture', pluginToken: 'plugin-fixture', adminHtml: resolve('relay/index.html'), bandwidth }));
   const call = (path: string, body?: object, admin = false) => fetch(base + path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(admin ? { authorization: 'Bearer admin-fixture' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  assert.equal((await call('/api/admin/bandwidth')).status, 401);
+  const metrics = await call('/api/admin/bandwidth', undefined, true);
+  assert.equal(metrics.status, 200); assert.equal(metrics.headers.get('cache-control'), 'no-store');
+  assert.equal((await metrics.json() as { available: boolean }).available, true);
   assert.equal((await call('/api/requests', { email: 'broken', name: 'A', claim: newSecret() })).status, 400);
   const claim = newSecret();
   const response = await call('/api/requests', { email: 'user@example.com', name: '<script>user</script>', claim });

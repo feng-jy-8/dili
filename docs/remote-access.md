@@ -69,3 +69,14 @@ SESSIONDECK_RELAY_DATA_DIR=/path/to/private-relay-data npm run relay
 同域静态 PWA 与中继路由见 [PWA 部署说明](pwa.md) 和 `relay/pwa.caddy`。现有中继域名继续保留。中继数据库备份使用 SQLite online backup，不能只复制活跃 WAL 数据库的主文件。
 
 frps 的 systemd 单元应使用 `After=sessiondeck-relay.service` 和 `Wants=sessiondeck-relay.service`，不要使用 `Requires=`：后者会在更新中继管理服务时连带停止隧道。调整单元后仅执行 `systemctl daemon-reload` 即可更新依赖，无需重启 frps。管理服务不可用的短暂窗口仍可能使插件验证失败，应选择低流量维护时间并检查客户端恢复。
+
+## 管理员带宽仪表盘
+
+登录中继控制台后，可查看服务器入站/出站速率、最近 30 分钟趋势、窗口单方向峰值和带宽利用率。Linux 服务每 5 秒读取 `/proc/net/dev`，只在内存保留最多 360 点，重启清空；没有采样时显示等待或不可用，不以零流量掩盖失败。指标接口 `/connect/api/admin/bandwidth` 仅对持有管理密钥者开放，不缓存，不采集消息或网络载荷。
+
+这是**整台服务器的网卡流量**，包含其他服务，不是 Dili 专属或每台设备流量。默认汇总除 `lo` 外所有网卡；有容器、网桥、VPN 时请明确指定公网网卡，避免重复计数：
+
+- `SESSIONDECK_RELAY_NETWORK_INTERFACES=eth0`（多个以逗号分隔；按服务器实际网卡名填写）。
+- `SESSIONDECK_RELAY_BANDWIDTH_MBPS=100`（可选，填写实际购买的带宽上限，单位 Mbps；不配置则不显示利用率）。
+
+利用率采用入站、出站较高方向除以上限，达到 80% 显示红色；若供应商仅按出站计费，请结合出站读数判断。部署时将这两个环境变量加入中继服务配置，在维护窗口仅重启中继管理服务，不需修改 FRP 协议或重启 frps。非 Linux 环境显示指标不可用。浏览器隐藏后暂停刷新；回到页面自动恢复。
