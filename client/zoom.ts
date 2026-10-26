@@ -13,8 +13,18 @@ export const viewportWidth = () => window.innerWidth / interfaceScale();
 // iOS Safari keeps innerHeight when the keyboard opens; only the visual
 // viewport shrinks and pans. Sizing the shell from it keeps the header and
 // composer on screen instead of letting Safari push the whole page up.
-export const viewportHeight = () => (window.visualViewport?.height ?? window.innerHeight) / interfaceScale();
-const viewportTop = () => Math.max(0, window.visualViewport?.offsetTop ?? 0) / interfaceScale();
+function hasEditableFocus() {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && (active.matches('textarea, select, input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"])') || active.isContentEditable);
+}
+function useLayoutViewport() {
+  // In standalone WebKit the visual viewport can stay permanently reduced
+  // after dismissal. Polling the same stale value cannot restore the page.
+  // With no editable focus there is no software keyboard to accommodate.
+  return navigator.maxTouchPoints > 0 && !hasEditableFocus() && (window.visualViewport?.scale ?? 1) === 1;
+}
+export const viewportHeight = () => (useLayoutViewport() ? window.innerHeight : window.visualViewport?.height ?? window.innerHeight) / interfaceScale();
+const viewportTop = () => (useLayoutViewport() ? 0 : Math.max(0, window.visualViewport?.offsetTop ?? 0)) / interfaceScale();
 
 function resizeViewport() {
   const root = document.documentElement;

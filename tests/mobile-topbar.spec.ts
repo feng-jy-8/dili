@@ -66,3 +66,24 @@ test('keyboard dismissal restores height even when WebKit updates metrics after 
     const bounds = node.getBoundingClientRect(); return [Math.round(bounds.height), Math.round(bounds.top)];
   })).toEqual([844, 0]);
 });
+
+
+test('blur restores full layout even when visual viewport remains stuck at keyboard size', async ({ page }) => {
+  await page.addInitScript(() => {
+    const viewport = Object.assign(new EventTarget(), { height: 844, offsetTop: 0, scale: 1 });
+    Object.defineProperty(window, 'visualViewport', { get: () => viewport });
+    (window as unknown as { stuckViewport: typeof viewport }).stuckViewport = viewport;
+  });
+  await page.goto('/#/contacts');
+  const input = page.getByLabel('搜索联系人');
+  await input.focus();
+  await page.evaluate(() => {
+    const viewport = (window as unknown as { stuckViewport: EventTarget & { height: number; offsetTop: number } }).stuckViewport;
+    viewport.height = 480; viewport.offsetTop = 90; viewport.dispatchEvent(new Event('resize'));
+  });
+  await expect.poll(() => page.locator('.app-shell').evaluate(node => Math.round(node.getBoundingClientRect().height))).toBe(480);
+  await input.blur();
+  await expect.poll(() => page.locator('.app-shell').evaluate(node => {
+    const rect = node.getBoundingClientRect(); return [Math.round(rect.height), Math.round(rect.top)];
+  })).toEqual([844, 0]);
+});
