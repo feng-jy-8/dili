@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, Monitor, Trash2, ArrowLeft } from 'lucide-react';
 import AuthGate from './AuthGate';
 import InstallApp from './InstallApp';
+import { capturePairingInvite, openMachine } from './machine-links';
 import { appUrl } from './urls';
 import './machines.css';
 
@@ -22,16 +23,14 @@ function readMachines(): Machine[] {
   } catch { return []; }
 }
 export default function MachineRoot() {
+  capturePairingInvite();
   const [hash, setHash] = useState(() => {
     if (!location.hash && document.querySelector('meta[name="dili-launcher"]')) location.hash = '/machines';
     return location.hash;
   });
   useEffect(() => { const change = () => setHash(location.hash); window.addEventListener('hashchange', change); return () => window.removeEventListener('hashchange', change); }, []);
   if (hash.startsWith('#/machines')) return <MachineHome />;
-  const home = new URLSearchParams(location.search).get('machineHome');
-  let returnTo = '';
-  try { const target = new URL(home || ''); if (['https:', 'http:'].includes(target.protocol) && !target.username && !target.password && target.hash === '#/machines') returnTo = target.href; } catch { /* Normal workbench visit. */ }
-  return returnTo ? <div className="machine-workspace"><nav className="machine-navigation" aria-label="机器导航"><a className="machine-return" href={returnTo} title="返回机器列表"><ArrowLeft size={16} /><span>机器</span></a></nav><div className="machine-workspace-content"><AuthGate /></div></div> : <AuthGate />;
+  return <AuthGate />;
 }
 function MachineHome() {
   const [machines, setMachines] = useState(readMachines);
@@ -39,6 +38,11 @@ function MachineHome() {
   const [url, setUrl] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [connecting, setConnecting] = useState(false);
+  const handledCallback = useRef(false);
+  const launcher = !!document.querySelector('meta[name="dili-launcher"]');
+  const current = new URL(appUrl('/'), location.origin).href;
+  const cards = !launcher && !machines.some(item => item.url === current) ? [{ url: current, name: '当前机器' }, ...machines] : machines;
   const persist = (next: Machine[]) => {
     try { localStorage.setItem(KEY, JSON.stringify(next)); setMachines(next); return true; }
     catch { setError('浏览器无法保存机器列表，请允许网站存储后重试。'); return false; }
@@ -47,34 +51,57 @@ function MachineHome() {
     const sync = () => setMachines(readMachines()); window.addEventListener('storage', sync);
     const params = new URLSearchParams(location.hash.split('?')[1]);
     const paired = params.get('paired');
-    if (paired) {
+    if (paired && !handledCallback.current) {
+      handledCallback.current = true;
       try {
         const target = machineUrl(paired);
         const pending = JSON.parse(sessionStorage.getItem('dili.machine.pending') || 'null') as (Machine & { nonce: string }) | null;
         // Only accept the machine this tab explicitly started pairing with.
-        if (pending?.url === target && pending.nonce === params.get('nonce') && persist([...readMachines().filter(item => item.url !== target), { url: pending.url, name: pending.name }])) sessionStorage.removeItem('dili.machine.pending');
+        if (pending?.url === target && pending.nonce === params.get('nonce')) {
+          const destination = params.get('remote') ? machineUrl(params.get('remote')!) : target;
+          if (params.has('remote') && new URL(destination).protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(destination).hostname)) throw new Error('远程地址必须使用 HTTPS');
+          if (persist([...readMachines().filter(item => item.url !== target && item.url !== destination), { url: destination, name: pending.name }])) {
+            sessionStorage.removeItem('dili.machine.pending');
+            setConnecting(true);
+            location.replace(openMachine(destination));
+            return () => window.removeEventListener('storage', sync);
+          }
+        }
       } catch { setError('连接记录无法恢复，请重新添加机器。'); }
       history.replaceState(null, '', appUrl('/#/machines'));
     }
     return () => window.removeEventListener('storage', sync);
   }, []);
-  function add(event: FormEvent) {
-    event.preventDefault(); setError('');
+  function connect(value: string, label: string, invite = '') {
+    setError('');
     try {
-      const target = machineUrl(url);
-      const machine = { url: target, name: name.trim() || new URL(target).host, nonce: crypto.randomUUID() };
+      const target = machineUrl(value);
+      if (invite && !/^SD1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(invite.trim())) throw new Error('请填写 SD1. 开头的完整邀请码');
+      const machine = { url: target, name: label.trim() || new URL(target).host, nonce: crypto.randomUUID() };
       sessionStorage.setItem('dili.machine.pending', JSON.stringify(machine));
-      const returnUrl = new URL(appUrl('/#/machines'), location.origin).href;
-      location.assign(`${target}#/pair?return=${encodeURIComponent(returnUrl)}&nonce=${encodeURIComponent(machine.nonce)}`);
+      const params = new URLSearchParams({ return: new URL(appUrl('/#/machines'), location.origin).href, nonce: machine.nonce, name: machine.name });
+      if (invite) { params.set('remote', '1'); params.set('invite', invite.trim()); }
+      location.assign(`${target}#/pair?${params}`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : '无法连接机器'); }
   }
-  return <main className="machines-page"><header><div><h1>我的机器</h1><p>连接你的 Dili，继续与 Agent 一起工作。</p></div>{!document.querySelector('meta[name="dili-launcher"]') && <a href={appUrl('/#/contacts')}>当前机器</a>}</header>
+  function add(event: FormEvent) { event.preventDefault(); connect(url, name); }
+  if (connecting) return <main className="machines-page"><p role="status">正在进入机器…</p></main>;
+  return <main className="machines-page"><header><div><h1>我的机器</h1><p>连接你的 Dili，继续与 Agent 一起工作。</p></div></header>
     <InstallApp />
     {error && <p role="alert" className="form-error">{error}</p>}
-    <section className="machine-grid" aria-label="机器列表">{machines.map(machine => <article className="machine-card" key={machine.url}><a href={`${machine.url}?machineHome=${encodeURIComponent(new URL(appUrl('/#/machines'), location.origin).href)}#/contacts`}><Monitor size={30} /><strong>{machine.name}</strong><small>{machine.url}</small><span>打开联系人 →</span></a><button aria-label={`移除 ${machine.name}`} onClick={() => { if (confirm(`从列表移除「${machine.name}」？机器上的会话不会删除。`)) persist(machines.filter(item => item.url !== machine.url)); }}><Trash2 size={16} /></button></article>)}
+    <section className="machine-grid" aria-label="机器列表">{cards.map(machine => <article className={machines.some(item => item.url === machine.url) ? "machine-card" : "machine-current-card"} key={machine.url}><a href={openMachine(machine.url)}><Monitor size={30} /><strong>{machine.name}</strong><small>{machine.url}</small><span>打开联系人 →</span></a><MachineInvite connect={invite => connect(machine.url, machine.name, invite)} />{machines.some(item => item.url === machine.url) && <button aria-label={`移除 ${machine.name}`} onClick={() => { if (confirm(`从列表移除「${machine.name}」？机器上的会话不会删除。`)) persist(machines.filter(item => item.url !== machine.url)); }}><Trash2 size={16} /></button>}</article>)}
       <button className="machine-add" aria-label="添加机器" onClick={() => { setAdding(true); setError(''); }}><Plus size={38} /><span>发现你的机器</span></button></section>
-    {adding && <section className="machine-form" aria-label="添加机器"><button className="text-button" onClick={() => setAdding(false)}><ArrowLeft size={16} />取消</button><h2>连接机器</h2><form onSubmit={add}><label>机器链接<input autoFocus type="url" required placeholder="https://你的机器地址/" value={url} onChange={event => setUrl(event.target.value)} /></label><label>名称（可选）<input maxLength={80} value={name} onChange={event => setName(event.target.value)} placeholder="例如：工作电脑" /></label><p>下一步会打开该机器验证密码。验证后返回，机器卡片会保存在此设备；密码不会存入列表。</p><button className="button primary">下一步：验证机器</button></form></section>}
+    {adding && <section className="machine-form" aria-label="添加机器"><button className="text-button" onClick={() => setAdding(false)}><ArrowLeft size={16} />取消</button><h2>连接机器</h2><form onSubmit={add}><label>机器链接<input autoFocus type="url" required placeholder="https://你的机器地址/" value={url} onChange={event => setUrl(event.target.value)} /></label><label>名称（可选）<input maxLength={80} value={name} onChange={event => setName(event.target.value)} placeholder="例如：工作电脑" /></label><p>下一步会打开该机器验证密码。验证后自动保存机器并进入联系人；密码不会存入列表。</p><button className="button primary">下一步：验证机器</button></form></section>}
+    <p className="machine-discovery-note">浏览器不能自动扫描局域网。请先填写机器链接；可在机器卡片中填写邀请码，生成并切换到远程链接。首次启用远程连接需在运行 Dili 的电脑上操作。</p>
     <footer>电脑与 Android：在浏览器菜单中安装应用。iPhone：Safari → 分享 → 添加到主屏幕。远程安装和麦克风需要 HTTPS。</footer>
   </main>;
 }
 
+
+function MachineInvite({ connect }: { connect: (invite: string) => void }) {
+  const [invite, setInvite] = useState('');
+  return <form className="machine-invite" onSubmit={event => { event.preventDefault(); connect(invite); setInvite(''); }}>
+    <label>邀请码<input aria-label="远程连接邀请码" type="password" autoComplete="off" maxLength={1600} placeholder="SD1.…" required value={invite} onChange={event => setInvite(event.target.value)} /></label>
+    <button className="button secondary" disabled={!invite.trim()}>转为远程连接</button>
+  </form>;
+}

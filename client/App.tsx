@@ -3,6 +3,7 @@ import { claudePermissionChoices, claudePermissionLabel } from '../shared/permis
 import { DEFAULT_GROUP_PROMPT } from '../shared/group-prompt';
 import ClaudeTerminalSettings from './ClaudeTerminalSettings';
 import { appUrl } from './urls';
+import { machineHome } from './machine-links';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, ArrowRightLeft, Archive, Bell, BellOff, Check, CheckCheck,
@@ -565,6 +566,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         content carries what acts on the current view. On phones the rail
         becomes a bottom tab bar and the toolbar stays on top. */}
     <nav className={`rail ${railOpen ? 'expanded' : ''}`} aria-label="工作空间导航" inert={!!modal}>
+      {machineHome() && <a className="rail-machine-return" href={machineHome()} aria-label="返回机器列表" title="返回机器列表"><ArrowLeft size={20} /></a>}
       <a className="brand" href="#" aria-label="Dili 嘀哩工作台" title="Dili 嘀哩工作台" onClick={(event) => { event.preventDefault(); navigate('contacts'); }}><span className="brand-mark"><BrandMark /></span><span className="brand-wordmark">Dili</span></a>
       <div className="rail-primary primary-nav">
         {tab('contacts', <MessageSquare size={18} />, '联系人', personal.length)}

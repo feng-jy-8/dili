@@ -45,7 +45,7 @@ export default function AuthGate() {
   if (shareToken) return <RedeemPage key={shareToken} token={shareToken} done={accept} />;
   if (status.kind === 'anonymous') return <LoginPage passwordSet={status.passwordSet} done={accept} />;
   if (status.kind === 'share') return <Suspense fallback={<div className="auth-page"><LoaderCircle className="spin" size={22} /></div>}><ShareApp status={status} /></Suspense>;
-  if (location.hash.startsWith('#/pair?')) return <Suspense fallback={null}><PairMachine /></Suspense>;
+  if (location.hash.startsWith('#/pair?')) return <Suspense fallback={null}><PairMachine local={!status.remote} /></Suspense>;
   return <App auth={status} />;
 }
 
