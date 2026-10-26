@@ -270,3 +270,26 @@ test('permanent installation guide and tag/build update prompts preserve the cur
 });
 
 });
+
+test('compact machine tabs retain return navigation and restore a saved workspace', async ({ page, baseURL }) => {
+  const home = `${baseURL}/#/machines`;
+  await page.goto('/#/machines');
+  await page.evaluate(({ base, home }) => {
+    localStorage.setItem('dili.machines.v1', JSON.stringify([{ url: `${base}/`, name: '工作电脑' }, { url: `${base}/other/`, name: '测试电脑' }]));
+    sessionStorage.setItem('dili.machine-visits.v1', JSON.stringify({ [`${base}/other/`]: { hash: '#/contacts?session=last-session', time: 1 } }));
+    location.href = `${base}/?machineHome=${encodeURIComponent(home)}#/contacts`;
+  }, { base: baseURL!, home });
+  const toggle = page.getByRole('button', { name: '切换机器', exact: true });
+  await expect(toggle).toContainText('工作电脑');
+  await expect(page.getByRole('link', { name: '返回机器列表', exact: true })).toHaveAttribute('href', home);
+  await expect(page.getByRole('navigation', { name: '切换已添加机器' })).toHaveCount(0);
+  await toggle.click();
+  const tabs = page.getByRole('navigation', { name: '切换已添加机器' });
+  await expect(tabs.getByRole('link', { name: '工作电脑', exact: true })).toHaveAttribute('aria-current', 'page');
+  const target = new URL((await tabs.getByRole('link', { name: '测试电脑', exact: true }).getAttribute('href'))!);
+  expect(target.hash).toBe('#/contacts?session=last-session');
+  expect(target.searchParams.get('machineHome')).toBe(home);
+  await tabs.getByRole('link', { name: '工作电脑', exact: true }).click();
+  await expect(tabs).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
