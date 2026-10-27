@@ -179,3 +179,27 @@ test('previous standalone file tabs migrate into one workspace and retain the ac
     await expect(panel.getByRole('tab')).toHaveCount(3);
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
+
+test('explorer opens an independent directory and refreshes its files without changing the contact', async ({ page, request }) => {
+  const cwd = await mkdtemp(join(tmpdir(), 'dili-open-directory-'));
+  try {
+    await writeFile(join(cwd, 'independent.md'), '# Independent directory');
+    const state = await (await request.get('/api/state')).json() as AppState;
+    const session = await (await request.post('/api/sessions', { headers: await mutationHeaders(request), data: { backend: 'codex', title: '独立目录入口', cwd: state.defaultCwd } })).json() as Session;
+    await page.goto('/');
+    await page.getByRole('button', { name: `进入 ${session.title} 的会话`, exact: true }).click();
+    await page.getByRole('button', { name: '打开资源管理器', exact: true }).click();
+    await page.getByRole('button', { name: '打开任意目录', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '选择工作目录' });
+    await dialog.getByRole('textbox').first().fill(cwd);
+    await dialog.getByRole('button', { name: '选择此目录' }).click();
+    const panel = page.getByRole('complementary', { name: '统一预览面板', exact: true });
+    await panel.getByRole('button', { name: /^independent.md/ }).click();
+    await expect(panel.getByRole('heading', { name: 'Independent directory' })).toBeVisible();
+    await writeFile(join(cwd, 'new.md'), 'new');
+    await panel.getByRole('button', { name: '刷新资源管理器' }).click();
+    await expect(panel.getByRole('button', { name: /^new.md/ })).toBeVisible();
+    const after = await (await request.get('/api/state')).json() as AppState;
+    expect(after.sessions.find(item => item.id === session.id)?.cwd).toBe(session.cwd);
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});

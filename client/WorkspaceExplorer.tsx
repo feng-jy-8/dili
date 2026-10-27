@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, FileDiff, FileText, Folder, PanelLeftClose, PanelLeftOpen, LoaderCircle, RefreshCw, X } from 'lucide-react';
-import { EntryIcon, formatSize, gitStatusClass, gitStatusLabel, htmlPath, mediaKind, type Entry, type Tree, type FileResult, type DiffResult, type GitStatus, type Preview } from './workspace-files';
+import { workspaceBase, EntryIcon, formatSize, gitStatusClass, gitStatusLabel, htmlPath, mediaKind, type Entry, type Tree, type FileResult, type DiffResult, type GitStatus, type Preview } from './workspace-files';
 import WorkspaceFilePreview, { WorkspacePreviewContent } from './WorkspacePreview';
 import type { FileSelection } from './usePreviewWorkspace';
 import type { Session } from '../shared/types';
@@ -67,15 +67,15 @@ export function Splitter({ label, value, min, max, onChange, onCommit, direction
     onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={finish} onKeyDown={keyDown}><span /></div>;
 }
 
-type ExplorerProps = { session: Session; close: () => void; picker?: ReactNode; embedded?: boolean; selection?: FileSelection; treeCollapsed?: boolean; onTreeCollapsed?: (value: boolean) => void; onSelectFile?: (selection?: FileSelection) => void };
+type ExplorerProps = { session: Session; close: () => void; picker?: ReactNode; root?: string; embedded?: boolean; selection?: FileSelection; treeCollapsed?: boolean; onTreeCollapsed?: (value: boolean) => void; onSelectFile?: (selection?: FileSelection) => void };
 
 export default function WorkspaceExplorer(props: ExplorerProps) {
   // Remount immediately when switching workspaces; pending responses from the
   // previous panel cannot expose another contact's file or error.
-  return <WorkspaceExplorerPanel key={`${props.session.id}:${props.session.cwd}`} {...props} />;
+  return <WorkspaceExplorerPanel key={`${props.session.id}:${props.root ?? props.session.cwd}`} {...props} />;
 }
 
-function WorkspaceExplorerPanel({ session, close, picker, embedded, selection, treeCollapsed = false, onTreeCollapsed, onSelectFile }: ExplorerProps) {
+function WorkspaceExplorerPanel({ session, close, picker, root, embedded, selection, treeCollapsed = false, onTreeCollapsed, onSelectFile }: ExplorerProps) {
   const [tab, setTab] = useState<'files' | 'git'>(() => selection?.kind === 'diff' ? 'git' : 'files');
   const [trees, setTrees] = useState<Record<string, Tree>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']));
@@ -104,7 +104,7 @@ function WorkspaceExplorerPanel({ session, close, picker, embedded, selection, t
   const live = useRef(true);
   const sequence = useRef(0);
   const requests = useRef(new Map<string, number>());
-  const base = `/sessions/${encodeURIComponent(session.id)}/workspace`;
+  const base = workspaceBase(session.id, root);
 
   // Each tree, Git status and the single preview have their own request scope.
   // An older completion cannot clear a newer request's loading/error state.
@@ -177,7 +177,7 @@ function WorkspaceExplorerPanel({ session, close, picker, embedded, selection, t
     void loadGit();
     if (selectedPath && !onSelectFile) { if (tab === 'git') openDiff(selectedPath); else openFile(selectedPath); }
   };
-  const root = trees[''];
+  const rootTree = trees[''];
   const rows = useMemo(() => {
     const result: { entry: Entry; depth: number }[] = [];
     const visited = new Set<string>();
@@ -220,30 +220,30 @@ function WorkspaceExplorerPanel({ session, close, picker, embedded, selection, t
   return <aside ref={container} className={`workspace-explorer ${previewOpen ? 'preview-open' : ''} ${embedded ? `embedded-explorer ${treeCollapsed ? 'tree-collapsed' : ''}` : ''}`} aria-label="资源管理器" style={{ '--workspace-tree-width': `${shownTree}px`, '--workspace-preview-width': `${shownPreview}px` } as CSSProperties}>
     {embedded && <div className="workspace-combined-toolbar">
       <button className="icon-button" aria-label={treeCollapsed ? '展开目录' : '收起目录'} title={treeCollapsed ? '展开目录' : '收起目录'} aria-expanded={!treeCollapsed} onClick={() => onTreeCollapsed?.(!treeCollapsed)}>{treeCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button>
-      <span title={selection?.path || session.cwd}><bdi>{selection?.path || session.cwd}</bdi></span>
+      {picker || <span title={root || session.cwd}><bdi>{root || session.cwd}</bdi></span>}
+      <button className="icon-button" aria-label="刷新资源管理器" title="刷新目录" onClick={refresh}><RefreshCw size={14} /></button>
       {selection && <><button className="icon-button" aria-label="重新读取文件" title="重新读取文件" onClick={() => setPreviewRevision(value => value + 1)}><RefreshCw size={14} /></button><button className="icon-button" aria-label="关闭文件预览" title="关闭文件预览" onClick={clearPreview}><X size={14} /></button></>}
     </div>}
     <div className="workspace-explorer-body">
     <div className="workspace-list-pane" hidden={embedded && treeCollapsed}>
-      <header className="workspace-explorer-header"><div><strong>资源管理器</strong><small title={session.cwd}><bdi>{session.cwd}</bdi></small></div><button className="icon-button" aria-label="刷新资源管理器" title="刷新" onClick={refresh}><RefreshCw size={14} /></button><button className="icon-button" aria-label="关闭资源管理器" title="关闭" onClick={close}><X size={16} /></button></header>
-      {picker}
+      {!embedded && <header className="workspace-explorer-header">{picker || <div><strong>资源管理器</strong><small title={root || session.cwd}><bdi>{root || session.cwd}</bdi></small></div>}<button className="icon-button" aria-label="刷新资源管理器" title="刷新" onClick={refresh}><RefreshCw size={14} /></button><button className="icon-button" aria-label="关闭资源管理器" title="关闭" onClick={close}><X size={16} /></button></header>}
       <nav className="workspace-tabs" aria-label="资源管理器视图"><button className={tab === 'files' ? 'active' : ''} aria-pressed={tab === 'files'} onClick={() => selectTab('files')}><Folder size={14} />文件</button><button className={tab === 'git' ? 'active' : ''} aria-pressed={tab === 'git'} onClick={() => selectTab('git')}><FileDiff size={14} />Git diff{!!git?.entries.length && <b>{git.entries.length}</b>}</button></nav>
       {visibleErrors.filter(([scope]) => scope !== 'preview').map(([scope, message]) => <div key={scope} className="workspace-error" role="alert">{message}</div>)}
       {loading && <div className="workspace-loading" role="status"><LoaderCircle size={14} className="spin" />读取中…</div>}
       {tab === 'files' ? <div className="workspace-tree">
-        {!root && !pending.has('tree:') && <button className="workspace-empty" onClick={() => void loadTree('')}>读取工作区</button>}
-        {root && !root.entries.length && <p className="workspace-note">此目录为空。</p>}
+        {!rootTree && !pending.has('tree:') && <button className="workspace-empty" onClick={() => void loadTree('')}>读取工作区</button>}
+        {rootTree && !rootTree.entries.length && <p className="workspace-note">此目录为空。</p>}
         {rows.map(({ entry, depth }) => <button key={entry.path} className={`workspace-entry ${highlightedPath === entry.path ? 'selected' : ''}`} style={{ paddingLeft: 10 + depth * 16 }} aria-expanded={entry.kind === 'directory' ? expanded.has(entry.path) : undefined} onClick={() => toggle(entry)}>{entry.kind === 'directory' ? expanded.has(entry.path) ? <ChevronDown size={14} /> : <ChevronRight size={14} /> : <span className="workspace-file-spacer" aria-hidden="true" />}<EntryIcon entry={entry} /><span title={entry.path}>{entry.name}</span>{entry.kind === 'file' && <small>{formatSize(entry.size)}</small>}</button>)}
         {Object.entries(trees).filter(([path, tree]) => expanded.has(path) && tree.truncated).map(([path, tree]) => <p key={path} className="workspace-note">{path || '工作目录'}内容过多，仅显示前 {tree.entries.length} 项</p>)}
       </div> : <div className="workspace-git">{!git?.available && git && <p className="workspace-note">当前目录不是 Git 仓库，或 Git 不可用。</p>}{gitEntries.map(entry => { const name = entry.path.split('/').pop() ?? entry.path; const folder = entry.path.slice(0, entry.path.length - name.length).replace(/\/$/, ''); return <button key={`${entry.status}:${entry.path}`} className={`workspace-git-entry ${gitStatusClass(entry.status)} ${highlightedPath === entry.path ? 'selected' : ''}`} title={`${entry.path} · ${entry.status}`} onClick={() => openDiff(entry.path)}><EntryIcon entry={{ name: entry.path, path: entry.path, kind: 'file' }} /><span className="workspace-git-name">{name}</span>{folder && <small>{folder}</small>}<code>{gitStatusLabel(entry.status)}</code></button>; })}{git?.available && !gitEntries.length && <p className="workspace-note">工作区没有未提交变更。</p>}</div>}
     </div>
     {(!embedded || !treeCollapsed) && <Splitter label="调整文件树宽度" value={shownTree} min={treeMin} max={treeMax} onChange={setTreeWidth} onCommit={value => writeLocalPreference(treeKey, String(value))} />}
     {embedded && <div className="workspace-combined-preview">
-      {selection ? <WorkspaceFilePreview compact key={`${selection.kind}:${selection.path}:${previewRevision}`} sessionId={session.id} path={selection.path} kind={selection.kind} close={clearPreview} /> : <div className="preview-unavailable"><FileText size={28} /><p>选择文件以预览内容</p>{treeCollapsed && <button className="text-button" onClick={() => onTreeCollapsed?.(false)}>展开目录</button>}</div>}
+      {selection ? <WorkspaceFilePreview compact key={`${selection.kind}:${selection.path}:${previewRevision}`} sessionId={session.id} root={root} path={selection.path} kind={selection.kind} close={clearPreview} /> : <div className="preview-unavailable"><FileText size={28} /><p>选择文件以预览内容</p>{treeCollapsed && <button className="text-button" onClick={() => onTreeCollapsed?.(false)}>展开目录</button>}</div>}
     </div>}
     {previewOpen && <><div className="workspace-preview-pane">
       {visibleErrors.filter(([scope]) => scope === 'preview').map(([scope, message]) => <div key={scope} className="workspace-error" role="alert">{message}</div>)}
-      <WorkspacePreviewContent preview={preview} sessionId={session.id} selectedPath={selectedPath} loading={pending.has('preview')} clearPreview={clearPreview} setPreview={setPreview} />
+      <WorkspacePreviewContent preview={preview} sessionId={session.id} root={root} selectedPath={selectedPath} loading={pending.has('preview')} clearPreview={clearPreview} setPreview={setPreview} />
     </div>
     <Splitter label="调整预览宽度" value={shownPreview} min={PREVIEW.min} max={previewMax} onChange={setPreviewWidth} onCommit={value => writeLocalPreference(PREVIEW.key, String(value))} /></>}
     </div>

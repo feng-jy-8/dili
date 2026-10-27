@@ -4,7 +4,7 @@ import { parseServicePreviewUrl } from '../shared/service-preview';
 import { appUrl } from './urls';
 import { readLocalPreference, writeLocalPreference } from './ui';
 
-type WorkspaceSource = { sessionId: string; cwd: string };
+type WorkspaceSource = { sessionId: string; cwd: string; custom?: boolean };
 export type FileSelection = { path: string; kind: 'file' | 'diff' };
 export type PreviewTab =
   | ({ id: string; kind: 'explorer'; selection?: FileSelection; treeCollapsed?: boolean } & WorkspaceSource)
@@ -33,7 +33,7 @@ function restore(): PreviewState {
         const selection = tab.kind === 'explorer' ? tab.selection : { path: tab.path, kind: tab.kind };
         const validSelection = selection && typeof selection.path === 'string' && selection.path.length <= 4096 && ['file', 'diff'].includes(selection.kind) ? selection as FileSelection : undefined;
         let workspace = tabs.find(item => item.id === id) as Extract<PreviewTab, { kind: 'explorer' }> | undefined;
-        if (!workspace) { workspace = { id, kind: 'explorer', sessionId: tab.sessionId, cwd: tab.cwd }; tabs.push(workspace); }
+        if (!workspace) { workspace = { id, kind: 'explorer', sessionId: tab.sessionId, cwd: tab.cwd, custom: tab.custom === true }; tabs.push(workspace); }
         // Migrate individual file tabs into their workspace; the active file wins.
         if (validSelection && (!workspace.selection || tab.id === saved.activeId)) workspace.selection = validSelection;
         if (tab.kind === 'explorer') workspace.treeCollapsed = tab.treeCollapsed === true;
@@ -50,6 +50,7 @@ export function usePreviewWorkspace() {
   useEffect(() => { writeLocalPreference(storageKey(), JSON.stringify(state)); }, [state]);
   const openTab = (tab: PreviewTab) => setState(current => ({ tabs: current.tabs.some(item => item.id === tab.id) ? current.tabs : [...current.tabs, tab], activeId: tab.id, open: true }));
   const openExplorer = (session: Session) => openTab({ id: explorerId({ sessionId: session.id, cwd: session.cwd }), kind: 'explorer', sessionId: session.id, cwd: session.cwd });
+  const openDirectory = (session: Session, cwd: string) => openTab({ id: explorerId({ sessionId: session.id, cwd }), kind: 'explorer', sessionId: session.id, cwd, custom: true });
   const selectFile = (id: string, selection?: FileSelection) => setState(current => ({ ...current, tabs: current.tabs.map(tab => tab.id === id && tab.kind === 'explorer' ? { ...tab, selection } : tab) }));
   const collapseTree = (id: string, treeCollapsed: boolean) => setState(current => ({ ...current, tabs: current.tabs.map(tab => tab.id === id && tab.kind === 'explorer' ? { ...tab, treeCollapsed } : tab) }));
   const openNote = () => openTab({ id: 'scratchpad', kind: 'note' });
@@ -64,6 +65,6 @@ export function usePreviewWorkspace() {
   const navigate = (id: string, url: string) => setState(current => ({ ...current, tabs: current.tabs.map(tab => tab.kind === 'web' && tab.id === id ? { ...tab, url } : tab) }));
   const hide = () => setState(current => ({ ...current, open: false }));
   const show = () => setState(current => ({ ...current, open: current.tabs.length > 0 }));
-  return { ...state, openExplorer, selectFile, collapseTree, openNote, openWeb, select, close, navigate, hide, show };
+  return { ...state, openExplorer, openDirectory, selectFile, collapseTree, openNote, openWeb, select, close, navigate, hide, show };
 }
 export type PreviewWorkspaceController = ReturnType<typeof usePreviewWorkspace>;

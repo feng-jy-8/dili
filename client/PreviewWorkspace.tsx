@@ -1,5 +1,6 @@
+import { DirectoryDialog } from './DirectoryField';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowLeft, ChevronDown, FilePenLine, Folder, Globe2, PanelRightClose, Plus, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, FilePenLine, Folder, FolderOpen, Globe2, Maximize2, Minimize2, PanelRightClose, Plus, X } from 'lucide-react';
 import type { Session } from '../shared/types';
 import WorkspaceExplorer, { Splitter } from './WorkspaceExplorer';
 import ScratchpadPanel from './ScratchpadPanel';
@@ -12,6 +13,7 @@ import './preview-workspace.css';
 function tabTitle(tab: PreviewTab, sessions: Session[]) {
   if (tab.kind === 'note') return '随手记';
   if (tab.kind === 'web') return tab.url ? new URL(tab.url).host : '新网页';
+  if (tab.custom) return `文件 · ${tab.cwd.split('/').filter(Boolean).at(-1) || '/'}`;
   return `文件 · ${sessions.find(session => session.id === tab.sessionId)?.title ?? '工作区'}`;
 }
 function TabIcon({ tab }: { tab: PreviewTab }) {
@@ -23,19 +25,23 @@ type SourceTab = Extract<PreviewTab, { sessionId: string }>;
 function WorkspaceTabContent({ tab, sessions, controller, close }: {
   tab: SourceTab; sessions: Session[]; controller: PreviewWorkspaceController; close: () => void;
 }) {
+  const [choosing, setChoosing] = useState(false);
   const session = sessions.find(item => item.id === tab.sessionId);
-  if (!session || session.cwd !== tab.cwd) return <div className="preview-unavailable">
+  if (!session || (!tab.custom && session.cwd !== tab.cwd)) return <div className="preview-unavailable">
     <Folder size={26} /><p>原工作区已移除或目录已改变。</p><p>请从当前联系人重新打开文件。</p>
   </div>;
-  const picker = <label className="workspace-picker"><span>工作目录</span>
-    <select aria-label="资源管理器工作区" value={session.id} onChange={event => {
+  const picker = <div className="workspace-directory-controls">
+    <select aria-label="资源管理器工作区" value={tab.custom ? '__custom__' : session.id} onChange={event => {
       const next = sessions.find(item => item.id === event.target.value);
       if (next) controller.openExplorer(next);
     }}>
-      {sessions.filter(item => !item.archived || item.id === session.id).map(item => <option key={item.id} value={item.id}>{item.title} · {item.cwd}</option>)}
+      {tab.custom && <option value="__custom__">{tab.cwd}</option>}
+      {sessions.filter(item => !item.archived || item.id === session.id).map(item => <option key={item.id} value={item.id}>{item.cwd}</option>)}
     </select>
-  </label>;
-  return <WorkspaceExplorer session={session} embedded close={close} picker={picker}
+    <button className="icon-button" aria-label="打开任意目录" title="打开目录" onClick={() => setChoosing(true)}><FolderOpen size={16} /></button>
+    {choosing && <DirectoryDialog initialPath={tab.cwd} parent={null} close={() => setChoosing(false)} choose={path => { controller.openDirectory(session, path); setChoosing(false); }} />}
+  </div>;
+  return <WorkspaceExplorer session={session} root={tab.custom ? tab.cwd : undefined} embedded close={close} picker={picker}
     selection={tab.selection} treeCollapsed={tab.treeCollapsed ?? false}
     onTreeCollapsed={value => controller.collapseTree(tab.id, value)}
     onSelectFile={selection => controller.selectFile(tab.id, selection)} />;
@@ -43,6 +49,8 @@ function WorkspaceTabContent({ tab, sessions, controller, close }: {
 
 export default function PreviewWorkspace({ controller, sessions, currentSession, inert }: { controller: PreviewWorkspaceController; sessions: Session[]; currentSession?: Session; inert: boolean }) {
   const { tabs, activeId, open, select, close, hide } = controller;
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => { if (!open) setFullscreen(false); }, [open]);
   const prefix = useId();
   const panel = useRef<HTMLElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -91,11 +99,11 @@ export default function PreviewWorkspace({ controller, sessions, currentSession,
   const note = tabs.find(tab => tab.kind === 'note');
   const tabId = (tab: PreviewTab) => `${prefix}-tab-${encodeURIComponent(tab.id)}`;
   const contentId = (tab: PreviewTab) => `${prefix}-content-${encodeURIComponent(tab.id)}`;
-  return <aside ref={panel} className="preview-workspace" aria-label="统一预览面板" hidden={!open} inert={inert} style={{ width: shownWidth }} onKeyDown={event => {
+  return <aside ref={panel} className={`preview-workspace${fullscreen ? ' preview-fullscreen' : ''}`} aria-label="统一预览面板" hidden={!open} inert={inert} style={{ width: shownWidth }} onKeyDown={event => {
     if (event.defaultPrevented || event.nativeEvent.isComposing) return;
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); hide(); document.querySelector<HTMLButtonElement>('[aria-label="打开预览面板"]')?.focus(); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (fullscreen) { setFullscreen(false); return; } hide(); document.querySelector<HTMLButtonElement>('[aria-label="打开预览面板"]')?.focus(); }
   }}>
-    <Splitter label="调整预览面板宽度" value={shownWidth} min={320} max={maxWidth} direction={-1} onChange={setWidth} onCommit={value => writeLocalPreference(widthKey, String(value))} />
+    {!fullscreen && <Splitter label="调整预览面板宽度" value={shownWidth} min={320} max={maxWidth} direction={-1} onChange={setWidth} onCommit={value => writeLocalPreference(widthKey, String(value))} />}
     <header className="preview-workspace-header">
       <button className="icon-button preview-mobile-back" aria-label="返回工作台" title="返回工作台" onClick={hide}><ArrowLeft size={16} /></button>
       <div ref={list} className="preview-tab-list" role="tablist" aria-label="预览标签页">
@@ -112,6 +120,7 @@ export default function PreviewWorkspace({ controller, sessions, currentSession,
           <button type="button" onClick={() => add(controller.openWeb)}><Globe2 size={15} /><span>新网页</span></button>
         </div>
       </details>
+      <button type="button" className="icon-button" aria-label={fullscreen ? '退出预览全屏' : '全屏预览面板'} title={fullscreen ? '退出全屏（Esc）' : '全屏预览面板'} aria-pressed={fullscreen} onClick={() => setFullscreen(value => !value)}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
       <button type="button" className="icon-button" aria-label="隐藏预览面板" title="隐藏面板，保留标签页" onClick={hide}><PanelRightClose size={16} /></button>
     </header>
     <div className="preview-workspace-body">

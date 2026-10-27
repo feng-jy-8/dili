@@ -34,6 +34,12 @@ test('shares are scoped to one session and owner-only routes stay closed', () =>
   assert.equal(authorize(null, true, 'GET', '/api/state').allowed, false);
   assert.equal(authorize(null, true, 'POST', '/api/auth/login').allowed, true);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/mine/workspace/git/diff').allowed, true);
+  for (const path of ['tree', 'file', 'raw/site/index.html', 'git/status', 'git/diff']) {
+    const url = `/api/workspaces/%2Ftmp/workspace/${path}`;
+    assert.equal(authorize(read, true, 'GET', url).allowed, false);
+    assert.equal(authorize(write, true, 'GET', url).allowed, false);
+    assert.equal(authorize({ kind: 'owner', local: true }, false, 'GET', url).allowed, true);
+  }
   assert.equal(authorize(read, true, 'GET', '/api/sessions/mine/workspace/raw/site/index.html').allowed, true);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/other/workspace/raw/site/index.html').allowed, false);
   assert.equal(authorize(read, true, 'GET', '/api/sessions/other/workspace/file').allowed, false);

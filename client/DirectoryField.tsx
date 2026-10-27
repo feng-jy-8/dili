@@ -31,7 +31,7 @@ export default function DirectoryField({ label, value, onChange, disabled, help,
   </div>;
 }
 
-function DirectoryDialog({ initialPath, parent, close, choose }: { initialPath: string; parent: HTMLElement | null; close: () => void; choose: (path: string) => void }) {
+export function DirectoryDialog({ initialPath, parent, close, choose }: { initialPath: string; parent: HTMLElement | null; close: () => void; choose: (path: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const requestRef = useRef(0);
   const pathEditRef = useRef(0);

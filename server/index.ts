@@ -642,20 +642,26 @@ app.get('/api/sessions/:id/conversation', async (req, res) => {
   updatePreview(item, transcript);
   res.json(transcript);
 });
-app.get('/api/sessions/:id/workspace/tree', async (req, res) => {
-  const item = session(String(req.params.id));
-  res.json(await listWorkspace(item.cwd, req.query.path));
+app.get(['/api/sessions/:id/workspace/tree', '/api/workspaces/:root/workspace/tree'], async (req, res) => {
+  const cwd = req.params.root !== undefined
+    ? (principalOf(res).kind === 'owner' ? directory(String(req.params.root)) : fail('仅所有者可以打开目录', 403))
+    : session(String(req.params.id)).cwd;
+  res.json(await listWorkspace(cwd, req.query.path));
 });
-app.get('/api/sessions/:id/workspace/file', async (req, res) => {
-  const item = session(String(req.params.id));
-  res.json(await readWorkspaceFile(item.cwd, req.query.path));
+app.get(['/api/sessions/:id/workspace/file', '/api/workspaces/:root/workspace/file'], async (req, res) => {
+  const cwd = req.params.root !== undefined
+    ? (principalOf(res).kind === 'owner' ? directory(String(req.params.root)) : fail('仅所有者可以打开目录', 403))
+    : session(String(req.params.id)).cwd;
+  res.json(await readWorkspaceFile(cwd, req.query.path));
 });
-app.get('/api/sessions/:id/workspace/raw/*path', async (req, res) => {
-  const item = session(String(req.params.id));
+app.get(['/api/sessions/:id/workspace/raw/*path', '/api/workspaces/:root/workspace/raw/*path'], async (req, res) => {
+  const cwd = req.params.root !== undefined
+    ? (principalOf(res).kind === 'owner' ? directory(String(req.params.root)) : fail('仅所有者可以打开目录', 403))
+    : session(String(req.params.id)).cwd;
   // Express 5 exposes `*path` as a segment array; join it back for workspace paths.
   const rawPath = req.params.path;
   const relative = (Array.isArray(rawPath) ? rawPath.join('/') : String(rawPath ?? '')).replace(/^\/+/, '');
-  const content = await openWorkspaceContent(item.cwd, relative);
+  const content = await openWorkspaceContent(cwd, relative);
   const range = parseByteRange(typeof req.headers.range === 'string' ? req.headers.range : undefined, content.size);
   if (range === 'invalid') {
     await content.handle.close().catch(() => {});
@@ -691,13 +697,17 @@ app.get('/api/sessions/:id/workspace/raw/*path', async (req, res) => {
   req.on('close', () => stream.destroy());
   stream.pipe(res);
 });
-app.get('/api/sessions/:id/workspace/git/status', async (req, res) => {
-  const item = session(String(req.params.id));
-  res.json(await gitStatus(item.cwd));
+app.get(['/api/sessions/:id/workspace/git/status', '/api/workspaces/:root/workspace/git/status'], async (req, res) => {
+  const cwd = req.params.root !== undefined
+    ? (principalOf(res).kind === 'owner' ? directory(String(req.params.root)) : fail('仅所有者可以打开目录', 403))
+    : session(String(req.params.id)).cwd;
+  res.json(await gitStatus(cwd));
 });
-app.get('/api/sessions/:id/workspace/git/diff', async (req, res) => {
-  const item = session(String(req.params.id));
-  res.json(await gitDiff(item.cwd, req.query.path));
+app.get(['/api/sessions/:id/workspace/git/diff', '/api/workspaces/:root/workspace/git/diff'], async (req, res) => {
+  const cwd = req.params.root !== undefined
+    ? (principalOf(res).kind === 'owner' ? directory(String(req.params.root)) : fail('仅所有者可以打开目录', 403))
+    : session(String(req.params.id)).cwd;
+  res.json(await gitDiff(cwd, req.query.path));
 });
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');

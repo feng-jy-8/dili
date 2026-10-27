@@ -15,6 +15,11 @@ export type Access = 'public' | 'owner' | 'read' | 'write' | 'local';
 export type Route = { method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; access: Access };
 
 export const ROUTES: Route[] = [
+  { method: 'GET', path: '/api/workspaces/:root/workspace/tree', access: 'owner' },
+  { method: 'GET', path: '/api/workspaces/:root/workspace/file', access: 'owner' },
+  { method: 'GET', path: '/api/workspaces/:root/workspace/raw/*path', access: 'owner' },
+  { method: 'GET', path: '/api/workspaces/:root/workspace/git/status', access: 'owner' },
+  { method: 'GET', path: '/api/workspaces/:root/workspace/git/diff', access: 'owner' },
   { method: 'GET', path: '/api/auth/status', access: 'public' },
   { method: 'POST', path: '/api/auth/login', access: 'public' },
   { method: 'POST', path: '/api/auth/logout', access: 'public' },

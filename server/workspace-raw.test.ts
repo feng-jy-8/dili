@@ -69,6 +69,15 @@ test('workspace raw serves nested HTML assets and ranged video bytes', { timeout
   assert.equal(created.status, 201, `create session failed: ${created.status}`);
   const session = await created.json() as Session;
 
+  const standalone = `${base}/api/workspaces/${encodeURIComponent(workspace)}/workspace`;
+  assert.equal((await fetch(`${standalone}/tree`)).status, 200);
+  const standaloneFile = await fetch(`${standalone}/file?path=site/app.css`);
+  assert.equal(standaloneFile.status, 200);
+  assert.match(await standaloneFile.text(), /navy/);
+  assert.match(await (await fetch(`${standalone}/raw/site/app.css`)).text(), /navy/);
+  assert.equal((await fetch(`${standalone}/git/status`)).status, 200);
+  assert.ok([400, 403, 404].includes((await fetch(`${standalone}/file?path=../../package.json`)).status));
+
   const html = await fetch(`${base}/api/sessions/${session.id}/workspace/raw/site/index.html`);
   assert.equal(html.status, 200);
   assert.match(html.headers.get('content-type') || '', /text\/html/);

@@ -65,3 +65,12 @@
 
 .embedded-explorer .workspace-preview:not(.workspace-diff):not(.workspace-html-preview)>header { display: none; }
 .embedded-explorer .workspace-preview>header button[aria-label="关闭文件预览"], .embedded-explorer .workspace-preview>header button[aria-label="关闭 diff 预览"] { display: none; }
+
+.preview-workspace.preview-fullscreen { position: fixed; inset: 0; z-index: 90; width: 100% !important; max-width: none; height: var(--ui-viewport-height, 100dvh); border: 0; box-shadow: none; }
+@media (pointer: coarse) {
+  .preview-workspace.preview-fullscreen { top: var(--ui-viewport-top, 0px); bottom: auto; }
+}
+
+.workspace-directory-controls { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.workspace-directory-controls select { min-width: 0; flex: 1; width: 0; height: 28px; border: 0; background: transparent; color: var(--text); text-overflow: ellipsis; }
+.workspace-directory-controls .icon-button { flex: 0 0 28px; }

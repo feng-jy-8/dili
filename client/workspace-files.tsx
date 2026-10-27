@@ -22,8 +22,11 @@ export function mediaKind(path: string): MediaKind | null {
   if (/\.(?:mp3|wav|ogg|m4a|aac)$/i.test(path)) return 'audio';
   return null;
 }
-export function workspaceRawUrl(sessionId: string, path: string) {
-  return appUrl(`/api/sessions/${encodeURIComponent(sessionId)}/workspace/raw/${path.split('/').filter(Boolean).map(encodeURIComponent).join('/')}`);
+export function workspaceBase(sessionId: string, root?: string) {
+  return root ? `/workspaces/${encodeURIComponent(root)}/workspace` : `/sessions/${encodeURIComponent(sessionId)}/workspace`;
+}
+export function workspaceRawUrl(sessionId: string, path: string, root?: string) {
+  return appUrl(`/api${workspaceBase(sessionId, root)}/raw/${path.split('/').filter(Boolean).map(encodeURIComponent).join('/')}`);
 }
 export function formatSize(size?: number) { if (size === undefined) return ''; if (size < 1024) return `${size} B`; if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`; return `${(size / 1024 / 1024).toFixed(1)} MB`; }
 function fileIconClass(path: string) {
