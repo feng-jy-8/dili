@@ -1,4 +1,5 @@
 import MachineSwitcher from './MachineSwitcher';
+import { updateAppBadge } from './app-badge';
 import AppVersion from './AppVersion';
 import { AUTO_MODE_NOTE, type ExecutionMode } from '../shared/execution';
 import { claudePermissionChoices, claudePermissionLabel } from '../shared/permissions';
@@ -159,7 +160,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   };
   const [connected, setConnected] = useState(false);
   const [hasConnected, setHasConnected] = useState(false);
-  const [clock, setClock] = useState(Date.now());
+  const [, setClock] = useState(Date.now());
   const [groupReload, setGroupReload] = useState(0);
   const [error, setError] = useState('');
   const [connectionError, setConnectionError] = useState('');
@@ -409,10 +410,12 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
     const timer = setInterval(() => setClock(Date.now()), 30_000);
     return () => { clearInterval(timer); clearTimeout(toastTimer.current); };
   }, []);
+  const unreadCount = state?.sessions.reduce((count, session) => count + (!session.archived && pending(session) ? session.unread : 0), 0) ?? 0;
+  useEffect(() => { updateAppBadge(unreadCount); }, [unreadCount]);
+  useEffect(() => () => { updateAppBadge(0); }, []);
   useEffect(() => {
-    const count = state?.sessions.filter((session) => !session.archived && pending(session)).length ?? 0;
-    document.title = `${count ? `(${count}) ` : ''}${selected?.title ?? currentGroup?.title ?? ({ contacts: '会话联系人', attention: '需要你处理', running: '正在运行', archive: '已归档', backends: '连接与能力', activity: '最近活动' } as Record<string, string>)[view] ?? '会话联系人'} · Dili`;
-  }, [state, selected?.title, currentGroup?.title, view, clock]);
+    document.title = `${unreadCount ? `(${unreadCount}) ` : ''}${selected?.title ?? currentGroup?.title ?? ({ contacts: '会话联系人', attention: '需要你处理', running: '正在运行', archive: '已归档', backends: '连接与能力', activity: '最近活动' } as Record<string, string>)[view] ?? '会话联系人'} · Dili`;
+  }, [unreadCount, selected?.title, currentGroup?.title, view]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       const inNativeTerminal = event.target instanceof HTMLElement && event.target.closest('.terminal-pane');

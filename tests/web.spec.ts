@@ -694,6 +694,10 @@ test('new group members inherit the group directory, while recent paths require 
 });
 
 test('the "需要你处理" badge counts unread reminders, matching the red badge on cards', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'setAppBadge', { configurable: true, value: async (count: number) => { document.documentElement.dataset.appBadge = String(count); } });
+    Object.defineProperty(navigator, 'clearAppBadge', { configurable: true, value: async () => { document.documentElement.dataset.appBadge = '0'; } });
+  });
   await mockWorkspace(page, state => {
     const seed = state.sessions[0];
     state.sessions = [
@@ -710,7 +714,8 @@ test('the "需要你处理" badge counts unread reminders, matching the red badg
   await expect(page.locator('.session-card .unread-badge')).toHaveCount(1);
   const attentionTab = nav.getByRole('button', { name: /^待处理/ });
   await expect(attentionTab.locator('b')).toHaveText('1');
-  await expect(page).toHaveTitle(/^\(1\) /);
+  await expect(page).toHaveTitle(/^\(2\) /);
+  await expect(page.locator('html')).toHaveAttribute('data-app-badge', '2');
   // Pinned first, then red-dot reminders, then waiting sessions already read.
   await expect(page.locator('.session-card:not(.group-card) h3')).toHaveText(['曾提醒但已在运行', '等待且未读', '已看过但仍在等待']);
   await attentionTab.click();
@@ -718,6 +723,10 @@ test('the "需要你处理" badge counts unread reminders, matching the red badg
 });
 
 test('opening a blocked session clears its red badge from the read response alone, without the live stream', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'setAppBadge', { configurable: true, value: async (count: number) => { document.documentElement.dataset.appBadge = String(count); } });
+    Object.defineProperty(navigator, 'clearAppBadge', { configurable: true, value: async () => { document.documentElement.dataset.appBadge = '0'; } });
+  });
   // The snapshot says blocked and unread; the stream never delivers a patch.
   // Only the real /read response can clear the badge.
   let target!: AppState['sessions'][number];
@@ -729,9 +738,11 @@ test('opening a blocked session clears its red badge from the read response alon
   await page.goto('/#/contacts');
   const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: target.title, exact: true }) });
   await expect(card.locator('.unread-badge')).toHaveCount(1);
+  await expect(page.locator('html')).toHaveAttribute('data-app-badge', '1');
   await expect(page.locator('.primary-nav b.alert')).toHaveText('1');
   await card.getByRole('button', { name: `进入 ${target.title} 的会话`, exact: true }).click();
   await expect(page.locator('.primary-nav b.alert')).toHaveCount(0);
+  await expect(page.locator('html')).toHaveAttribute('data-app-badge', '0');
   await page.getByRole('button', { name: '关闭会话', exact: true }).click();
   await expect(card.locator('.unread-badge')).toHaveCount(0);
   await expect(card).not.toHaveClass(/has-unread/);
