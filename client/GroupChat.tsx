@@ -1,3 +1,4 @@
+import GroupMemberRequests from './GroupMemberRequests';
 import type { ChatAttachment } from '../shared/attachments';
 import ImageAttachments from './ImageAttachments';
 import VoiceInput, { appendVoiceText } from './VoiceInput';
@@ -400,6 +401,10 @@ export default function GroupChat({ onShare, group, detail, members, demo, busy,
         </div>
       </article>;
     }) : <div className="board-empty"><p>{only ? '这位成员在当前加载的消息里还没有发言。' : '还没有群聊消息。@ 成员指派任务，他们的回复会自动出现在这里。'}</p></div>}
+    {activeMembers.filter(member => member.interactionMode === 'chat' && (!only || member.id === only)).map(member => {
+      const delivery = detail.deliveries.filter(item => item.sessionId === member.id && (item.status === 'sent' || item.status === 'staged') && item.tag).at(-1);
+      return delivery?.tag ? <GroupMemberRequests key={`${member.id}:${delivery.tag}`} member={member} tag={delivery.tag} /> : null;
+    })}
     {!only && streaming.map(member => <div className="group-live" key={member.id} aria-live="polite"><button className="message-avatar member-avatar-link" aria-label={`打开 ${member.title} 的私聊`} onClick={() => open(member.id, true)}><BackendAvatar backend={member.backend} small /></button><div className="message-body"><div className="message-heading"><strong>{member.title}</strong><span className="message-kind">正在回复…</span></div>{live[member.id] ? <div className="bubble group-live-text"><Markdown text={live[member.id]} /></div> : <div className="bubble group-typing"><i /><i /><i /></div>}</div></div>)}
     {!only && activeMembers.filter(member => member.status === 'running' && member.interactionMode !== 'chat' && detail.deliveries.some(delivery => delivery.sessionId === member.id && (delivery.status === 'sent' || delivery.status === 'staged') && openTask(detail)(delivery))).map(member => <div className="group-live" key={member.id}><button className="message-avatar member-avatar-link" aria-label={`打开 ${member.title} 的私聊`} onClick={() => open(member.id, true)}><BackendAvatar backend={member.backend} small /></button><div className="message-body"><div className="message-heading"><strong>{member.title}</strong><span className="message-kind">正在执行…</span></div><div className="bubble group-typing"><i /><i /><i /></div></div></div>)}
   </div>, [totalMessages, earlierCount, loadingOlder, visibleMessages, messagesById, membersById, deliveriesByMessage, busy, posting, demo, open, deliver, cancel, resolveDelivery, jumpToMessage, forwardMessage, quote, reassign, showEarlier, expanded, references, only, streaming, live, activeMembers, detail.deliveries]);

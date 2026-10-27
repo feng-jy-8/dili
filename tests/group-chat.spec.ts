@@ -302,3 +302,43 @@ test('long group history scrolls independently with a visible scrollbar', async 
     expect(composer!.y + composer!.height).toBeLessThanOrEqual(viewport.height + 1);
   }
 });
+
+test('group questions can be answered inline and private questions stay private', async ({ page }) => {
+  const { group, members } = await createGroup(page.request, '群内提问');
+  const member = members[1];
+  await page.route('**/api/state', async route => {
+    const response = await route.fetch();
+    const state = await response.json();
+    state.sessions.find((item: Session) => item.id === member.id).interactionMode = 'chat';
+    await route.fulfill({ response, json: state });
+  });
+  await page.route(`**/api/groups/${group.id}`, async route => {
+    const response = await route.fetch();
+    const detail = await response.json();
+    detail.deliveries.push({ id: 'question-delivery', sessionId: member.id, messageId: detail.messages[0].id, status: 'sent', tag: 'T-question' });
+    await route.fulfill({ response, json: detail });
+  });
+  let answered = false;
+  let privateTurn = false;
+  await page.route(`**/api/sessions/${member.id}/chat`, route => route.fulfill({ json: {
+    connected: true, nativeSessionId: 'native', revision: 1, activeTurnId: 'turn', truncated: false,
+    items: [{ id: 'user', turnId: 'turn', type: 'user', text: privateTurn ? '私聊问题' : '【群聊任务】任务编号：T-question', status: 'completed' }],
+    requests: answered ? [] : [{ id: 'question', kind: 'question', title: '确认方案', questions: [{ id: 'choice', header: '方案', question: '选择哪种方案？', options: [{ label: '方案 A', description: '先完成核心功能' }] }] }],
+  } }));
+  await page.route(`**/api/sessions/${member.id}/chat/requests/question`, async route => {
+    expect(route.request().postDataJSON()).toEqual({ answers: { choice: ['方案 A'] } });
+    answered = true;
+    await route.fulfill({ json: { ok: true } });
+  });
+  await page.goto(`/#/groups/${group.id}`);
+  const question = page.getByRole('region', { name: `${member.title} 提问` });
+  await expect(question).toBeVisible();
+  await question.getByRole('radio', { name: /方案 A/ }).check();
+  await question.getByRole('button', { name: '提交回答' }).click();
+  await expect(question).toHaveCount(0);
+  privateTurn = true;
+  answered = false;
+  await page.reload();
+  await expect(page.getByLabel('群组消息')).toBeVisible();
+  await expect(question).toHaveCount(0);
+});
