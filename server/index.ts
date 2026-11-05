@@ -1,4 +1,4 @@
-import { relayPublicUrl } from '../shared/relay-public-url.ts';
+import { OFFICIAL_RELAY_URL, relayPublicUrl } from '../shared/relay-public-url.ts';
 import express from 'express';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -34,6 +34,7 @@ import { decodeInvite } from './invite.ts';
 import { ensureFrp } from './frp-install.ts';
 import { pendingPairing, redeemPairing, revokePairing, type PendingPairing } from './pairing.ts';
 import type { RelayPairing } from '../shared/pairing.ts';
+import { inviteRequestState, submitInviteRequest, type InviteReceipt } from './invite-request.ts';
 import { remoteBase, remoteHtml, remoteManifest } from './remote-base.ts';
 import { caddyConfig, DEFAULT_REMOTE, normalizeRemote, SecretBox, secretKey, Tunnel } from './remote.ts';
 import type { AuthStatus, RemoteSettings, RemoteStatus, ShareMode } from '../shared/auth.ts';
@@ -604,6 +605,28 @@ app.post('/api/remote', async (req, res) => res.json(await changeRemote(async ()
   await applyRemote();
   return remoteStatus();
 })));
+// Asking the relay for an invite from here keeps the code on this machine: once
+// approved it fills the pairing form, nothing to copy between devices. Local only.
+const inviteRelay = process.env.SESSIONDECK_INVITE_RELAY_URL?.trim() || OFFICIAL_RELAY_URL;
+const inviteReceipt = () => sealedSetting<InviteReceipt>('remote-invite-request');
+app.get('/api/remote/invite-request', async (_req, res) => {
+  const receipt = inviteReceipt();
+  if (!receipt) return res.json({ request: null });
+  try { res.json({ request: await inviteRequestState(receipt) }); }
+  catch (cause) {
+    // The relay no longer knows it (or the receipt is wrong): forget it here too.
+    if ((cause as { status?: number }).status === 404) { auth.setSetting('remote-invite-request', null); return res.json({ request: null, error: (cause as Error).message }); }
+    throw cause;
+  }
+});
+app.post('/api/remote/invite-request', async (req, res) => {
+  if (inviteReceipt()) fail('已有一条申请，请先查看结果或撤回', 409);
+  const receipt = await submitInviteRequest(inviteRelay, req.body.email, req.body.name);
+  auth.setSetting('remote-invite-request', secrets.seal(JSON.stringify(receipt)));
+  res.status(201).json({ request: await inviteRequestState(receipt) });
+});
+// Forgets the receipt on this machine; the relay keeps the request for its admin.
+app.delete('/api/remote/invite-request', (_req, res) => { auth.setSetting('remote-invite-request', null); res.json({ request: null }); });
 app.post('/api/remote/pair', async (req, res) => res.json(await changeRemote(async () => {
   if (!auth.hasPassword()) fail('请先设置所有者密码');
   if (pairing()) fail('请先解除已有配对，再使用新的邀请码', 409);
@@ -619,6 +642,7 @@ app.post('/api/remote/pair', async (req, res) => res.json(await changeRemote(asy
     const pair = await redeemPairing(pending);
     auth.setSetting('remote-pairing', secrets.seal(JSON.stringify(pair)));
     auth.setSetting('remote-pairing-pending', null);
+    auth.setSetting('remote-invite-request', null);
     auth.setSetting('remote', { ...remoteSettings(), mode: 'invite', enabled: true, publicUrl: pair.publicUrl, serverPort: pair.serverPort });
     pairingStage = 'connecting';
     await applyRemote();
