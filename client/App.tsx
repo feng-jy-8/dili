@@ -49,7 +49,7 @@ import { SessionChrome, SessionToolbarHost } from './SessionToolbar';
 import { useContactFilters, useContactSort } from './preferences';
 import { CONTACT_RENDER_STEP, attention, buildContacts, pending, visibleContacts, type ContactSort, type ListMode } from './contact-order';
 import { relativeTime, shortPath } from './format';
-import { readLocalPreference, writeLocalPreference, useDialog } from './ui';
+import { readLocalPreference, writeLocalPreference } from './ui';
 import ModalShell from './Modal';
 import GroupChat from './GroupChat';
 import GroupCard from './GroupCard';
@@ -62,6 +62,7 @@ export const BACKEND: Record<Backend, { name: string; short: string; color: stri
   claude: { name: 'Claude Code', short: 'Claude', color: 'coral' },
   codex: { name: 'Codex', short: 'Codex', color: 'green' },
   dsh: { name: 'DeepSeek Harness', short: 'DeepSeek', color: 'blue' },
+  pi: { name: 'Pi', short: 'Pi', color: 'purple' },
 };
 export const STATUS: Record<SessionStatus, { label: string; className: string }> = {
   idle: { label: '空闲', className: 'idle' }, running: { label: '运行中', className: 'running' },
@@ -199,10 +200,9 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const { detail, error: groupError, loadOlder, loadingOlder, readSource } = useGroupHistory(groupId, currentGroup?.updatedAt, groupReload, state?.instanceId);
   const selectedGroup = state?.groups.find((group) => group.id === selected?.groupId);
   const selectedParent = state?.sessions.find((session) => session.id === selected?.parentId);
-  // The desktop session is an in-flow workbench rather than a modal dialog.
-  // Keep Escape as a lightweight close affordance without trapping focus or
-  // locking the document scroll used by the terminal and preview panes.
-  useDialog(drawerRef, false, () => setSelectedId(null), true);
+  // The desktop session is an in-flow workbench rather than a modal dialog, so
+  // it neither traps focus nor locks the document scroll. Escape does not close
+  // it: a stray Esc meant for a menu, composer or Agent would drop the session.
   useLayoutEffect(() => {
     const previousId = focusedSessionIdRef.current;
     const currentId = selected?.id ?? null;
@@ -223,17 +223,6 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
       invoker.focus({ preventScroll: true });
     }
   }, [selected?.id]);
-  useEffect(() => {
-    if (!selected) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.key !== 'Escape' || (event.target instanceof HTMLElement && event.target.closest('.terminal-pane'))) return;
-      if (modal) return;
-      event.preventDefault();
-      setSelectedId(null);
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [selected, modal, setSelectedId]);
   notificationRef.current = notifications;
   soundRef.current = soundEnabled;
 
@@ -543,7 +532,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const selectedBackend = selected ? state?.backends.find((backend) => backend.id === selected.backend) : undefined;
   const nativeSessionBusy = selected?.backend === 'codex' && !selected.running && selected.status === 'error'
     && (selected.errorCode === 'NATIVE_SESSION_BUSY' || /already has an active writer/i.test(selected.statusDetail));
-  const agentChatAvailable = !!selected && ['codex', 'claude', 'dsh'].includes(selected.backend) && !state?.demo && !!selectedBackend?.capabilities.graphicalChat;
+  const agentChatAvailable = !!selected && ['codex', 'claude', 'dsh', 'pi'].includes(selected.backend) && !state?.demo && !!selectedBackend?.capabilities.graphicalChat;
   // DeepSeek Harness without dsh-tui has no PTY: it shows its native Web UI.
   const dshWebOnly = selected?.backend === 'dsh' && !state?.demo && !selectedBackend?.capabilities.terminal;
   // A dsh chat started without launching dsh-tui owns the same native Web UI;
@@ -556,7 +545,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   // Every backend defaults to its graphical view. The native view is shown only
   // after this contact's own native-interface click (or when it has no graphical
   // mode at all).
-  const privateView = selected ? selected.backend === 'codex' && agentChatAvailable
+  const privateView = selected ? (selected.backend === 'codex' || selected.backend === 'pi') && agentChatAvailable
     ? viewChoice === 'terminal' ? 'terminal' : 'chat'
     : selected.backend === 'claude' && agentChatAvailable
       ? viewChoice === 'terminal' ? 'terminal' : viewChoice === 'conversation' ? selected.running && selected.executionTransport !== 'structured' ? 'conversation' : 'chat' : 'chat'
@@ -585,7 +574,8 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
     const executionView = selected.backend === 'claude' && agentChatAvailable && mode === 'conversation' ? 'chat' : mode;
     if ((executionView === 'terminal' || executionView === 'chat') && agentChatAvailable && selected.running && selected.interactionMode !== executionView) {
       if (selected.backend === 'claude' && !window.confirm('切换将退出当前 Claude 进程，并从同一份已保存会话恢复。当前任务和审批必须先处理完成。继续切换？')) return;
-      void run(`attach:${selected.id}`, async () => { await api(`/sessions/${selected.id}/start`, { mode: executionView, handoff: selected.backend === 'claude' }); selectPrivateView(selected.id, mode); });
+      if (selected.backend === 'pi' && !window.confirm('切换将退出当前 Pi 进程，并从同一份已保存会话恢复。Pi 原生终端不会报告任务状态；请先确认终端已空闲，切换可能中断仍在运行的任务。继续切换？')) return;
+      void run(`attach:${selected.id}`, async () => { await api(`/sessions/${selected.id}/start`, { mode: executionView, handoff: selected.backend === 'claude' || selected.backend === 'pi' }); selectPrivateView(selected.id, mode); });
     } else selectPrivateView(selected.id, mode);
   };
   const startMode = (mode = privateView) => agentChatAvailable && (mode === 'chat' || selected?.backend === 'claude' && mode === 'conversation') ? 'chat' : 'terminal';
@@ -654,7 +644,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         <div className="topbar-actions">
           {listView && <><label className="search-field"><Search size={15} /><input id="session-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索" aria-label="搜索联系人" /><kbd>{/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'} K</kbd></label>
             <FilterMenu active={backendFilter !== 'all' || statusFilter !== 'all'} reset={() => { setBackendFilter('all'); setStatusFilter('all'); }}>
-              <div className="filter-group"><span>后端</span><div className="backend-tabs" aria-label="按后端筛选"><button aria-pressed={backendFilter === 'all'} className={backendFilter === 'all' ? 'selected' : ''} onClick={() => setBackendFilter('all')}>全部</button>{(['claude', 'codex', 'dsh'] as Backend[]).map((backend) => <button key={backend} aria-pressed={backendFilter === backend} className={backendFilter === backend ? 'selected' : ''} onClick={() => setBackendFilter(backend)}>{BACKEND[backend].short}</button>)}</div></div>
+              <div className="filter-group"><span>后端</span><div className="backend-tabs" aria-label="按后端筛选"><button aria-pressed={backendFilter === 'all'} className={backendFilter === 'all' ? 'selected' : ''} onClick={() => setBackendFilter('all')}>全部</button>{(['claude', 'codex', 'dsh', 'pi'] as Backend[]).map((backend) => <button key={backend} aria-pressed={backendFilter === backend} className={backendFilter === backend ? 'selected' : ''} onClick={() => setBackendFilter(backend)}>{BACKEND[backend].short}</button>)}</div></div>
               <label className="filter-group"><span>状态</span><select aria-label="按状态筛选" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as SessionStatus | 'all' | 'attention' | 'unread')}><option value="all">全部状态</option><option value="attention">需要处理</option><option value="unread">未读提醒</option><option value="running">运行中</option><option value="waiting_input">等待输入</option><option value="waiting_approval">等待审批</option><option value="idle">空闲</option><option value="error">异常</option><option value="stopped">已停止</option><option value="unknown">状态未知</option></select></label>
               <label className="filter-group"><span>排序</span><select aria-label="联系人排序" value={contactSort} onChange={(event) => setContactSort(event.target.value as ContactSort)}><option value="input">上次输入时间</option><option value="created">创建时间</option><option value="name">名称</option></select></label>
             </FilterMenu></>}
@@ -696,7 +686,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
           {currentGroup && groupError && <div className="error-banner" role="alert"><span>群组动态加载失败：{groupError}</span><button className="text-button" onClick={() => setGroupReload((value) => value + 1)}>重试群组动态</button></div>}
           {currentGroup && !groupError && (!detail || detail.group.id !== currentGroup.id) && <div className="loading-state" role="status"><LoaderCircle size={20} className="spin" /><p>正在读取群组动态…</p></div>}
           {currentGroup && detail && detail.group.id === currentGroup.id && <GroupChat active={!selected && !modal} onShare={() => setModal({ type: 'shareLink', group: currentGroup })} key={currentGroup.id} group={currentGroup} detail={detail} loadOlder={loadOlder} loadingOlder={loadingOlder} readSource={readSource} resolveDelivery={(delivery, resolution) => void run(`resolve:${delivery.id}`, () => api(`/deliveries/${delivery.id}/resolve`, { attemptId: delivery.attempts?.at(-1)?.id, resolution }), '已记录核对结果')} members={sessions.filter((session) => session.groupId === groupId)} demo={state.demo} busy={busy}
-            chatCapable={(member) => !state.demo && ['codex', 'claude'].includes(member.backend) && !!state.backends.find((backend) => backend.id === member.backend)?.capabilities.graphicalChat}
+            chatCapable={(member) => !state.demo && ['codex', 'claude', 'pi'].includes(member.backend) && !!state.backends.find((backend) => backend.id === member.backend)?.capabilities.graphicalChat}
             confirmReplace={(message, draft, proceed) => setModal({ type: 'replaceDraft', draft, sourceName: message.senderName || '我', proceed })}
             post={async (body) => {
               let failures: { sessionId: string; error: string }[] = [];
@@ -758,14 +748,14 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
             {selected.backend === 'claude' ? <><div><span>权限模式</span><small>{claudePermissionLabel(selected.nativeSettings?.permission ?? (selected.executionMode === 'auto' ? 'auto' : null))}</small></div><div><span>模型</span><small>{selected.nativeSettings?.model ?? '原生默认'}</small></div></> : <div><span>执行模式</span><small>{selected.executionMode === 'auto' ? 'Auto · 自动审核' : '原生默认'}</small></div>}
             <div><span>创建时间</span><time dateTime={selected.createdAt}>{new Date(selected.createdAt).toLocaleString('zh-CN')}</time></div>
           </div></details>
-          <button className="icon-button session-close" aria-label="关闭会话" title="关闭面板，返回列表（Esc）" onClick={() => setSelectedId(null)}><X size={17} /></button>
+          <button className="icon-button session-close" aria-label="关闭会话" title="关闭面板，返回列表" onClick={() => setSelectedId(null)}><X size={17} /></button>
         </div>
       </header>
       {connectionError && <div role="alert" className="error-banner connection-error"><span>{connectionError}</span><button className="text-button" onClick={() => void refresh().catch(() => {})}>重试连接</button></div>}
       {nativeSessionBusy && <div role="alert" className="error-banner native-session-busy"><span>这个 Codex 会话正被其他原生客户端占用。关闭原客户端后可重试恢复；也可以 Fork 继承上下文，独立继续。</span><div><button className="button secondary small-button" disabled={!!busy} onClick={() => void startSelected()}>重试恢复</button><button className="button secondary small-button" disabled={!!busy || !selectedBackend?.capabilities.fork || !selected.nativeSessionId || selected.forkPending} onClick={() => { setError(''); setModal({ type: 'fork', session: selected, groupId: selected.groupId ?? undefined }); }}><GitFork size={13} />Fork 后继续</button></div></div>}
       {error && !nativeSessionBusy && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label="关闭会话错误提示" onClick={() => setError('')}><X size={15} /></button></div>}
       <div className="session-conversation">
-      {(dshWebOnly || dshNativeWeb) && privateView === 'terminal' ? !selected.nativeUrl ? <div className="terminal-empty"><BackendAvatar backend="dsh" /><h3>直接使用 Harness 原生界面</h3><p>{busy === `start:${selected.id}` ? '正在启动原生会话…' : '启动会话后，在这里继续这个联系人的上下文。'}</p></div> : auth.remote ? nativeProxy?.id === selected.id ? <div className="native-web"><iframe title="DeepSeek Harness 会话" src={nativeProxy.url} allow="clipboard-read; clipboard-write" /></div> : nativeProxyError ? <div className="terminal-empty"><BackendAvatar backend="dsh" /><h3>原生界面暂时无法打开</h3><p>{nativeProxyError}</p><button className="button secondary" onClick={() => setNativeProxyNonce(value => value + 1)}>重试</button></div> : <div className="terminal-empty"><LoaderCircle size={20} className="spin" /><h3>正在通过主机打开原生界面</h3><p>浏览器只访问 Dili 的域名，原生服务的令牌不会出现在地址栏。</p></div> : <div className="native-web"><iframe title="DeepSeek Harness 会话" src={selected.nativeUrl} allow="clipboard-read; clipboard-write" /></div> : privateView === 'chat' ? <Suspense fallback={<div className="loading-state"><LoaderCircle size={22} className="spin" /><p>正在加载对话…</p></div>}><AgentChatPane key={selected.id} session={selected} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /></Suspense> : privateView === 'conversation' ? <ConversationPane key={selected.id} session={selected} allowInput={!state.demo && !dshWebOnly} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /> : selected.backend === 'codex' && agentChatAvailable && selected.running && selected.interactionMode === 'chat' ? <div className="terminal-empty"><Command size={26} /><h3>连接同一个 {BACKEND[selected.backend].short} 会话</h3><button className="button primary" disabled={!!busy} onClick={() => switchPrivateView('terminal')}>连接原生终端</button></div> : <TerminalPane key={selected.id} sessionId={selected.id} running={selected.running} status={selected.status} allowImages={['codex', 'claude', 'dsh'].includes(selected.backend) && !state.demo} onSelection={setSelection} settings={selected.backend === 'claude' && !state.demo && selected.nativeSessionId && !selected.forkPending ? <ClaudeTerminalSettings session={selected} /> : undefined} />}
+      {(dshWebOnly || dshNativeWeb) && privateView === 'terminal' ? !selected.nativeUrl ? <div className="terminal-empty"><BackendAvatar backend="dsh" /><h3>直接使用 Harness 原生界面</h3><p>{busy === `start:${selected.id}` ? '正在启动原生会话…' : '启动会话后，在这里继续这个联系人的上下文。'}</p></div> : auth.remote ? nativeProxy?.id === selected.id ? <div className="native-web"><iframe title="DeepSeek Harness 会话" src={nativeProxy.url} allow="clipboard-read; clipboard-write" /></div> : nativeProxyError ? <div className="terminal-empty"><BackendAvatar backend="dsh" /><h3>原生界面暂时无法打开</h3><p>{nativeProxyError}</p><button className="button secondary" onClick={() => setNativeProxyNonce(value => value + 1)}>重试</button></div> : <div className="terminal-empty"><LoaderCircle size={20} className="spin" /><h3>正在通过主机打开原生界面</h3><p>浏览器只访问 Dili 的域名，原生服务的令牌不会出现在地址栏。</p></div> : <div className="native-web"><iframe title="DeepSeek Harness 会话" src={selected.nativeUrl} allow="clipboard-read; clipboard-write" /></div> : privateView === 'chat' ? <Suspense fallback={<div className="loading-state"><LoaderCircle size={22} className="spin" /><p>正在加载对话…</p></div>}><AgentChatPane key={selected.id} session={selected} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /></Suspense> : privateView === 'conversation' ? <ConversationPane key={selected.id} session={selected} allowInput={!state.demo && !dshWebOnly} onTerminal={() => switchPrivateView('terminal')} onSelection={setSelection} /> : selected.backend === 'codex' && agentChatAvailable && selected.running && selected.interactionMode === 'chat' ? <div className="terminal-empty"><Command size={26} /><h3>连接同一个 {BACKEND[selected.backend].short} 会话</h3><button className="button primary" disabled={!!busy} onClick={() => switchPrivateView('terminal')}>连接原生终端</button></div> : <TerminalPane key={selected.id} sessionId={selected.id} running={selected.running} status={selected.status} allowImages={['codex', 'claude', 'dsh', 'pi'].includes(selected.backend) && !state.demo} onSelection={setSelection} settings={selected.backend === 'claude' && !state.demo && selected.nativeSessionId && !selected.forkPending ? <ClaudeTerminalSettings session={selected} /> : undefined} />}
       </div>
     </section></SessionChrome>}
     </div>

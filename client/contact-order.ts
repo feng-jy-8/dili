@@ -21,7 +21,7 @@ export interface ContactQuery {
   sort: ContactSort;
 }
 
-const BACKEND_LABEL: Record<Backend, string> = { claude: 'Claude Code', codex: 'Codex', dsh: 'DeepSeek Harness' };
+const BACKEND_LABEL: Record<Backend, string> = { claude: 'Claude Code', codex: 'Codex', dsh: 'DeepSeek Harness', pi: 'Pi' };
 
 /** The agent is blocked on a person: waiting for input or approval, or failed. */
 export const attention = (session: Session) => session.status === 'waiting_input' || session.status === 'waiting_approval' || session.status === 'error';

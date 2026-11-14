@@ -13,6 +13,7 @@ const guides = {
   claude: { installCommand: 'npm install -g @anthropic-ai/claude-code', loginCommand: 'claude auth login', nativeCommand: 'claude', docsUrl: 'https://code.claude.com/docs/en/setup', note: '使用原生账号登录，或保存 API 配置到 Claude 用户设置。其他终端运行 claude 也会读取。' },
   codex: { installCommand: 'npm install -g @openai/codex', loginCommand: 'codex login --device-auth', nativeCommand: 'codex', docsUrl: 'https://developers.openai.com/codex/cli/', note: '使用原生账号登录，或通过 codex login --with-api-key 保存 API Key。自定义服务需兼容 Responses API。' },
   dsh: { installCommand: 'npm install -g @deepseek-ai/dsh @deepseek-harness-tui/dsh-tui', loginCommand: 'dsh web', nativeCommand: 'dsh web', docsUrl: 'https://github.com/deepseek-ai/deepseek-harness', note: '在原生 Web 设置中配置提供商、API Key 和模型。Harness 的配置随版本变化，由原生界面维护；可在其他终端运行 dsh web。' },
+  pi: { installCommand: 'npm install -g @earendil-works/pi-coding-agent', loginCommand: 'pi', nativeCommand: 'pi', docsUrl: 'https://github.com/earendil-works/pi', note: 'Pi 的提供商、模型、工具和扩展由原生配置维护；运行 pi 后使用 /login 或 pi auth login <provider> 完成登录。Dili 通过 Pi 官方 RPC 连接，不读取或代填密钥。' },
 } as const;
 
 function invalid(message: string): never { throw Object.assign(new Error(message), { status: 400 }); }
@@ -86,13 +87,14 @@ export class AgentSetup {
       claude: resolve(options.homes?.claude ?? (options.home ? join(home, '.claude') : process.env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'))),
       codex: resolve(options.homes?.codex ?? (options.home ? join(home, '.codex') : process.env.CODEX_HOME ?? join(home, '.codex'))),
       dsh: resolve(options.homes?.dsh ?? (options.home ? join(home, '.dsh') : process.env.DSH_HOME ?? join(home, '.dsh'))),
+      pi: resolve(options.homes?.pi ?? (options.home ? join(home, '.pi', 'agent') : process.env.PI_CODING_AGENT_DIR ?? join(home, '.pi', 'agent'))),
     };
     this.find = options.find ?? findExecutable;
     this.login = options.login ?? codexApiLogin;
   }
   private readonly find: typeof findExecutable;
   private readonly login: typeof codexApiLogin;
-  private configPath(id: Backend) { return join(this.homes[id], id === 'claude' ? 'settings.json' : id === 'codex' ? 'config.toml' : 'cordis.patch.yml'); }
+  private configPath(id: Backend) { return join(this.homes[id], id === 'claude' ? 'settings.json' : id === 'codex' ? 'config.toml' : id === 'pi' ? 'models.json' : 'cordis.patch.yml'); }
   async info(id: Backend): Promise<AgentSetupInfo> {
     const info: AgentSetupInfo = { id, executable: await this.find(id), configPath: this.configPath(id), credentialPresent: false, baseUrl: '', model: '', ...guides[id] };
     try {
@@ -102,6 +104,8 @@ export class AgentSetup {
         info.credentialPresent = Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
         info.baseUrl = typeof env.ANTHROPIC_BASE_URL === 'string' ? env.ANTHROPIC_BASE_URL : '';
         info.model = typeof config.model === 'string' ? config.model : '';
+      } else if (id === 'pi') {
+        info.credentialPresent = await lstat(join(this.homes.pi, 'auth.json')).then(stat => stat.isFile() && stat.size > 2, () => false);
       } else if (id === 'codex') {
         const config = parse(await readNative(info.configPath) ?? '');
         info.model = typeof config.model === 'string' ? config.model : '';
@@ -115,7 +119,7 @@ export class AgentSetup {
     try { const url = new URL(info.baseUrl); if (url.username || url.password || url.search || url.hash) info.baseUrl = ''; } catch { info.baseUrl = ''; }
     return info;
   }
-  async list() { return Promise.all((['claude', 'codex', 'dsh'] as const).map(id => this.info(id))); }
+  async list() { return Promise.all((['claude', 'codex', 'dsh', 'pi'] as const).map(id => this.info(id))); }
   async command(id: Backend, action: SetupAction): Promise<string> {
     if (!['install', 'login', 'native'].includes(action)) invalid('未知的安装引导操作');
     if (action === 'install') return guides[id].installCommand;
@@ -130,6 +134,7 @@ export class AgentSetup {
   async save(id: Backend, body: AgentConfigInput) {
     const input = validate(body);
     if (id === 'dsh') invalid('请在 DeepSeek Harness 原生 Web 设置中保存 API 配置');
+    if (id === 'pi') invalid('请在 Pi 原生设置中配置提供商和密钥；Dili 不代填 Pi 密钥');
     if (this.busy.has(id)) throw Object.assign(new Error('此后端的配置正在保存，请稍候'), { status: 409 });
     this.busy.add(id);
     try {

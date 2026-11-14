@@ -35,7 +35,7 @@ export function AgentSetupControls({ info, local, onTerminal, refresh }: {
     <div className="setup-actions">
       <button className="button secondary small-button" disabled={busy || !local} onClick={() => void launch('install')}><Download size={14} />{info.executable ? '安装 / 更新' : '安装后端'}</button>
       <button className="button secondary small-button" disabled={busy || !local || !info.executable} onClick={() => void launch('login')}><TerminalSquare size={14} />{info.id === 'dsh' ? '原生配置引导' : '原生账号登录'}</button>
-      {info.id !== 'dsh' && <button className="button secondary small-button" disabled={busy || !local || !!info.error} onClick={() => { setKey(''); setBaseUrl(info.baseUrl); setModel(info.model); setMessage(''); setEditing(!editing); }}>{editing ? '收起 API 配置' : '配置 API'}</button>}
+      {info.id !== 'dsh' && info.id !== 'pi' && <button className="button secondary small-button" disabled={busy || !local || !!info.error} onClick={() => { setKey(''); setBaseUrl(info.baseUrl); setModel(info.model); setMessage(''); setEditing(!editing); }}>{editing ? '收起 API 配置' : '配置 API'}</button>}
       <a className="text-button" href={info.docsUrl} target="_blank" rel="noreferrer">官方说明<ExternalLink size={12} /></a>
     </div>
     {!local && <p className="backend-note">安装、登录和配置请在运行 Dili 的电脑上操作。</p>}

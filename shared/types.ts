@@ -1,8 +1,9 @@
 import type { ChatAttachment } from './attachments.ts';
 import type { ExecutionMode } from './execution.ts';
 import type { SessionUsage } from './usage.ts';
+import type { GroupCost } from './group-cost.ts';
 
-export type Backend = 'claude' | 'codex' | 'dsh';
+export type Backend = 'claude' | 'codex' | 'dsh' | 'pi';
 export type SessionStatus = 'idle' | 'running' | 'waiting_input' | 'waiting_approval' | 'error' | 'stopped' | 'unknown';
 export type StatusSource = 'native' | 'terminal' | 'manual' | 'process';
 
@@ -17,12 +18,14 @@ export interface BackendInfo {
     permissionModes?: string[];
     /** The CLI can offer bypassPermissions as a switchable mode without enabling it. */
     bypassOption?: boolean;
+    /** The CLI accepts --effort at launch (Claude). */
+    effortOption?: boolean;
     additionalDirectories?: boolean;
   };
   note?: string;
 }
 
-export interface NativeSettings { model?: string; permission?: string }
+export interface NativeSettings { model?: string; permission?: string; effort?: string }
 export interface MemberWorktree {
   /** Worktree root created by Dili; cwd is this root or the same subdirectory as the group workspace. */
   path: string;
@@ -238,6 +241,8 @@ export interface GroupDetail {
   group: Group;
   messages: GroupMessage[];
   deliveries: Omit<Delivery, 'text'>[];
+  /** Native token cost per task; null for share views that expose no usage. */
+  cost?: GroupCost | null;
   page?: { before: number | null; total: number };
   revision?: string;
   nextSince?: string | null;

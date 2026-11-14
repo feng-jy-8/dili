@@ -1,4 +1,5 @@
 import GroupMemberRequests from './GroupMemberRequests';
+import GroupCostPanel from './GroupCostPanel';
 import type { ChatAttachment } from '../shared/attachments';
 import ImageAttachments from './ImageAttachments';
 import VoiceInput, { appendVoiceText } from './VoiceInput';
@@ -386,7 +387,7 @@ export default function GroupChat({ active = true, onShare, group, detail, membe
   const deliveryRow = (delivery: Omit<Delivery, 'text'>) => {
     const member = membersById.get(delivery.sessionId);
     const reply = delivery.replyMessageId ? messagesById.get(delivery.replyMessageId) : undefined;
-    return <div className="delivery-item" key={delivery.id}><span>{member ? <BackendAvatar backend={member.backend} small /> : <Send size={13} />}{member?.title || '群组成员'}</span>{delivery.status === 'pending' ? <div><span className="delivery-pending-note" title={delivery.lastError}>{delivery.lastError || '未发送'}</span><button className="text-button" disabled={!!busy || !member || member.archived} onClick={() => deliver(delivery.id, delivery.sessionId)}>{busy === `deliver:${delivery.id}` ? <LoaderCircle size={13} className="spin" /> : <ArrowRight size={13} />}{!demo && (member?.backend === 'dsh' || !!member && ['codex', 'claude'].includes(member.backend) && member.interactionMode === 'chat') ? '发送到会话' : '填入会话'}</button><button className="icon-button" disabled={!!busy} aria-label="取消投递" title="取消投递" onClick={() => cancel(delivery.id)}><X size={13} /></button></div>
+    return <div className="delivery-item" key={delivery.id}><span>{member ? <BackendAvatar backend={member.backend} small /> : <Send size={13} />}{member?.title || '群组成员'}</span>{delivery.status === 'pending' ? <div><span className="delivery-pending-note" title={delivery.lastError}>{delivery.lastError || '未发送'}</span><button className="text-button" disabled={!!busy || !member || member.archived} onClick={() => deliver(delivery.id, delivery.sessionId)}>{busy === `deliver:${delivery.id}` ? <LoaderCircle size={13} className="spin" /> : <ArrowRight size={13} />}{!demo && (member?.backend === 'dsh' || !!member && ['codex', 'claude', 'pi'].includes(member.backend) && member.interactionMode === 'chat') ? '发送到会话' : '填入会话'}</button><button className="icon-button" disabled={!!busy} aria-label="取消投递" title="取消投递" onClick={() => cancel(delivery.id)}><X size={13} /></button></div>
       : delivery.status === 'unknown' ? <div className="delivery-uncertain"><span title={delivery.lastError}>结果待确认，请核对原生会话</span><button className="text-button" onClick={() => open(delivery.sessionId, true)}>进入核对</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'confirmed')}>已核对，已收到</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'not_received')}>已核对，未收到</button><button className="text-button" disabled={!!busy} onClick={() => resolveDelivery(delivery, 'cancelled')}>关闭投递</button></div>
       : <span className="delivery-state">{reply ? <button className={`text-button${reply.failed ? ' delivery-failed' : ''}`} onClick={() => jumpToMessage(reply.id)}>{reply.failed ? '回复失败' : reply.pending ? '回复中' : '已回复'} <ArrowRight size={12} /></button> : delivery.status === 'sending' ? '投递中…' : delivery.status === 'sent' ? member?.status === 'running' ? '执行中…' : '已发送' : delivery.status === 'staged' ? '已填入 · 在私聊按回车发送' : '已取消'}{delivery.status === 'staged' && !reply && <button className="text-button" onClick={() => open(delivery.sessionId, true)}>进入 <ArrowRight size={12} /></button>}</span>}</div>;
   };
@@ -463,6 +464,7 @@ export default function GroupChat({ active = true, onShare, group, detail, membe
       </div>}
     </header>
     {only && <div className="group-only-bar"><span>只看 {membersById.get(only)?.title}</span><button className="text-button" onClick={() => setOnly(null)}><X size={13} />查看全部</button></div>}
+    <GroupCostPanel cost={detail.cost} />
     <div className="board-content">
       {split ? compact
         ? <div className="group-split phone"><div className="group-split-tabs" role="tablist">{splitMembers.map(member => <button key={member.id} role="tab" aria-selected={member.id === shownPhone?.id} onClick={() => setPhoneMember(member.id)}><BackendAvatar backend={member.backend} small />{member.title}</button>)}</div>{shownPhone && <MemberPane key={shownPhone.id} member={shownPhone} chatCapable={chatCapable(shownPhone)} open={() => open(shownPhone.id, true)} />}</div>
