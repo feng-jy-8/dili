@@ -47,6 +47,9 @@ interface PiConnection {
   connected: boolean;
   activeTurnId: string | null;
   expectedTurnId: string | null;
+  queuedTurnIds: string[];
+  turnEnded: boolean;
+  settledCount: number;
   status: SessionStatus;
   detail: string;
   sessionFile: string | null;
@@ -142,7 +145,7 @@ export class PiBridge {
     const owned = new OwnedProcess(child.pid, exit, signal => { child.kill(signal); });
     const connection: PiConnection = {
       nativeId: expected, child, owned, exit, closed: false, ready: false, stdout: '', stderr: '', sequence: 0,
-      pending: new Map(), requests: new Map(), revision: 0, connected: false, activeTurnId: null, expectedTurnId: null,
+      pending: new Map(), requests: new Map(), revision: 0, connected: false, activeTurnId: null, expectedTurnId: null, queuedTurnIds: [], turnEnded: false, settledCount: 0,
       status: 'unknown', detail: '正在连接 Pi 原生会话', sessionFile: null, sessionName: null, model: null, thinkingLevel: null, settingsVersion: null,
       rawEntries: [], lastEntryId: null, entryItems: [], truncated: false, liveText: null, liveTools: new Map(), liveUser: null, liveUserAnchor: null, refreshing: false, refreshAgain: false, refreshTimer: null, disposed: false,
     };
@@ -246,31 +249,41 @@ export class PiBridge {
     }));
     const turnId = randomUUID();
     const anchor = connection.lastEntryId;
-    connection.expectedTurnId = connection.activeTurnId ? null : turnId;
+    const settledBefore = connection.settledCount;
+    const queued = !!connection.activeTurnId;
+    connection.expectedTurnId = queued ? null : turnId;
+    if (queued) connection.queuedTurnIds.push(turnId);
     // Pi's RPC stream accepts a queued follow-up while a turn is running. Dili
     // queues in its own composer, so a second delivery is explicit and native.
-    const command = { type: 'prompt', message: text, ...(payloadImages.length ? { images: payloadImages } : {}), ...(connection.activeTurnId ? { streamingBehavior: 'followUp' as const } : {}) };
+    const command = { type: 'prompt', message: text, ...(payloadImages.length ? { images: payloadImages } : {}), ...(queued ? { streamingBehavior: 'followUp' as const } : {}) };
     try {
       await this.request(connection, command);
     } catch (error) {
       connection.expectedTurnId = null;
+      if (queued) connection.queuedTurnIds = connection.queuedTurnIds.filter(id => id !== turnId);
       throw Object.assign(error instanceof Error ? error : new Error(String(error)), { deliveryUnknown: true });
     }
     connection.liveUser = { id: `pi:${nativeId}:live-user:${turnId}`, type: 'user', text, ...(payloadImages.length ? { imageCount: payloadImages.length } : {}), status: 'completed' };
     connection.liveUserAnchor = anchor;
-    if (!connection.activeTurnId) {
+    if (!connection.activeTurnId && connection.settledCount === settledBefore) {
       connection.activeTurnId = turnId;
       this.setStatus(connection, 'running', 'Pi 正在处理');
+    } else if (!connection.activeTurnId) {
+      // The native turn completed before its RPC acceptance reached us. Do not
+      // resurrect a settled turn just because the response arrived late.
+      this.setStatus(connection, 'idle', 'Pi 图形对话已就绪');
     } else {
       // A queued follow-up gets its own id; the current turn remains active.
       this.setStatus(connection, 'running', 'Pi 已接收补充任务，将在当前任务后处理');
     }
+    void this.scheduleRefresh(connection, true);
     return { turnId };
   }
 
   async abort(nativeId: string): Promise<void> {
     const connection = this.require(nativeId);
     if (!connection.activeTurnId) return;
+    connection.queuedTurnIds = [];
     connection.detail = '正在停止 Pi 当前任务';
     this.setStatus(connection, 'running', connection.detail);
     await this.request(connection, { type: 'abort' }).catch(() => undefined);
@@ -503,13 +516,20 @@ export class PiBridge {
     if (connection.closed) return;
     switch (event.type) {
       case 'agent_start':
-        if (!connection.activeTurnId) connection.activeTurnId = connection.expectedTurnId ?? randomUUID();
+        if (!connection.activeTurnId) {
+          connection.activeTurnId = connection.queuedTurnIds.shift() ?? connection.expectedTurnId ?? randomUUID();
+          connection.turnEnded = false;
+        }
         connection.expectedTurnId = null;
         this.setStatus(connection, 'running', 'Pi 正在处理');
         break;
       case 'turn_start':
-        if (!connection.activeTurnId) connection.activeTurnId = connection.expectedTurnId ?? randomUUID();
+        // A follow-up starts a later turn in the same agent run. Bind it to the
+        // id returned to the client so "awaiting" can clear when it becomes active.
+        if (!connection.activeTurnId) connection.activeTurnId = connection.queuedTurnIds.shift() ?? connection.expectedTurnId ?? randomUUID();
+        else if (connection.turnEnded) connection.activeTurnId = connection.queuedTurnIds.shift() ?? connection.activeTurnId;
         connection.expectedTurnId = null;
+        connection.turnEnded = false;
         break;
       case 'message_start': {
         const message = event.message as { role?: string } | undefined;
@@ -557,11 +577,14 @@ export class PiBridge {
         break;
       }
       case 'turn_end':
+        connection.turnEnded = true;
+        void this.scheduleRefresh(connection);
+        break;
       case 'agent_end':
         void this.scheduleRefresh(connection);
         break;
       case 'agent_settled':
-        connection.activeTurnId = null; connection.expectedTurnId = null;
+        connection.activeTurnId = null; connection.expectedTurnId = null; connection.queuedTurnIds = []; connection.turnEnded = false; connection.settledCount++;
         if (event.aborted === true) { connection.liveText = null; for (const tool of connection.liveTools.values()) if (tool.status === 'inProgress') tool.status = 'failed'; }
         this.setStatus(connection, 'idle', event.aborted === true ? 'Pi 当前任务已停止' : 'Pi 图形对话已就绪');
         void this.scheduleRefresh(connection, true);

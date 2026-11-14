@@ -54,6 +54,8 @@ test('Pi bridge drives the documented RPC protocol, settings and extension UI', 
 
   const updated = await bridge.updateSettings(id, { version: settings.version, field: 'effort', value: 'high' });
   assert.equal(updated.effort, 'high');
+  const modelUpdated = await bridge.updateSettings(id, { version: updated.version, field: 'model', value: 'fixture/fixture-model' });
+  assert.equal(modelUpdated.model, 'fixture/fixture-model');
 
   await bridge.sendPrompt(id, 'ask');
   await waitFor(() => bridge.snapshotSync(id).requests.length === 1);
@@ -69,6 +71,24 @@ test('Pi bridge drives the documented RPC protocol, settings and extension UI', 
   await bridge.abort(id);
   await waitFor(() => bridge.getStatus(id).status === 'idle' && bridge.snapshotSync(id).activeTurnId === null);
 
+  const first = await bridge.sendPrompt(id, 'slow');
+  await waitFor(() => bridge.snapshotSync(id).activeTurnId === first.turnId);
+  const second = await bridge.sendPrompt(id, 'ask');
+  await waitFor(() => bridge.snapshotSync(id).activeTurnId === second.turnId && bridge.snapshotSync(id).requests.length === 1);
+  snapshot = bridge.snapshotSync(id);
+  await bridge.answerRequest(id, snapshot.requests[0]!.id, { decision: 'yes' });
+  await waitFor(() => bridge.getStatus(id).status === 'idle' && bridge.snapshotSync(id).activeTurnId === null);
+  snapshot = bridge.snapshotSync(id);
+  const users = snapshot.items.filter(item => item.type === 'user');
+  assert.equal(users.at(-2)?.text, 'slow');
+  assert.equal(users.at(-1)?.text, 'ask', 'the follow-up is persisted as its own turn');
+
+  const forked = await bridge.open({ nativeSessionId: null, forkFrom: id, cwd: home, title: 'Forked' });
+  assert.notEqual(forked.nativeSessionId, id);
+  assert.equal(bridge.has(forked.nativeSessionId), true);
+  await bridge.close(forked.nativeSessionId);
+  assert.equal(bridge.has(forked.nativeSessionId), false);
+
   const adapter = new PiChatAdapter({ bridge });
   await adapter.stopSession(id);
   assert.equal(bridge.has(id), true);
@@ -77,4 +97,8 @@ test('Pi bridge drives the documented RPC protocol, settings and extension UI', 
   await bridge.close(id);
   assert.equal(bridge.has(id), false);
   assert.equal(bridge.getStatus(id).status, 'stopped');
+  const resumed = await bridge.open({ nativeSessionId: id, cwd: home, title: 'Resumed' });
+  assert.equal(resumed.nativeSessionId, id);
+  assert.equal(bridge.has(id), true);
+  await bridge.close(id);
 });

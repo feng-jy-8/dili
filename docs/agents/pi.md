@@ -14,6 +14,7 @@ Pi 是第四个一等后端，但不是第二套网页。Dili 是唯一的 UI �
 - session 文件位于 `$PI_CODING_AGENT_SESSION_DIR`（若设置）或 `$PI_CODING_AGENT_DIR/sessions`；不同 Pi 版本可能在根目录或项目子目录下写成 `<ISO>_<uuid>.jsonl`。文件头 `{type:'session', version:3, id, timestamp, cwd}` 是身份与 cwd 的权威来源；`session_info` 标题只用于显示。
 - Fork 走原生 `--fork <parent-id> --session-id <new-id>`。**来源会话还没有产生 session 文件时无法原生 Fork**；先发一条消息，或使用跨平台交接。
 - 图形对话的“停止生成”发送 `abort`，只结束当前轮次并保留 RPC 进程；联系人“停止/归档”才关闭进程。关闭 Pi 进程不会删除原生会话；下一次 `--session-id` 可恢复。
+- “转向”：生成中继续发送会带 `streamingBehavior:'followUp'`，由 Pi 排到当前轮次之后，不打断正在生成的回答；合并后的 follow-up 会在下一个 `turn_start` 绑定自己的原生 turn id。需要立即中断时用“停止生成”，不要假装 follow-up 会改写当前回答。
 
 ## 图形对话映射
 
@@ -53,7 +54,7 @@ Pi 是第四个一等后端，但不是第二套网页。Dili 是唯一的 UI �
 ## 测试
 
 - `server/pi-session.test.ts`：entry 解析、工具合并、图片计数、截断、标题、用量、文件名。
-- `server/pi.test.ts`：启动 `server/fixtures/pi-rpc.mjs`，验证 `get_state`、prompt 往返、工具事件、设置、extension confirm、abort 和停止；不调用真实模型。
+- `server/pi.test.ts`：启动 `server/fixtures/pi-rpc.mjs`，验证 `get_state`、prompt 往返、follow-up 转向、工具事件、设置、extension confirm、abort、Fork 新建和关闭后恢复；不调用真实模型。
 - `server/adapters.test.ts`：Pi 发现、标题、cwd、`--session-id`/`--fork` 启动参数。
 - 真实原生烟测需要本机安装 Pi；设置 `SESSIONDECK_PI_BIN` 指向 CLI，使用独立 `PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR`。没有真实账号时只能用本地 mock provider 验证 RPC 链路，不代表云端模型行为。
 - 当前发行目标仍是 Linux；Windows 原生进程路径、PTY 和 systemd 相关能力未随 Pi 一起验收。

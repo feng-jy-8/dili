@@ -6,6 +6,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
+if (args.includes('--version')) { console.log('fixture-pi 1.0.0'); process.exit(0); }
+if (args.includes('--help')) { console.log('Usage: pi [--mode rpc] [--session-id <id>] [--fork <id>] [--name <name>]'); process.exit(0); }
 const value = (name) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; };
 const fork = value('--fork');
 let sessionId = value('--session-id') ?? value('--session') ?? randomUUID();
@@ -22,6 +24,8 @@ let model = { id: 'fixture-model', name: 'Fixture Model', provider: 'fixture', r
 let thinkingLevel = 'off';
 let active = false;
 let waitForUi = null;
+let turnTimer = null;
+const queuedPrompts = [];
 let counter = 0;
 
 function send(message) { process.stdout.write(JSON.stringify(message) + '\n'); }
@@ -36,8 +40,13 @@ function append(line) { try { writeFileSync(sessionFile, JSON.stringify(line) + 
 function event(type, extra = {}) { send({ type, ...extra }); }
 function finish(aborted = false, text = 'Hello world') {
   if (!active) return;
+  if (turnTimer) { clearTimeout(turnTimer); turnTimer = null; }
   active = false;
   event('turn_end');
+  if (aborted) queuedPrompts.length = 0;
+  // Pi follow-ups start another turn in the same agent run. Keep the final
+  // agent_end/agent_settled for the last queued prompt only.
+  if (!aborted && queuedPrompts.length) { startTurn(queuedPrompts.shift()); return; }
   event('agent_end');
   event('agent_settled', { aborted });
 }
@@ -62,7 +71,8 @@ function startTurn(text) {
     };
     return;
   }
-  setTimeout(() => {
+  turnTimer = setTimeout(() => {
+    turnTimer = null;
     if (!active) return;
     event('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'Hello ' } });
     event('message_update', { assistantMessageEvent: { type: 'text_delta', delta: 'world' } });
@@ -98,7 +108,12 @@ process.stdin.on('data', chunk => {
       case 'set_model': model = { ...model, id: command.modelId ?? model.id, provider: command.provider ?? model.provider }; respond(id, 'set_model', model); break;
       case 'set_thinking_level': thinkingLevel = command.level; respond(id, 'set_thinking_level'); break;
       case 'set_session_name': respond(id, 'set_session_name'); break;
-      case 'prompt': respond(id, 'prompt', { disposition: 'started' }); startTurn(String(command.message ?? '')); break;
+      case 'prompt': {
+        respond(id, 'prompt', { disposition: 'started' });
+        const message = String(command.message ?? '');
+        if (active) queuedPrompts.push(message); else startTurn(message);
+        break;
+      }
       case 'abort': respond(id, 'abort'); finish(true); break;
       case 'clear_queue': respond(id, 'clear_queue'); break;
       default: fail(id, command.type, `unsupported ${command.type}`);

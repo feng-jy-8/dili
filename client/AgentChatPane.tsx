@@ -343,7 +343,10 @@ function ChatSession({ session, allowTerminal = true, onTerminal, onSelection }:
     const current = active.current ? draftRef.current : readDraft(session.id);
     if (current.pending?.requestId !== pending.requestId) return;
     updateDraft({ text: !pending.queueId && current.text === pending.text ? '' : current.text, attachments: pending.queueId ? current.attachments : current.attachments.filter(item => !pending.attachments?.some(sent => sent.id === item.id)), pending: null, queue:current.queue?.filter(item=>item.id!==pending.queueId) });
-    if (active.current) { if (turnId) setAwaitingTurnId(turnId); setCheckNotice(''); setCheckedUnknown(false); void readSnapshot.current(); }
+    // Pi's optimistic items do not carry a native turn id after hydration; a
+    // very fast turn can finish before this response, so use its live status
+    // instead of leaving an unmatched "waiting" placeholder.
+    if (active.current) { if (turnId && sessionRef.current.backend !== 'pi' && !snapshotRef.current?.activeTurnId) setAwaitingTurnId(turnId); setCheckNotice(''); setCheckedUnknown(false); void readSnapshot.current(); }
   }
   async function checkSubmission() {
     const pending = draftRef.current.pending;

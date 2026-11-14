@@ -57,4 +57,4 @@ npm run test:web
 
 ### Pi 的额外一层
 
-`server/pi.test.ts` 用 `server/fixtures/pi-rpc.mjs` 覆盖 JSONL 请求/响应、prompt、工具事件、设置和 extension confirm；`SESSIONDECK_PI_BIN` 必须指向 CLI 或 fixture，测试不依赖 PATH。真实 Pi 链路另用独立 `PI_CODING_AGENT_DIR`／`PI_CODING_AGENT_SESSION_DIR` 和本地 mock provider 验证，不能把 fixture 当成云端模型验收。细节见 [pi.md](pi.md)。
+`server/pi.test.ts` 用 `server/fixtures/pi-rpc.mjs` 覆盖 JSONL 请求/响应、prompt、follow-up 转向、abort 只中断当前轮、工具事件、设置和 extension confirm；`SESSIONDECK_PI_BIN` 必须指向 CLI 或 fixture，测试不依赖 PATH。真实 Pi 链路另用独立 `PI_CODING_AGENT_DIR`／`PI_CODING_AGENT_SESSION_DIR` 和本地 mock provider 验证，不能把 fixture 当成云端模型验收。细节见 [pi.md](pi.md)。
