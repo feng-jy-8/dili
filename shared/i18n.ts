@@ -89,6 +89,10 @@ export const zh = {
   'settings.idleSleep': '闲置休眠',
   'settings.idleSleepOff': '关闭（默认）',
   'settings.idleSleepNote': '超过设定时间没有活动的托管会话会自动停止，原生历史与会话身份保留，可随时恢复。',
+  'setup.managedApiUrl': '兼容 OpenAI Chat Completions 的地址',
+  'setup.managedModel': '例如 deepseek-v4-flash',
+  'setup.managedApiNote': '保存为 Dili 托管的 OpenAI 兼容提供商（dili）。API 地址和模型需同时填写；留空二者会移除托管配置。写入原生配置文件并自动备份。API Key 留空会保留已有凭据，保存时不调用模型。',
+  'setup.credentialPath': '凭据：{path}',
 } as const;
 
 export type MessageKey = keyof typeof zh;

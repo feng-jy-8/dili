@@ -1,5 +1,18 @@
 # Dili 本地迭代记录
 
+## 2026-11-15：设置页直接配置四个后端的 API 地址与密钥
+
+- 背景：用户要求在设置页直接增加“每个机器人后端 API 和 key”的配置，不再只让 dsh/Pi 跳回原生设置。实现保留各后端自己的配置文件，不把密钥转发给 Dili 的模型调用链。
+- Claude：沿用 `~/.claude/settings.json` 的 `env.ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 和 `model`，保留未管理字段。
+- Codex：沿用 `~/.codex/config.toml` 的 `model_providers.dili` / `model_provider` / `model`；API Key 仍通过 `codex login --with-api-key` 的 stdin 写入原生认证，不写入 TOML。
+- dsh：新增 `AgentSetup.save('dsh')`，写 `$DSH_HOME/profiles/web/cordis.patch.yml` 的 `llm-pi-ai.providers.dili`（`apiKeyEnv: DILI_API_KEY`、`openai-completions` 和模型），把 `agent-default-model` 指向该 provider；同步已存在的 `dsh-tui` patch，不创建新 profile。密钥写入 `$DSH_HOME/.credentials.yaml` 的 `refs.DILI_API_KEY`，不写入 patch。地址和模型必须同时填写；清空二者移除托管 provider 和默认模型覆盖，保留已存密钥。
+- Pi：新增 `AgentSetup.save('pi')`，写 `$PI_CODING_AGENT_DIR/models.json` 的 `dili` provider（`openai-completions`），密钥写 `auth.json` 的 `dili` 条目；保留其他原生 provider 和凭据。同样要求地址/模型成对填写，清空二者只移除托管 provider，保留密钥。
+- 设置页：四个后端都显示「配置 API」；dsh/Pi 的表单明确说明这是 Dili 托管的 OpenAI 兼容 provider，并显示 `configPath` 与 `credentialPath`。保存前备份，原生文件权限 0600，接口只报告 `credentialPresent`，不回显密钥。
+- 依赖：为安全读写 dsh 的 YAML patch/凭据文件新增 `yaml@^2.9.1`；没有引入第二套 UI 或 key 代理。
+- 三个问题的回答：1）跨后端中立——公共契约只增加可选的 `credentialPath`，四个后端的文件格式和写入分支都在 `AgentSetup` 内，客户端不按后端解析密钥。2）四个后端都能诚实成立——Claude/Codex 写各自原生配置，dsh/Pi 明确写 Dili 托管的自定义 provider；内置 provider 的 OAuth/账号仍由原生工具维护，界面对此说明，不假装接管。3）不是界面假象——保存只写真实原生文件并备份，地址/模型成对校验，`info` 从文件回读当前地址/模型/凭据存在性；不调用模型，不把“已保存”说成“已验证”。
+- 验证：`npx tsx --test server/setup.test.ts` 12 项通过（新增 DSH/Pi 配置、保留原生字段、密钥不回落响应、0600 权限、重置、只更新 Key 时保留 provider，以及配置格式错误时不落 Key 的用例）；用临时 `DSH_HOME` 实际运行 `dsh --profile web --dump-config`，生成的 `providers.dili`、`apiKeyEnv`、`baseURL`、模型和 `agent-default-model` 均被原生解析，退出码 0；用临时 `PI_CODING_AGENT_DIR` 运行 `pi --offline --list-models probe-model` 和 `pi auth check --provider dili --json`，分别列出 `dili/probe-model` 并返回 `{"status":"ready","provider":"dili","authType":"api_key"}`。隔离端口 4402 的 HTTP 烟测在固定临时目录保存 Claude、DSH、Pi 配置，响应只含 path/存在性，不含 Key，文件权限均为 0600。`npm run check` 和 `npm run build` 通过；完整 `npm test` 514 项 / 510 通过 / 0 失败 / 4 跳过。
+- 边界：网页只管理一个 Dili 托管的 OpenAI 兼容 provider，不管理 dsh/Pi 内置 provider 的 OAuth、账号或模型目录；dsh 正在运行的旧进程是否热加载取决于原生版本，新启动进程读取；配置不执行模型请求，也不验证密钥有效性；未重启 4317 的活动 Dili。Playwright 浏览器验收仍受本机 Chromium 系统库缺失限制。
+
 ## 2026-11-15：Pi coding agent 成为第四个一等后端
 
 - 背景与授权：用户明确要求先支持 Pi，并让使用体验与其他项目无感；范围是 Dili 自有 UI/控制面直接驱动 Pi，不 iframe 嵌入 pi-web，不复用 pi-web-ui 组件，也不启动第二套 Pi Web。pi-web 只作为能力对照。

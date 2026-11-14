@@ -30,7 +30,7 @@ Pi 是第四个一等后端，但不是第二套网页。Dili 是唯一的 UI �
 - 模型来自 `get_available_models`，使用 `provider/id` 作为选择值；思考强度来自 `get_available_thinking_levels`，通过 `set_thinking_level` 生效；写入后重新读取。
 - **Pi 没有统一的权限/审批预设**。`AgentChatSettings.permission` 为 `null`，`permissions` 为空，并带 `permissionReason`。不能把 Pi 原生工具策略映射成 Claude/Codex 的允许/拒绝，也不能伪造审批卡。
 - 只有扩展主动发起 `confirm` 时才出现审批 UI；普通工具执行没有逐次审批。用户在 Pi 原生配置/扩展中管理工具策略。
-- 提供商、API Key、模型和 MCP/扩展由 Pi 原生配置维护；Dili 只在设置中说明路径和命令，不代填密钥。安装引导可打开 Pi TUI 完成登录。
+- 设置页的「配置 API」可保存一个 Dili 托管的 `dili` provider：地址、模型写入 `$PI_CODING_AGENT_DIR/models.json`，密钥写入 `auth.json`；`dili` 固定使用 `openai-completions`。地址和模型需同时填写，清空二者移除该 provider，密钥保留。其他原生 provider、MCP/扩展和内置账号/OAuth 仍由 Pi 原生配置维护；Dili 不读取或回显已保存的密钥。
 - 原生终端通过 `--session-id` 恢复；Pi TUI 没有可验证的状态通道，因此终端状态通常是“未知”。从终端切回图形对话（或在图形视图发送并触发交接）都需要用户显式确认，服务端会记录“终端没有报告任务状态”的活动；从图形对话切到终端仍要求 RPC 快照 idle 且无待回答请求。
 - 工作区附加目录：Pi 当前没有接入 `--add-dir`，能力报告为 `additionalDirectories: false`，不假装支持。
 - Auto 审批：Pi 没有统一 Auto 预设，`autoMode: false`；创建/启动时不能注入 Auto。
@@ -39,7 +39,7 @@ Pi 是第四个一等后端，但不是第二套网页。Dili 是唯一的 UI �
 
 已对齐或超过：联系人/群聊/多会话管理、流式文本与工具卡、原生会话恢复/Fork/导入、原生终端交接、图片输入、模型/思考强度、扩展确认与问题、用量、导出、远程/移动端沿用 Dili 外壳。
 
-尚未对齐：网页内配置 provider/API key、会话树按消息分支/切换分支、PDF/DOCX/XLSX 预览、Pi 插件/技能专用面板、Pi 的 widget/status 组件、Pi Web 的完整 slash 命令面板。缺口不应通过 iframe 或复制一套 Pi Web 来掩盖；优先按共享适配器能力逐步补齐。
+尚未对齐：网页内维护内置 provider 的 OAuth/账号（当前只保存 Dili 托管的 OpenAI 兼容 provider）、会话树按消息分支/切换分支、PDF/DOCX/XLSX 预览、Pi 插件/技能专用面板、Pi 的 widget/status 组件、Pi Web 的完整 slash 命令面板。缺口不应通过 iframe 或复制一套 Pi Web 来掩盖；优先按共享适配器能力逐步补齐。
 
 ## 常见坑
 
@@ -54,6 +54,7 @@ Pi 是第四个一等后端，但不是第二套网页。Dili 是唯一的 UI �
 ## 测试
 
 - `server/pi-session.test.ts`：entry 解析、工具合并、图片计数、截断、标题、用量、文件名。
+- `server/setup.test.ts`：验证 `models.json`/`auth.json` 的托管 provider、密钥保留、备份和 0600 权限，不调用模型。
 - `server/pi.test.ts`：启动 `server/fixtures/pi-rpc.mjs`，验证 `get_state`、prompt 往返、follow-up 转向、工具事件、设置、extension confirm、abort、Fork 新建和关闭后恢复；不调用真实模型。
 - `server/adapters.test.ts`：Pi 发现、标题、cwd、`--session-id`/`--fork` 启动参数。
 - 真实原生烟测需要本机安装 Pi；设置 `SESSIONDECK_PI_BIN` 指向 CLI，使用独立 `PI_CODING_AGENT_DIR`/`PI_CODING_AGENT_SESSION_DIR`。没有真实账号时只能用本地 mock provider 验证 RPC 链路，不代表云端模型行为。

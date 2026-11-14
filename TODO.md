@@ -295,5 +295,5 @@
 - [x] 联系人、发现/导入、原生终端 `--session-id` 交接、Fork、图片、群聊投递、用量与导出复用现有外壳。
 - [x] 原生模型／思考强度设置；Pi 没有统一权限预设，`permission: null` 并说明原因，不伪造审批。
 - [x] 阻塞式扩展 `confirm`／`select`／`input`／`editor` 映射为网页请求；普通工具没有逐次审批。
-- [ ] 与 pi-web 的剩余差距：provider/API key 网页配置、会话树按消息分支、PDF/DOCX/XLSX 预览、插件/技能面板、widget/status 显示型扩展。
+- [ ] 与 pi-web 的剩余差距：内置 provider 的 OAuth/账号网页管理（自定义 OpenAI 兼容 provider 已可配置）、会话树按消息分支、PDF/DOCX/XLSX 预览、插件/技能面板、widget/status 显示型扩展。
 - [ ] Windows 原生进程、真实账号和公网移动端 Pi 交接验收；Linux fixture 与本地真实 CLI + mock provider 已覆盖 RPC 链路。
