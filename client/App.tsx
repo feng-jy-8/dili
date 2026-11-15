@@ -17,7 +17,7 @@ import {
   CircleHelp, Clock3, Command, Copy, Ellipsis, ExternalLink, Folder,
   GitFork, Globe2, LoaderCircle, MessageSquare, Pencil, Pin, PinOff, Play, Plus,
   Radio, Search, Settings2, Share2, SlidersHorizontal, Square, UsersRound, X,
-  PanelBottomOpen, Volume2, VolumeX, TerminalSquare, Link2, PanelLeftOpen, PanelLeftClose,
+  Volume2, VolumeX, TerminalSquare, Link2, PanelLeftOpen, PanelLeftClose,
   FilePenLine, Palette, Maximize2, Minimize2, PanelRightOpen, Activity, Download, Hash,
 } from 'lucide-react';
 import type { AppState, StatePatch, Backend, DiscoveredSession, Group, GroupReadReceipt, GroupMessage, Session, SessionStatus } from '../shared/types';
@@ -119,6 +119,8 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const [selection, setSelection] = useState('');
   const [workspaceSessionId, setWorkspaceSessionId] = useState<string | null>(null);
   const preview = usePreviewWorkspace();
+  // The terminal lives as a tab of the right-hand panel; it is open while that tab shows.
+  const terminalPanelOpen = preview.open && preview.activeId === 'terminal';
   const activePreview = preview.tabs.find(tab => tab.id === preview.activeId);
   const workspaceOpen = preview.open && activePreview?.kind === 'explorer';
   const scratchpadOpen = preview.open && activePreview?.kind === 'note';
@@ -154,7 +156,6 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   // contact. A previous native click must not turn every later contact native.
   const privateViewKey = (id: string) => `sessiondeck.private-view.${id}`;
   const [privateViews, setPrivateViews] = useState<Record<string, 'conversation' | 'terminal' | 'chat'>>({});
-  const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
   const [setupShellId, setSetupShellId] = useState<string>();
   const [terminalSessionId, setTerminalSessionId] = useState<string | undefined>();
   const savedPrivateView = (session: Session | null | undefined): 'conversation' | 'terminal' | 'chat' | undefined => {
@@ -234,7 +235,9 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
   const openTerminalPanel = useCallback((sessionId?: string) => {
     setSetupShellId(undefined);
     if (sessionId) setTerminalSessionId(sessionId);
-    setTerminalPanelOpen(true);
+    preview.openTerminal();
+    // The controller is recreated each render; its setters are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const notificationSound = useCallback((unlock = false, once = false) => {
@@ -645,7 +648,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
         <span className="connection-indicator" title={connectionLabel}><span className={`connection-dot ${connected ? 'online' : ''}`} /><span className="sr-only">{connectionLabel}</span></span>
         <MoreMenu items={[
           { label: '资源管理器', icon: <Folder size={14} />, phoneOnly: true, disabled: !explorerSession, active: workspaceOpen, onSelect: () => { if (explorerSession) preview.openExplorer(explorerSession); } },
-          { label: '底部终端', icon: <PanelBottomOpen size={14} />, phoneOnly: true, disabled: !state, active: terminalPanelOpen, onSelect: () => openTerminalPanel(selected?.id) },
+          { label: '终端', icon: <TerminalSquare size={14} />, phoneOnly: true, disabled: !state, active: terminalPanelOpen, onSelect: () => openTerminalPanel(selected?.id) },
           { label: '连接与能力', icon: <Settings2 size={14} />, active: view === 'backends', onSelect: () => navigate('backends') },
           { label: '网页服务', icon: <Globe2 size={14} />, active: servicePreviewOpen, onSelect: toggleServicePreview },
           { label: '随手记', icon: <FilePenLine size={14} />, active: scratchpadOpen, onSelect: toggleScratchpad },
@@ -669,7 +672,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
           <button className={`icon-button ${preview.open ? 'active' : ''} topbar-tool`} aria-label="打开预览面板" title={preview.open ? '隐藏预览面板' : '打开预览面板'} aria-expanded={preview.open} onClick={() => { if (preview.open) preview.hide(); else if (preview.tabs.length) preview.show(); else if (explorerSession) preview.openExplorer(explorerSession); else preview.openNote(); }}><PanelRightOpen size={17} /></button>
           <button className={`icon-button ${workspaceOpen ? 'active' : ''} topbar-tool`} aria-label="打开资源管理器" title="打开资源管理器" disabled={!explorerSession} onClick={() => { if (explorerSession) preview.openExplorer(explorerSession); }}><Folder size={17} /></button>
           <button className={`icon-button ${servicePreviewOpen ? 'active' : ''} topbar-tool`} aria-label="打开网页服务" title="网页服务预览" aria-expanded={servicePreviewOpen} onClick={toggleServicePreview}><Globe2 size={17} /></button>
-          <button className={`icon-button ${terminalPanelOpen ? 'active' : ''} topbar-tool`} aria-label="打开终端" title={terminalPanelOpen ? '终端面板已打开' : '打开底部终端'} disabled={!state} onClick={() => openTerminalPanel(selected?.id)}><PanelBottomOpen size={17} /></button>
+          <button className={`icon-button ${terminalPanelOpen ? 'active' : ''} topbar-tool`} aria-label="打开终端" title={terminalPanelOpen ? '终端已在右侧打开' : '在右侧面板打开终端'} disabled={!state} onClick={() => openTerminalPanel(selected?.id)}><TerminalSquare size={17} /></button>
           <button className={`icon-button ${scratchpadOpen ? 'active' : ''} topbar-tool`} aria-label="打开随手记" title="随手记" aria-expanded={scratchpadOpen} onClick={toggleScratchpad}><FilePenLine size={17} /></button>
           <button className="icon-button appearance-toggle topbar-tool" aria-label="切换主题" title="外观主题" onClick={() => setModal({ type: 'appearance' })}><Palette size={17} /></button>
           <div className="contact-actions">
@@ -694,7 +697,7 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
       {error && !selected && <div role="alert" className="error-banner"><span>{error}</span><button className="icon-button" aria-label="关闭错误提示" onClick={() => setError('')}><X size={15} /></button></div>}
 
       {!state && !connectionError && <div className="loading-state"><LoaderCircle className="spin" size={22} /><p>正在连接你的工作空间…</p></div>}
-      {state && view === 'activity' ? <ActivityView activities={state.activities} sessions={state.sessions} open={openSession} /> : state && view === 'backends' ? <><section className="backend-setting-card zoom-settings-card" aria-label="外观设置"><InterfaceZoom /></section><BackendSettings state={state} local={!auth.remote} onTerminal={id => { setTerminalSessionId(undefined); setSetupShellId(id); setTerminalPanelOpen(true); }} refresh={() => void run('refresh', () => api('/backends/refresh', {}), '已重新检测本机后端')} onCreate={(backend) => { setBackendFilter(backend); setModal({ type: 'create', backend }); }} /><div className="backend-settings"><section className="backend-setting-card" aria-label="提醒方式"><div className="backend-setting-title"><Bell size={20} /><div><h2>提醒方式</h2><p>需要你输入、审批或出错时，卡片会亮红点；这里决定是否同时发声和弹系统通知。</p></div></div><div className="notify-toggles"><button className={`button secondary small-button ${soundEnabled ? 'active' : ''}`} aria-label={soundEnabled ? '关闭提示音' : '开启提示音'} aria-pressed={soundEnabled} onClick={() => { const enabled = !soundEnabled; setSoundEnabled(enabled); writeLocalPreference('sessiondeck.sound', enabled ? 'on' : 'off'); if (enabled) notificationSound(); }}>{soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}{soundEnabled ? '提示音已开' : '提示音已关'}</button><button className={`button secondary small-button ${notifications ? 'active' : ''}`} aria-label={notifications ? '关闭系统通知' : '开启系统通知'} aria-pressed={notifications} onClick={() => void toggleNotifications()}>{notifications ? <Bell size={14} /> : <BellOff size={14} />}{notifications ? '系统通知已开' : '系统通知已关'}</button></div></section><VoiceSettings local={!auth.remote} demo={state.demo} /><StartupSettings local={!auth.remote} /><SecuritySettings auth={auth} notify={notify} /></div></> : state && topicView ? <TopicList topics={topics} sessions={sessions} activeId={groupId} query={query} showArchived={showArchivedTopics} setShowArchived={setShowArchivedTopics} open={(id) => navigate(`topic:${id}`)} openSession={openSessionForInput} publish={() => setModal({ type: 'topic', mode: { type: 'create' } })} pin={(topic) => void run(`pin:${topic.id}`, () => api(`/groups/${topic.id}`, { pinned: !topic.pinned }, 'PATCH'))} archive={(topic) => void run(`archive:${topic.id}`, () => api(`/groups/${topic.id}`, { archived: !topic.archived }, 'PATCH'), topic.archived ? '话题已恢复' : '话题已归档，讨论和参与者都已保留')} /> : state && <>
+      {state && view === 'activity' ? <ActivityView activities={state.activities} sessions={state.sessions} open={openSession} /> : state && view === 'backends' ? <><section className="backend-setting-card zoom-settings-card" aria-label="外观设置"><InterfaceZoom /></section><BackendSettings state={state} local={!auth.remote} onTerminal={id => { setTerminalSessionId(undefined); setSetupShellId(id); preview.openTerminal(); }} refresh={() => void run('refresh', () => api('/backends/refresh', {}), '已重新检测本机后端')} onCreate={(backend) => { setBackendFilter(backend); setModal({ type: 'create', backend }); }} /><div className="backend-settings"><section className="backend-setting-card" aria-label="提醒方式"><div className="backend-setting-title"><Bell size={20} /><div><h2>提醒方式</h2><p>需要你输入、审批或出错时，卡片会亮红点；这里决定是否同时发声和弹系统通知。</p></div></div><div className="notify-toggles"><button className={`button secondary small-button ${soundEnabled ? 'active' : ''}`} aria-label={soundEnabled ? '关闭提示音' : '开启提示音'} aria-pressed={soundEnabled} onClick={() => { const enabled = !soundEnabled; setSoundEnabled(enabled); writeLocalPreference('sessiondeck.sound', enabled ? 'on' : 'off'); if (enabled) notificationSound(); }}>{soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}{soundEnabled ? '提示音已开' : '提示音已关'}</button><button className={`button secondary small-button ${notifications ? 'active' : ''}`} aria-label={notifications ? '关闭系统通知' : '开启系统通知'} aria-pressed={notifications} onClick={() => void toggleNotifications()}>{notifications ? <Bell size={14} /> : <BellOff size={14} />}{notifications ? '系统通知已开' : '系统通知已关'}</button></div></section><VoiceSettings local={!auth.remote} demo={state.demo} /><StartupSettings local={!auth.remote} /><SecuritySettings auth={auth} notify={notify} /></div></> : state && topicView ? <TopicList topics={topics} sessions={sessions} activeId={groupId} query={query} showArchived={showArchivedTopics} setShowArchived={setShowArchivedTopics} open={(id) => navigate(`topic:${id}`)} openSession={openSessionForInput} publish={() => setModal({ type: 'topic', mode: { type: 'create' } })} pin={(topic) => void run(`pin:${topic.id}`, () => api(`/groups/${topic.id}`, { pinned: !topic.pinned }, 'PATCH'))} archive={(topic) => void run(`archive:${topic.id}`, () => api(`/groups/${topic.id}`, { archived: !topic.archived }, 'PATCH'), topic.archived ? '话题已恢复' : '话题已归档，讨论和参与者都已保留')} /> : state && <>
           {visible.length > 0 ? <><div className="contact-grid">{shownContacts.map((entry) => entry.kind === 'group' ? <GroupCard key={entry.id} group={entry.group} members={entry.members} active={entry.id === groupId} onArchive={() => void run(`archive:${entry.id}`, () => api(`/groups/${entry.id}`, { archived: !entry.group.archived }, 'PATCH'), entry.group.archived ? '群聊已恢复' : '群聊已归档，消息和成员已保留')} onOpen={() => navigate(`group:${entry.id}`)} onPin={() => void run(`pin:${entry.id}`, () => api(`/groups/${entry.id}`, { pinned: !entry.group.pinned }, 'PATCH'))} onEdit={() => setModal({ type: 'group', group: entry.group })} /> : ((session) => <SessionCard key={session.id} session={session} active={session.id === selectedId} onShare={() => setModal({ type: 'shareLink', session })} canFork={state.backends.find((backend) => backend.id === session.backend)?.capabilities.fork && !!session.nativeSessionId && !session.forkPending || false} onOpen={(invoker) => openSession(session, invoker)} onRename={() => setModal({ type: 'rename', session })} onFork={() => setModal({ type: 'fork', session, groupId: session.groupId ?? undefined })} onPin={() => void patch(session, { pinned: !session.pinned })} onArchive={() => void patch(session, { archived: !session.archived })} onCopyDirectory={() => void copyText(session.cwd, '工作目录')} />)(entry.session))}</div>{shownContacts.length < visible.length && <div className="contact-more"><button className="button secondary" type="button" onClick={() => setContactLimit(value => value + CONTACT_RENDER_STEP)}>显示更多（已显示 {shownContacts.length} / 共 {visible.length}）</button></div>}</> : <EmptyState filtered={filtered} view={view} group={false} backendCount={state.backends.filter((backend) => backend.installed).length} connections={() => navigate('backends')} create={() => setModal({ type: 'create' })} importSessions={() => setModal({ type: 'import' })} clear={clearFilters} />}
 
         </>}
@@ -778,9 +781,9 @@ export default function App({ auth = { kind: 'owner', remote: false, passwordSet
       </div>
     </section></SessionChrome>}
     </div>
-    {state && <ShellTerminalDock open={terminalPanelOpen} sessionId={terminalSessionId} requestedShellId={setupShellId} onClose={() => setTerminalPanelOpen(false)} inert={!!modal} />}
     </div>
-    <PreviewWorkspace controller={preview} sessions={sessions} currentSession={explorerSession} inert={!!modal} remote={auth.remote} />
+    <PreviewWorkspace controller={preview} sessions={sessions} currentSession={explorerSession} inert={!!modal} remote={auth.remote} openTerminal={() => openTerminalPanel(selected?.id)}
+      terminal={state && <ShellTerminalDock embedded open={terminalPanelOpen} sessionId={terminalSessionId} requestedShellId={setupShellId} onClose={() => preview.close('terminal')} inert={!!modal} />} />
     </div>
 
     </div>

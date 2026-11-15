@@ -17,7 +17,7 @@ export function AgentSetupControls({ info, local, onTerminal, refresh }: {
   if (!info) return null;
   const managedProvider = info.id === 'dsh' || info.id === 'pi';
   const launch = async (action: SetupAction) => {
-    if (action === 'install' && !window.confirm(`将在底部终端执行：\n${info.installCommand}\n\n安装到当前用户的 npm 全局目录，不会自动使用 sudo。是否继续？`)) return;
+    if (action === 'install' && !window.confirm(`将在终端面板执行：\n${info.installCommand}\n\n安装到当前用户的 npm 全局目录，不会自动使用 sudo。是否继续？`)) return;
     setBusy(true); setMessage('');
     try { const shell = await api<ShellTerminal>(`/setup/agents/${info.id}/terminal`, { action }); onTerminal(shell.id); }
     catch (error) { setMessage(error instanceof Error ? error.message : '无法打开引导终端'); }

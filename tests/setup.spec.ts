@@ -85,7 +85,7 @@ test('installation guide opens the returned terminal and keeps it interactive wi
     await page.goto('/#/backends');
     const claude = page.locator('.backend-setting-card').filter({ has: page.getByRole('heading', { name: 'Claude Code', exact: true }) });
     await claude.getByRole('button', { name: '安装后端', exact: true }).click();
-    const dock = page.getByRole('region', { name: '底部终端面板' });
+    const dock = page.getByRole('region', { name: '终端面板' });
     await expect(dock.getByRole('tab', { name: shell.title, exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(1);
     expect(action).toEqual({ action: 'install' });

@@ -20,13 +20,13 @@ async function command(pane: Locator, text: string) {
   await input.press('Enter');
 }
 
-test('bottom terminal runs real shell commands, isolates split shells and survives hide/reload', async ({ page, request }) => {
+test('terminal tab runs real shell commands, isolates split shells and survives hide/reload', async ({ page, request }) => {
   const initial = await (await request.get('/api/shells')).json() as { id: string }[];
   const existing = new Set(initial.map(item => item.id));
   try {
     await page.goto('/');
     await page.getByRole('button', { name: '打开终端', exact: true }).click();
-    const dock = page.getByRole('region', { name: '底部终端面板' });
+    const dock = page.getByRole('region', { name: '终端面板' });
     await expect(dock).toBeVisible();
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(1);
     await command(dock, `SD_TEST_VALUE=first; printf 'SHELL_RESULT:%s\\n' "$((6 * 7))"`);
@@ -112,11 +112,16 @@ test('workspace keeps its tree beside files and diffs with a collapsible resizab
     await expect(diff.getByRole('table', { name: '内联差异' })).toBeVisible();
     const panelHeight = (await panel.boundingBox())!.height;
     await page.getByRole('button', { name: '打开终端', exact: true }).click();
-    const dock = page.getByRole('region', { name: '底部终端面板' });
+    const dock = page.getByRole('region', { name: '终端面板' });
     await expect(dock).toBeVisible();
+    // The terminal opens as a tab of the same right-hand panel, not a dock below it.
     expect(Math.abs((await panel.boundingBox())!.height - panelHeight)).toBeLessThan(2);
-    expect((await dock.boundingBox())!.x + (await dock.boundingBox())!.width).toBeLessThanOrEqual((await panel.boundingBox())!.x + 1);
+    await expect(panel.getByRole('tab', { name: '终端', exact: true })).toHaveAttribute('aria-selected', 'true');
+    const dockBox = (await dock.boundingBox())!, panelBox = (await panel.boundingBox())!;
+    expect(dockBox.x).toBeGreaterThanOrEqual(panelBox.x - 1);
+    expect(dockBox.x + dockBox.width).toBeLessThanOrEqual(panelBox.x + panelBox.width + 1);
     await dock.getByRole('button', { name: '隐藏终端面板', exact: true }).click();
+    await expect(panel.getByRole('tab', { name: '终端', exact: true })).toHaveCount(0);
     const splitter = panel.getByRole('separator', { name: '调整预览面板宽度' });
     const initial = Number(await splitter.getAttribute('aria-valuenow'));
     await splitter.focus(); await splitter.press('ArrowLeft');
@@ -212,7 +217,7 @@ test('opening a shell from a contact uses its directory and is immediately inter
     // The session remains in the main workbench while the shared terminal dock
     // opens below it, matching VS Code's panel behavior.
     await expect(page.getByRole('dialog', { name: `${session.title} 的私聊` })).toBeVisible();
-    const dock = page.getByRole('region', { name: '底部终端面板' });
+    const dock = page.getByRole('region', { name: '终端面板' });
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(1);
     await expect(dock.locator('.terminal-dock-tab')).toHaveCount(2);
     await expect(page.getByRole('dialog', { name: `${session.title} 的私聊` }).locator('.session-conversation')).toBeVisible();
@@ -305,7 +310,7 @@ test('a slow shell creation follows the latest contact directory and reconnect p
     await page.getByRole('button', { name: `进入 ${second.title} 的会话`, exact: true }).click();
     await page.getByRole('button', { name: '打开终端', exact: true }).click();
     releaseFirst();
-    const dock = page.getByRole('region', { name: '底部终端面板' });
+    const dock = page.getByRole('region', { name: '终端面板' });
     await expect(dock.locator('.terminal-dock-pane-heading')).toHaveCount(0);
     await expect(dock.getByRole('tab', { selected: true })).toHaveAttribute('title', new RegExp(secondCwd));
     await expect(dock.locator('.terminal-connection.connected')).toHaveCount(1);
