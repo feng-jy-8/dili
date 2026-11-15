@@ -60,7 +60,7 @@ export function TopicList({ topics, sessions, activeId, showArchived, setShowArc
               <button className="icon-button" aria-label={t(topic.pinned ? 'topic.unpin' : 'topic.pin')} title={t(topic.pinned ? 'topic.unpin' : 'topic.pin')} onClick={() => pin(topic)}>{topic.pinned ? <PinOff size={12} /> : <Pin size={12} />}</button>
               <button className="icon-button" aria-label={t(topic.archived ? 'topic.restore' : 'topic.archive')} title={t(topic.archived ? 'topic.restore' : 'topic.archive')} onClick={() => archive(topic)}>{topic.archived ? <ArchiveRestore size={12} /> : <Archive size={12} />}</button>
             </span>
-            {active && members.length > 0 && <ul className="topic-channel-members" aria-label={t('topic.members', { count: members.length })}>{members.map(member => <li key={member.id}><button onClick={() => openSession(member)} title={t('topic.openSession', { name: member.title })}><BackendAvatar backend={member.backend} small /><span>{member.title}</span>{member.status === 'running' && <i className="topic-channel-working" aria-hidden="true" />}</button></li>)}</ul>}
+            {active && members.length > 0 && <ul className="topic-channel-members" aria-label={t('topic.members', { count: members.length })}>{members.map(member => <li key={member.id}><button onClick={() => openSession(member)} title={t('topic.openSession', { name: member.title })}><BackendAvatar backend={member.backend} small /><span className="topic-channel-member-name">{member.title}</span>{member.status === 'running' && <i className="topic-channel-working" aria-hidden="true" />}</button></li>)}</ul>}
           </li>;
         })}</ul>
       </section>;

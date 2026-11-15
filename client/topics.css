@@ -31,7 +31,7 @@
 .topic-channel-members { margin: 2px 0 6px 18px !important; }
 .topic-channel-members button { display: flex; align-items: center; gap: 7px; width: 100%; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
 .topic-channel-members button:hover { background: var(--hover); color: var(--text); }
-.topic-channel-members span { overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap; }
+.topic-channel-members .topic-channel-member-name { overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap; }
 
 .topic-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 48px 20px; text-align: center; color: var(--muted); }
 .topic-empty svg { color: var(--faint); }
@@ -49,7 +49,7 @@
 .topic-pinned-label { display: flex; align-items: center; gap: 5px; margin-bottom: 4px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
 
 .topic-channel-view .group-timeline { gap: 0; padding: 12px 0 16px; }
-.topic-channel-view .group-message, .topic-channel-view .group-live { align-self: stretch; flex-direction: row; max-width: none; gap: 12px; padding: 6px 20px 4px; }
+.topic-channel-view .group-message, .topic-channel-view .group-message.mine, .topic-channel-view .group-live { align-self: stretch; flex-direction: row; max-width: none; gap: 12px; padding: 6px 20px 4px; text-align: left; }
 .topic-channel-view .group-message:hover, .topic-channel-view .group-message:focus-within { background: var(--hover); }
 .topic-channel-view .group-message:not(.continued) { margin-top: 10px; }
 .topic-channel-view .group-message.continued { padding-top: 1px; }
@@ -59,6 +59,7 @@
 .topic-channel-view .mine .message-avatar { background: var(--accent); }
 .topic-channel-view .message-body, .topic-channel-view .mine .message-body { flex: 1; align-items: stretch; gap: 2px; }
 .topic-channel-view .message-heading, .topic-channel-view .mine .message-heading { flex-direction: row; padding: 0; font-size: 12px; }
+.topic-channel-view .message-kind:empty { display: none; }
 .topic-channel-view .message-heading strong { color: var(--text); font-size: 14px; font-weight: 600; }
 .topic-channel-view .bubble, .topic-channel-view .mine .bubble, .topic-channel-view .kind-reply:not(.mine) .bubble, .topic-channel-view .kind-result:not(.mine) .bubble { max-width: 100%; padding: 0; border-radius: 0; background: none; color: var(--text); }
 .topic-channel-view .mine .message-source-link, .topic-channel-view .mine .message-recipients button { color: var(--muted); }

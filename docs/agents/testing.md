@@ -15,6 +15,7 @@
 
 - 浏览器验收自动使用临时 `SESSIONDECK_DATA_DIR`、`SESSIONDECK_CLIENT_DIR` 和测试端口（默认 4337），拒绝复用活动实例。
 - `npm run test:web` 会先构建到临时目录；不要为了测试去覆盖正在服务的 `dist/client`。
+- Chromium 启动报 `libnspr4.so` / `libnss3.so` / `libasound.so.2` 找不到（常见于新装的 WSL，又没有 sudo 跑 `npx playwright install-deps`）：运行 `scripts/browser-libs.sh`。它用 `apt-get download` 把缺的库解到 `~/.local/share/dili-browser-libs`，不改系统；`playwright.config.ts` 发现该目录就自动加进 `LD_LIBRARY_PATH`，也可以用 `DILI_BROWSER_LIBS` 指定位置。
 - PWA 安装检查 `npm run test:pwa` 使用 Chromium 与 iPhone WebKit 项目，产物在 `artifacts/pwa/`；它独立于 `test:web`，需要 `npx playwright install chromium webkit`。
 - 原生烟测使用临时配置目录；Claude/Codex 的隔离工作流还要求 `unshare` 与可用用户命名空间。
 - 只清理本轮启动且身份可确认的进程；不要按端口杀进程。
