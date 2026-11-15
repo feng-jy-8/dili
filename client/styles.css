@@ -975,3 +975,12 @@ select { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-stro
 /* Shared pages are stacked workspaces, never a horizontal title rail. */
 .app-shell.share-shell { flex-direction: column; }
 .share-shell > .app-body { flex: 1; min-height: 0; }
+.im-settings h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.im-login { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin: 8px 0 14px; }
+.im-qr { width: 168px; height: 168px; padding: 6px; border-radius: 10px; background: #fff; flex-shrink: 0; }
+.im-qr svg { width: 100%; height: 100%; }
+.im-pair-code { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px; background: var(--subtle); font-size: 13px; }
+.im-binding { margin: 4px 0 12px; }
+.im-help { margin-top: 8px; font-size: 12.5px; }
+.im-help ol { margin: 6px 0 0 18px; display: grid; gap: 4px; color: var(--muted); }
+.im-commands { line-height: 1.7; }

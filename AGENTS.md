@@ -64,6 +64,8 @@
 - [terminal.md](docs/agents/terminal.md)：PTY 生命周期、重连回放、图片与移动端输入。
 - [pi.md](docs/agents/pi.md)：Pi coding agent 的官方 RPC、空会话恢复、扩展 UI 与能力边界。
 - [dsh.md](docs/agents/dsh.md)：DeepSeek Harness 的原生 Web／TUI 路径与限制。
+- [coordinator.md](docs/agents/coordinator.md)：话题协调员嘀哩的工具边界、上下文快照、派活与提议。
+- [im.md](docs/agents/im.md)：微信 ClawBot 与飞书接入的协议、主人绑定和未验证项。
 - [relay.md](docs/agents/relay.md)：邀请码、frp、设备与分享权限。
 - [remote-network.md](docs/agents/remote-network.md)：同网直连、split-horizon DNS、公网中继 FRP 链路、主机网页代理部署。
 - [testing.md](docs/agents/testing.md)：单测、契约测试、浏览器验收与原生烟测的边界。

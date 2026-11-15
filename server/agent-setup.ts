@@ -242,6 +242,27 @@ export class AgentSetup {
     return info;
   }
   async list() { return Promise.all((['claude', 'codex', 'dsh', 'pi'] as const).map(id => this.info(id))); }
+  /** The OpenAI-compatible API the user configured here for dsh, else for Pi:
+   * Dili's own coordinator reuses it. Null when neither has a managed provider
+   * with a key. The key is returned to the server only, never to a browser. */
+  async managedApi(): Promise<{ baseUrl: string; model: string; apiKey: string; source: 'dsh' | 'pi' } | null> {
+    for (const id of ['dsh', 'pi'] as const) {
+      try {
+        const info = await this.info(id);
+        if (!info.baseUrl || info.error) continue;
+        let apiKey = '';
+        if (id === 'dsh') {
+          const refs = objectValue(parseYamlObject(await readNative(this.dshCredentialPath()), 'DSH 凭据文件').refs);
+          apiKey = typeof refs?.[DSH_API_KEY_REF] === 'string' ? refs[DSH_API_KEY_REF] as string : process.env[DSH_API_KEY_REF] ?? '';
+        } else {
+          const credential = piCredential(jsonObject(await readNative(this.piAuthPath())));
+          apiKey = credential?.type === 'api_key' && typeof credential.key === 'string' ? credential.key : '';
+        }
+        if (apiKey) return { baseUrl: info.baseUrl, model: info.model, apiKey, source: id };
+      } catch { /* An unreadable native file means this source is unavailable. */ }
+    }
+    return null;
+  }
   async command(id: Backend, action: SetupAction): Promise<string> {
     if (!['install', 'login', 'native'].includes(action)) invalid('未知的安装引导操作');
     if (action === 'install') return guides[id].installCommand;

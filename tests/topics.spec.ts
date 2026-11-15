@@ -11,7 +11,10 @@ async function seedTopic(request: APIRequestContext, title: string) {
   expect(response.ok(), 'fork a demo contact into the topic').toBeTruthy();
   const member = await response.json() as Session;
   await request.post(`/api/groups/${topic.id}/messages`, { data: { text: '原帖：要讨论的事', kind: 'task', recipientIds: [member.id] }, headers });
-  for (const text of ['第一条想法', '紧接着补充一句']) await request.post(`/api/groups/${topic.id}/messages`, { data: { text, kind: 'note', recipientIds: [] }, headers });
+  // A note naming nobody would wake 嘀哩; address the participant instead.
+  await request.post(`/api/groups/${topic.id}/messages`, { data: { text: '第一条想法', kind: 'task', recipientIds: [member.id] }, headers });
+  // Two shared results from one participant within five minutes merge.
+  for (const text of ['参与者的结论', '紧接着补充一句']) await request.post(`/api/groups/${topic.id}/messages`, { data: { text, kind: 'result', senderId: member.id, recipientIds: [] }, headers });
   return { topic, member };
 }
 
@@ -44,4 +47,32 @@ test('topics read like channels: categories, flat merged messages, pinned post a
   // Participants are also contacts.
   await page.goto('/#/contacts');
   await expect(page.locator('.session-card', { hasText: member.title })).toBeVisible();
+});
+
+test('a topic message that names nobody is answered by 嘀哩; without a model it says how to set one up', async ({ page, request }) => {
+  const { topic } = await seedTopic(request, `嘀哩-${Date.now()}`);
+  await page.goto(`/#/topics/${topic.id}`);
+  const view = page.locator('.topic-channel-view');
+  await expect(view.locator('.group-message.mine').first()).toBeVisible();
+  await view.getByRole('textbox', { name: '回复话题' }).fill('嘀哩，现在进展如何？');
+  await view.getByRole('textbox', { name: '回复话题' }).press('Enter');
+  const answer = view.locator('.group-message.coordinator').last();
+  await expect(answer).toContainText('嘀哩');
+  await expect(answer).toContainText('配置 API');
+  await expect(answer.locator('.coordinator-avatar')).toBeVisible();
+  // It is not addressed to the participant.
+  await expect(view.locator('.group-message.mine', { hasText: '嘀哩，现在进展如何？' }).locator('.message-recipients')).toHaveCount(0);
+});
+
+test('IM settings show both channels; Feishu credentials are validated locally', async ({ page }) => {
+  await page.goto('/#/backends');
+  const card = page.getByRole('region', { name: 'IM 接入：在微信、飞书里找嘀哩' });
+  await expect(card).toContainText('微信 ClawBot');
+  await expect(card).toContainText('飞书机器人');
+  await expect(card).toContainText('嘀哩还没有可用的模型');
+  await card.getByLabel('App ID').fill('not-an-id');
+  await card.getByLabel('App Secret').fill('secret');
+  await card.getByRole('button', { name: '保存并连接' }).click();
+  await expect(card.getByRole('alert')).toContainText(/演示模式不连接 IM|App ID 应以 cli_ 开头/);
+  await page.screenshot({ path: 'artifacts/im-settings.png', fullPage: true });
 });

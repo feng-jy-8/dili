@@ -189,10 +189,33 @@ export interface GroupMessage {
   /** Topic only: a turn the user typed directly in this member's own session,
    * mirrored into the topic (the member's answer follows as its reply). */
   via?: string;
+  /** Written by Dili's own topic coordinator (嘀哩), not by a member session. */
+  agent?: 'coordinator';
+  /** The user's message arrived from a bound IM chat. */
+  channel?: ImChannelKind;
+  /** Coordinator task: summarize once every recipient has answered. */
+  awaitSummary?: boolean;
+  /** Coordinator proposal to add a participant; only the user can approve it. */
+  proposal?: TopicProposal;
   createdAt: string;
   /** Persistent change cursor and chronological page position. */
   revision?: number;
   sequence?: number;
+}
+
+export type ImChannelKind = 'weixin' | 'feishu';
+
+export interface TopicProposal {
+  /** Short code the user can answer from IM, e.g. "同意 P-3f9a". */
+  id: string;
+  status: 'pending' | 'approved' | 'rejected' | 'failed';
+  reason: string;
+  /** Fork an existing contact into the topic, or create a new agent. */
+  fork?: { contactId: string; title: string };
+  create?: { backend: Backend; title: string; cwd: string };
+  /** Outcome note once handled (the new member, or why it failed). */
+  result?: string;
+  memberId?: string;
 }
 
 export interface Delivery {

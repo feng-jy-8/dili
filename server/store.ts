@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Session, Group, GroupMessage, Delivery, DeliveryAttempt, Activity, GroupDetail } from '../shared/types.ts';
+import type { Session, Group, GroupMessage, Delivery, DeliveryAttempt, Activity, GroupDetail, TopicProposal } from '../shared/types.ts';
 import { briefingVersion, buildGroupTask, buildJoinBriefing, replyPreview } from '../shared/group-prompt.ts';
 
 /** A member state the group view cannot resolve: the user must act in its chat. */
@@ -149,7 +149,10 @@ export class Store {
         if (this.session(id)?.groupId !== input.groupId || this.session(id)?.archived) throw new Error('接收成员无效或已归档');
       }
       const preview = replyPreview(input.text || (input.attachments?.length ? '[图片]' : ''));
-      const group = this.updateGroup(input.groupId, {
+      // The coordinator's placeholder while it thinks is neither news nor a preview;
+      // it counts once settled (updateCoordinatorMessage).
+      const thinking = input.agent === 'coordinator' && input.pending;
+      const group = this.updateGroup(input.groupId, thinking ? {} : {
         lastMessage: { text: preview, senderName: input.senderName, at: now() },
         // Only member replies are new to the user; their own messages are already read.
         // A turn mirrored from the member's own session was read there already.
@@ -207,6 +210,33 @@ export class Store {
       const prompt = this.insertMessage({ groupId: group.id, kind: 'note', senderId: null, senderName: '你', recipientIds: [], text: turn.userText, via: sessionId, nativeMessageId: turn.userId });
       this.insertMessage({ groupId: group.id, kind: 'reply', senderId: member.id, senderName: member.title, recipientIds: [], text: turn.replyText, sourceMessageId: prompt.id, via: sessionId, ...(turn.closed ? { closedAt: now() } : {}) });
       return true;
+    });
+  }
+  /** A message by its position in the topic, as the coordinator cites it ([#12]). */
+  messageAt(groupId: string, sequence: number): (GroupMessage & { sequence: number }) | undefined {
+    const row = this.db.prepare("SELECT rowid, data FROM messages WHERE rowid = ? AND json_extract(data, '$.groupId') = ?").get(sequence, groupId);
+    return row ? { ...JSON.parse(String(row.data)) as GroupMessage, sequence: Number(row.rowid) } : undefined;
+  }
+  /** The coordinator's own message in a topic: an answer (kind reply, so it
+   * counts as new to the user) or a proposal. Starts pending while it thinks. */
+  addCoordinatorMessage(groupId: string, input: { text: string; pending?: boolean; proposal?: TopicProposal; sourceMessageId?: string | null }): GroupMessage {
+    return this.transaction(() => {
+      if (this.group(groupId)?.kind !== 'topic') throw new Error('嘀哩只在话题中发言');
+      return this.insertMessage({ groupId, kind: 'reply', agent: 'coordinator', senderId: null, senderName: '嘀哩', recipientIds: [], text: input.text,
+        ...(input.pending ? { pending: true } : {}), ...(input.proposal ? { proposal: input.proposal } : {}), ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}) });
+    });
+  }
+  /** Settles or rewrites a coordinator message (its answer, or a proposal's state). */
+  updateCoordinatorMessage(id: string, patch: { text?: string; pending?: boolean; failed?: boolean; proposal?: TopicProposal; awaitSummary?: boolean }): GroupMessage | null {
+    return this.transaction(() => {
+      const message = this.get<GroupMessage>('messages', id);
+      if (!message || message.agent !== 'coordinator') return null;
+      const settled = message.pending && patch.pending === false;
+      const group = this.updateGroup(message.groupId, settled && patch.text ? { lastMessage: { text: replyPreview(patch.text), senderName: message.senderName, at: now() }, unread: (this.group(message.groupId)!.unread ?? 0) + 1 } : {});
+      const { pending: _pending, failed: _failed, ...rest } = message;
+      const pending = patch.pending ?? message.pending, failed = patch.failed ?? message.failed;
+      return this.put('messages', { ...rest, ...(patch.text !== undefined ? { text: patch.text } : {}), ...(pending ? { pending: true } : {}), ...(failed ? { failed: true } : {}),
+        ...(patch.proposal ? { proposal: patch.proposal } : {}), ...(patch.awaitSummary !== undefined ? { awaitSummary: patch.awaitSummary || undefined } : {}), revision: Date.parse(group.updatedAt) });
     });
   }
   /** Queues the one-time join briefing for a new member: full rules, the roster,

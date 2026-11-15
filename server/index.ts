@@ -54,6 +54,12 @@ import { relocateStoredWorkspaces } from './workspace-migration.ts';
 import { CodexBridge } from './codex.ts';
 import { ClaudeChatBridge, probeClaudeModels } from './claude-chat.ts';
 import { TopicMirror } from './topic-mirror.ts';
+import { COORDINATOR_MODEL, Coordinator } from './coordinator.ts';
+import { ImHub, type ImBinding } from './im/hub.ts';
+import { FeishuChannel, type FeishuCredentials } from './im/feishu.ts';
+import { WeixinChannel, type WeixinAccount } from './im/weixin.ts';
+import type { ImChannelState, ImStatus } from '../shared/im.ts';
+import { forkTitle } from '../shared/topic-names.ts';
 import { GroupReplies } from './group-replies.ts';
 import { createWorktree, mergeWorktree, removeWorktree, worktreeStatus } from './worktrees.ts';
 import { sameDirectory } from './paths.ts';
@@ -67,7 +73,7 @@ import { ChatSubmissions } from './chat-submissions.ts';
 import { registerAgentChat } from './chat-api.ts';
 import { createAgentChatAdapters } from './agents/chat.ts';
 import { MAX_TERMINAL_IMAGE_BYTES, TERMINAL_IMAGE_TYPES, type TerminalImageType } from '../shared/terminal-images.ts';
-import type { Backend, BackendInfo, GroupDirectoryResult, MemberWorktree, NativeSettings, Session, AppState, SessionStatus, ConversationTranscript, DiscoveredSession } from '../shared/types.ts';
+import type { Backend, BackendInfo, GroupDirectoryResult, MemberWorktree, NativeSettings, Session, AppState, SessionStatus, ConversationTranscript, DiscoveredSession, GroupMessage, ImChannelKind } from '../shared/types.ts';
 import { normalizeClaudePermission } from '../shared/permissions.ts';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -214,8 +220,43 @@ const groupReplies = new GroupReplies({
   store,
   read: item => conversations.readLatest(item),
   turnOpen: item => !!item.nativeSessionId && item.executionTransport === 'structured' && !!chatAdapters[item.backend]?.chatSnapshot(item.nativeSessionId)?.activeTurnId,
-  onReply: () => broadcast(),
+  onReply: () => { broadcast(); coordinator.repliesChanged(); },
 });
+// Dili's own topic coordinator (嘀哩). It reuses the API the user configured
+// for dsh/Pi and has topic tools only: no shell, no files.
+const coordinator = new Coordinator({
+  store,
+  api: async () => demo ? null : agentSetup.managedApi(),
+  ...(process.env.SESSIONDECK_COORDINATOR_MODEL?.trim() ? { model: process.env.SESSIONDECK_COORDINATOR_MODEL.trim() } : {}),
+  backends: () => backends,
+  defaultCwd: () => process.cwd(),
+  readTranscript: item => conversations.readLatest(item),
+  deliver: id => deliverNow(id, { autoStart: true }),
+  onChange: () => broadcast(),
+  onAnswer: (groupId, message, triggers) => imHub.coordinatorAnswered(groupId, message, triggers),
+});
+// IM chats bound to topics (WeChat ClawBot, Feishu). Bindings are sealed settings.
+const imBinding = (kind: ImChannelKind): ImBinding => sealedSetting<ImBinding>(`im-binding-${kind}`) ?? { owners: [], chats: {} };
+const imHub = new ImHub({
+  store, coordinator,
+  binding: imBinding,
+  saveBinding: (kind, binding) => auth.setSetting(`im-binding-${kind}`, secrets.seal(JSON.stringify(binding))),
+  decideProposal: (groupId, proposalId, approve) => decideProposal(groupId, proposalId, approve),
+  onChange: () => broadcast(),
+});
+const appVersion = (() => { try { return String(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version); } catch { return 'dev'; } })();
+// Channels: Feishu over its long connection, WeChat through ClawBot's iLink API.
+type FeishuSettings = FeishuCredentials & { enabled: boolean };
+const feishuSettings = () => sealedSetting<FeishuSettings>('im-feishu');
+const feishu = new FeishuChannel({ receive: message => imHub.receive(message), onStatus: () => broadcast() });
+const weixin = new WeixinChannel({
+  receive: message => imHub.receive(message),
+  save: account => auth.setSetting('im-weixin', account ? secrets.seal(JSON.stringify(account)) : null),
+  loggedIn: userId => { const binding = imBinding('weixin'); if (!binding.owners.includes(userId)) imHub.saveOwner('weixin', userId); },
+  onStatus: () => broadcast(),
+  botAgent: `Dili/${appVersion}`,
+});
+imHub.register(feishu); imHub.register(weixin);
 const topicMirror = new TopicMirror({
   store,
   read: item => conversations.readLatest(item),
@@ -355,7 +396,7 @@ function status(id: string, patch: Partial<Session>, activity?: string) {
     && !(patch.status === 'waiting_approval' && old.status === 'waiting_approval');
   const updated = store.updateSession(id, { ...(patch.status && patch.status !== 'error' ? { errorCode: null } : {}), ...patch, ...(attention ? { unread: old.unread + 1 } : {}) });
   if (activity) store.activity(id, 'status', activity);
-  if (patch.status) { groupReplies.statusChanged(updated); if (!demo) topicMirror.statusChanged(updated); }
+  if (patch.status) { groupReplies.statusChanged(updated); if (!demo) { topicMirror.statusChanged(updated); void imHub.memberChanged(updated); } }
   scheduleBroadcast();
   return updated;
 }
@@ -1080,7 +1121,10 @@ async function memberPlacement(targetGroup: string | null, value: unknown, membe
   if (demo) fail('演示模式不创建 Git 工作树');
   return createWorktree({ dataDir, workspace, group: group!.title, member, id: randomUUID() });
 }
-app.post('/api/sessions', async (req, res) => {
+app.post('/api/sessions', async (req, res) => { res.status(201).json(await createContact(req.body)); });
+/** Creates a contact (optionally a group or topic member) from a request body. */
+async function createContact(body: Record<string, unknown>): Promise<Session> {
+  const req = { body } as { body: Record<string, any> };
   const id = backend(req.body.backend);
   const nativeSettings = id === 'claude' ? claudeSettingsInput(req.body.nativeSettings) : undefined;
   const targetGroup = groupId(req.body.groupId);
@@ -1091,8 +1135,8 @@ app.post('/api/sessions', async (req, res) => {
   const item = store.addSession({ backend: id, title, cwd: placed.cwd, ...(placed.worktree ? { worktree: placed.worktree } : {}), groupId: targetGroup, executionMode: wantedMode, ...(nativeSettings ? { nativeSettings } : {}) });
   store.activity(item.id, 'create', `创建了 ${item.title}`); broadcast();
   if (item.groupId) await briefNewMember(item, req.body.briefing);
-  res.status(201).json(session(item.id));
-});
+  return session(item.id);
+}
 app.patch('/api/sessions/:id', async (req, res) => {
   const item = session(String(req.params.id));
   const patch: Partial<Session> = {};
@@ -1173,8 +1217,11 @@ app.post('/api/native-event/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/sessions/:id/fork', async (req, res) => {
-  const parent = session(String(req.params.id));
+app.post('/api/sessions/:id/fork', async (req, res) => { res.status(201).json(await forkContact(String(req.params.id), req.body)); });
+/** Forks a contact through its backend's native fork; the source stays untouched. */
+async function forkContact(parentId: string, body: Record<string, unknown>): Promise<Session> {
+  const req = { body } as { body: Record<string, any> };
+  const parent = session(parentId);
   if (!info(parent.backend).capabilities.fork) fail('当前后端没有可用的原生 Fork 能力');
   if (!parent.nativeSessionId || parent.forkPending) fail('原生会话 ID 尚未确定，请先启动来源会话并完成初始化');
   const title = text(req.body.title || `${parent.title} · 分支`, '名称');
@@ -1203,8 +1250,8 @@ app.post('/api/sessions/:id/fork', async (req, res) => {
   if (placed.worktree) child = store.updateSession(child.id, { worktree: placed.worktree });
   store.activity(child.id, 'fork', `从 ${parent.title} 分叉为 ${child.title}`); broadcast();
   if (child.groupId) await briefNewMember(child, req.body.briefing);
-  res.status(201).json(session(child.id));
-});
+  return session(child.id);
+}
 
 app.post('/api/sessions/:id/handoff', async (req, res) => {
   const parent = session(String(req.params.id));
@@ -1648,6 +1695,8 @@ app.post('/api/groups/:id/messages', async (req, res) => {
   const messageText = text(req.body.text ?? '', '消息', 30_000, !images.length);
   const message = store.addMessage({ groupId: id, kind, text: messageText, ...(images.length ? { attachments: images } : {}), recipientIds: ids, senderId, senderName: principal.kind === 'share' ? principal.name : senderId ? session(senderId).title : '你', sourceMessageId, ...(references.length ? { references } : {}) });
   broadcast();
+  // In a topic, a message that names nobody is for the coordinator.
+  if (principal.kind === 'owner' && kind === 'note' && !ids.length && !senderId && store.group(id)?.kind === 'topic' && messageText.trim()) coordinator.trigger(id, { type: 'message', messageId: message.id });
   // @-assignment sends immediately. Each recipient is independent: a failure
   // leaves that delivery pending or awaiting confirmation, never retried here.
   const errors: { sessionId: string; error: string }[] = [];
@@ -1657,6 +1706,71 @@ app.post('/api/groups/:id/messages', async (req, res) => {
   }
   res.status(201).json({ ...message, ...(errors.length ? { deliveryErrors: errors } : {}) });
 });
+/** Approves or rejects a coordinator proposal. Only the user can: from Dili, or
+ * from a bound IM chat through the deterministic "同意 P-xxxx" command. */
+async function decideProposal(groupId: string, proposalId: string, approve: boolean): Promise<GroupMessage> {
+  const message = store.db.prepare("SELECT data FROM messages WHERE json_extract(data, '$.groupId') = ? AND json_extract(data, '$.proposal.id') = ?").get(groupId, proposalId);
+  const found = message ? JSON.parse(String(message.data)) as GroupMessage : undefined;
+  if (!found?.proposal) fail('提议不存在', 404);
+  const proposal = found!.proposal!;
+  if (proposal.status !== 'pending') fail('这个提议已经处理过了', 409);
+  if (!approve) { const updated = store.updateCoordinatorMessage(found!.id, { proposal: { ...proposal, status: 'rejected' } })!; broadcast(); return updated; }
+  const topic = store.group(groupId)!;
+  try {
+    const member = proposal.fork
+      ? await forkContact(proposal.fork.contactId, { title: forkTitle(proposal.fork.title, topic.title), groupId, placement: 'directory', briefing: 'none' })
+      : await createContact({ backend: proposal.create!.backend, title: proposal.create!.title, cwd: proposal.create!.cwd, groupId, placement: 'directory', briefing: 'none' });
+    const updated = store.updateCoordinatorMessage(found!.id, { proposal: { ...proposal, status: 'approved', memberId: member.id, result: `${member.title} 已加入` } })!;
+    // The new participant catches up on the topic, like one added by hand.
+    const welcome = store.addMessage({ groupId, kind: 'task', agent: 'coordinator', senderId: null, senderName: '嘀哩', recipientIds: [member.id], text: '你刚加入这个话题。请阅读上面的话题说明和讨论，然后给出你的看法。' });
+    broadcast();
+    for (const delivery of store.deliveries().filter(item => item.messageId === welcome.id)) void deliverNow(delivery.id, { autoStart: true }).catch(() => {});
+    return updated;
+  } catch (cause) {
+    const updated = store.updateCoordinatorMessage(found!.id, { proposal: { ...proposal, status: 'failed', result: cause instanceof Error ? cause.message : '加入失败' } })!;
+    broadcast(); return updated;
+  }
+}
+app.post('/api/groups/:id/proposals/:proposal', async (req, res) => {
+  if (typeof req.body.approve !== 'boolean') fail('请选择同意或拒绝');
+  res.json(await decideProposal(String(req.params.id), String(req.params.proposal), req.body.approve));
+});
+function imChannelState(kind: ImChannelKind, state: { state: ImChannelState['state']; error?: string; since?: string }): ImChannelState {
+  const binding = imBinding(kind);
+  const pair = binding.pairCode && Date.parse(binding.pairCode.expiresAt) > Date.now() ? binding.pairCode : undefined;
+  return { state: state.state, ...(state.error ? { error: state.error } : {}), ...(state.since ? { since: state.since } : {}), owners: binding.owners.length,
+    chats: Object.values(binding.chats).map(chat => ({ topic: store.group(chat.topicId)?.title ?? '已删除的话题' })), ...(pair ? { pairCode: pair } : {}) };
+}
+app.get('/api/im', async (_req, res) => {
+  const api = demo ? null : await agentSetup.managedApi().catch(() => null);
+  const feishuState = feishu.status(), weixinState = weixin.status();
+  const status: ImStatus = {
+    feishu: { ...imChannelState('feishu', feishuState), ...(feishuSettings()?.appId ? { appId: feishuSettings()!.appId } : {}), ...(feishuState.botName ? { botName: feishuState.botName } : {}) },
+    weixin: { ...imChannelState('weixin', weixinState), ...(weixinState.qr ? { qr: weixinState.qr } : {}), ...(weixinState.login ? { login: weixinState.login } : {}), ...(weixinState.account ? { account: weixinState.account } : {}) },
+    coordinator: api ? { model: process.env.SESSIONDECK_COORDINATOR_MODEL?.trim() || COORDINATOR_MODEL, source: api.source } : null,
+  };
+  res.json(status);
+});
+app.post('/api/im/feishu', async (req, res) => {
+  if (demo) fail('演示模式不连接 IM', 409);
+  const current = feishuSettings();
+  const appId = text(req.body.appId ?? current?.appId ?? '', 'App ID', 100);
+  if (!/^cli_[a-zA-Z0-9]{8,40}$/.test(appId)) fail('App ID 应以 cli_ 开头');
+  const appSecret = typeof req.body.appSecret === 'string' && req.body.appSecret ? text(req.body.appSecret, 'App Secret', 200) : current?.appSecret ?? fail('请填写 App Secret');
+  if (typeof req.body.enabled !== 'boolean') fail('无效的布尔值');
+  const next: FeishuSettings = { appId, appSecret: appSecret!, enabled: req.body.enabled };
+  auth.setSetting('im-feishu', secrets.seal(JSON.stringify(next)));
+  await feishu.configure(next.enabled ? next : null);
+  res.json({ ok: true });
+});
+app.delete('/api/im/feishu', async (_req, res) => { await feishu.configure(null); auth.setSetting('im-feishu', null); imHub.unbind('feishu'); res.json({ ok: true }); });
+const imKind = (value: string): ImChannelKind => value === 'feishu' || value === 'weixin' ? value : fail('未知的 IM 渠道', 404);
+app.post('/api/im/:kind/pair', (req, res) => { const kind = imKind(String(req.params.kind)); imHub.newPairCode(kind); res.json(imBinding(kind).pairCode); });
+app.delete('/api/im/:kind/owners', (req, res) => { imHub.unbind(imKind(String(req.params.kind))); res.json({ ok: true }); });
+app.post('/api/im/weixin/login', async (_req, res) => { if (demo) fail('演示模式不连接 IM', 409); await weixin.startLogin(); res.json({ ok: true }); });
+app.post('/api/im/weixin/verify', (req, res) => { weixin.submitVerifyCode(text(req.body.code, '数字', 12)); res.json({ ok: true }); });
+app.delete('/api/im/weixin/login', (_req, res) => { weixin.cancelLogin(); res.json({ ok: true }); });
+app.delete('/api/im/weixin', (_req, res) => { weixin.logout(); imHub.unbind('weixin'); res.json({ ok: true }); });
 const deliveryLocks = new Set<string>();
 /** Sends one pending delivery. A stopped member that supports graphical chat is
  * started first (the user explicitly @-assigned it); terminal members are staged. */
@@ -2116,6 +2230,12 @@ server.listen(port, host, () => {
   // Tasks whose member already finished or failed before this start are collected now.
   if (!demo) for (const item of store.sessions()) groupReplies.statusChanged(item);
   relayNotices.start();
+  if (!demo) {
+    const savedFeishu = feishuSettings();
+    if (savedFeishu?.enabled) void feishu.configure(savedFeishu);
+    const savedWeixin = sealedSetting<WeixinAccount>('im-weixin');
+    if (savedWeixin) weixin.resume(savedWeixin);
+  }
   void applyRemote().then(() => {
     if (remoteServer.listening) console.log(`远程访问监听 → http://${envRemoteBind}:${remoteSettings().localPort}（需要登录）`);
   }).catch(error => console.error(`远程访问未启动：${error instanceof Error ? error.message : String(error)}`));
@@ -2145,7 +2265,7 @@ function shutdown(exitCode = 0) {
   // Exiting directly in server.close used to orphan a slow native process and
   // let a replacement instance race it against the same native history.
   void (async () => {
-    groupReplies.close(); topicMirror.close();
+    groupReplies.close(); topicMirror.close(); coordinator.close(); feishu.close(); weixin.stop();
     const results = await Promise.allSettled([voiceClosed, httpClosed, tunnel.close(), frpTunnel.close(), relayNotices.close(), terminals.close(), shells.close(), dshChat.close(), dsh.close(), codexBridge.close(), claudeBridge.close(), piBridge.closeAll()]);
     for (const result of results) if (result.status === 'rejected') { console.error('关闭原生资源失败：', result.reason instanceof Error ? result.reason.message : String(result.reason)); exitCode = 1; }
     try { publisher.close(); store.close(); }

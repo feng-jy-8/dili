@@ -21,11 +21,7 @@ export function canJoinTopic(session: Session, backends: BackendInfo[]): { ok: t
   return { ok: true };
 }
 
-/** "<contact> · <topic>", within the 120-character contact name limit. */
-export function forkTitle(source: string, topic: string): string {
-  const title = `${source} · ${topic}`;
-  return title.length > 120 ? `${title.slice(0, 119)}…` : title;
-}
+export { forkTitle } from '../shared/topic-names';
 
 /** Where a topic works: its own workspace, else the directory most of its
  * participants use. '' when nobody has joined yet. */
