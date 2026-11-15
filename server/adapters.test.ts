@@ -131,7 +131,7 @@ test('discovery reads heterogeneous native metadata and avoids ambiguous new-ses
     insert.run(randomUUID(), dir, 'archived', null, 1, 1, 1);
     await writeFile(join(claudeHome, 'projects', 'project', `${claudeId}.jsonl`), [JSON.stringify({type:'user',cwd:dir,timestamp:new Date(timestamp).toISOString(),message:{content:'First request'}}), JSON.stringify({type:'custom-title',customTitle:'Custom Claude title'})].join('\n'));
     await writeFile(join(dshHome, 'storages', 'session_projcache.json'), JSON.stringify({tables:{sessions:{[dshId]:{identity:{cwd:dir,createdAt:timestamp},rows:{title:{val:'DeepSeek title'},sessionListMetadata:{val:{lastPromptAt:timestamp}}}}}}}));
-    const paths = {codexHome,claudeHome,dshHome};
+    const paths = {codexHome,claudeHome,dshHome,piHome:join(dir,"pi")};
     const rows = await discoverSessions(undefined,paths);
     assert.equal(rows.length,3);
     assert.equal(rows.find(row=>row.backend==='codex')?.title,'Renamed');
