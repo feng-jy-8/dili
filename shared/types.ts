@@ -136,6 +136,8 @@ export interface GroupDirectoryResponse {
 
 export interface Group {
   id: string;
+  /** 'topic': one discussion thread in the Dili topic board, shown apart from group chats. */
+  kind?: 'topic';
   title: string;
   goal: string;
   /** Custom group prompt; empty means DEFAULT_GROUP_PROMPT. */
@@ -184,6 +186,9 @@ export interface GroupMessage {
   closedAt?: string;
   /** reply only: answer to the one-time join briefing (a greeting), not a task. */
   briefing?: boolean;
+  /** Topic only: a turn the user typed directly in this member's own session,
+   * mirrored into the topic (the member's answer follows as its reply). */
+  via?: string;
   createdAt: string;
   /** Persistent change cursor and chronological page position. */
   revision?: number;

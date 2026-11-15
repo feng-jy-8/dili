@@ -53,6 +53,7 @@ import { migrateDataDir, resolveDataDir } from './data-dir.ts';
 import { relocateStoredWorkspaces } from './workspace-migration.ts';
 import { CodexBridge } from './codex.ts';
 import { ClaudeChatBridge, probeClaudeModels } from './claude-chat.ts';
+import { TopicMirror } from './topic-mirror.ts';
 import { GroupReplies } from './group-replies.ts';
 import { createWorktree, mergeWorktree, removeWorktree, worktreeStatus } from './worktrees.ts';
 import { sameDirectory } from './paths.ts';
@@ -215,6 +216,12 @@ const groupReplies = new GroupReplies({
   turnOpen: item => !!item.nativeSessionId && item.executionTransport === 'structured' && !!chatAdapters[item.backend]?.chatSnapshot(item.nativeSessionId)?.activeTurnId,
   onReply: () => broadcast(),
 });
+const topicMirror = new TopicMirror({
+  store,
+  read: item => conversations.readLatest(item),
+  turnOpen: item => !!item.nativeSessionId && item.executionTransport === 'structured' && !!chatAdapters[item.backend]?.chatSnapshot(item.nativeSessionId)?.activeTurnId,
+  onChange: () => broadcast(),
+});
 const app = express();
 const server = createServer(app);
 const remoteServer = createServer(app);
@@ -348,7 +355,7 @@ function status(id: string, patch: Partial<Session>, activity?: string) {
     && !(patch.status === 'waiting_approval' && old.status === 'waiting_approval');
   const updated = store.updateSession(id, { ...(patch.status && patch.status !== 'error' ? { errorCode: null } : {}), ...patch, ...(attention ? { unread: old.unread + 1 } : {}) });
   if (activity) store.activity(id, 'status', activity);
-  if (patch.status) groupReplies.statusChanged(updated);
+  if (patch.status) { groupReplies.statusChanged(updated); if (!demo) topicMirror.statusChanged(updated); }
   scheduleBroadcast();
   return updated;
 }
@@ -1536,16 +1543,18 @@ app.post('/api/sessions/:id/worktree/remove', async (req, res) => {
   store.activity(item.id, 'worktree', `已清理工作树，保留分支 ${worktree.branch}`); broadcast(); res.json(updated);
 });
 app.post('/api/groups', (req, res) => {
-  const created = store.addGroup(text(req.body.title, '群组名称'), text(req.body.goal ?? '', '共同目标', 4000, false));
+  if (req.body.kind !== undefined && req.body.kind !== 'topic') fail('群组类型无效');
+  const topic = req.body.kind === 'topic';
+  const created = store.addGroup(text(req.body.title, topic ? '话题标题' : '群组名称'), text(req.body.goal ?? '', topic ? '话题内容' : '共同目标', topic ? 30_000 : 4000, false), topic ? 'topic' : undefined);
   const prompt = text(req.body.prompt ?? '', '群 prompt', 8000, false);
   const workspace = req.body.workspace ? directory(req.body.workspace) : undefined;
   const group = prompt || workspace ? store.updateGroup(created.id, { ...(prompt ? { prompt } : {}), ...(workspace ? { workspace } : {}) }) : created;
-  store.activity(null, 'group', `创建了群组 ${group.title}`); broadcast(); res.status(201).json(group);
+  store.activity(null, 'group', topic ? `发布了话题 ${group.title}` : `创建了群组 ${group.title}`); broadcast(); res.status(201).json(group);
 });
 app.patch('/api/groups/:id', (req, res) => {
   const patch: { title?: string; goal?: string; prompt?: string; workspace?: string; pinned?: boolean; archived?: boolean } = {};
   if ('title' in req.body) patch.title = text(req.body.title, '群组名称');
-  if ('goal' in req.body) patch.goal = text(req.body.goal, '共同目标', 4000, false);
+  if ('goal' in req.body) patch.goal = text(req.body.goal, '共同目标', store.group(String(req.params.id))?.kind === 'topic' ? 30_000 : 4000, false);
   if ('prompt' in req.body) patch.prompt = text(req.body.prompt ?? '', '群 prompt', 8000, false);
   if ('workspace' in req.body) patch.workspace = req.body.workspace ? directory(req.body.workspace) : '';
   if ('pinned' in req.body) { if (typeof req.body.pinned !== 'boolean') fail('无效的布尔值'); patch.pinned = req.body.pinned; }
@@ -2136,7 +2145,7 @@ function shutdown(exitCode = 0) {
   // Exiting directly in server.close used to orphan a slow native process and
   // let a replacement instance race it against the same native history.
   void (async () => {
-    groupReplies.close();
+    groupReplies.close(); topicMirror.close();
     const results = await Promise.allSettled([voiceClosed, httpClosed, tunnel.close(), frpTunnel.close(), relayNotices.close(), terminals.close(), shells.close(), dshChat.close(), dsh.close(), codexBridge.close(), claudeBridge.close(), piBridge.closeAll()]);
     for (const result of results) if (result.status === 'rejected') { console.error('关闭原生资源失败：', result.reason instanceof Error ? result.reason.message : String(result.reason)); exitCode = 1; }
     try { publisher.close(); store.close(); }

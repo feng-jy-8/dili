@@ -1,0 +1,77 @@
+/* Dili topic board: list pane cards and the publish / add-participant dialog. */
+.topic-board { display: flex; flex-direction: column; min-height: 100%; }
+.topic-board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 12px 10px; border-bottom: 1px solid var(--line); }
+.topic-board-head h2 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 15px; font-weight: 600; }
+.topic-board-head h2 svg { color: var(--accent); }
+.topic-board-head p { margin: 4px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.topic-board-head .button { flex-shrink: 0; }
+
+.topic-list { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 6px; list-style: none; }
+.topic-card { position: relative; border-radius: 8px; transition: background .12s; }
+.topic-card:hover { background: var(--hover); }
+.topic-card.active { background: var(--selected-bg); }
+.topic-card.active::before { content: ''; position: absolute; left: 0; top: 16px; height: 28px; width: 3px; border-radius: 2px; background: var(--accent); }
+.topic-card-main { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 10px 10px 10px 12px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.topic-mark { display: grid; place-items: center; flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.topic-card.pinned .topic-mark { background: var(--accent); color: var(--on-accent); }
+.topic-card-text { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.topic-card-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.topic-card-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; flex: 1; }
+.topic-card-title time { flex-shrink: 0; font-size: 11px; color: var(--faint); }
+.topic-card-preview { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.topic-card-meta { display: flex; align-items: center; gap: 8px; min-height: 20px; margin-top: 2px; font-size: 11.5px; color: var(--faint); }
+.topic-avatars { display: inline-flex; align-items: center; }
+.topic-avatars > * { margin-right: -5px; border: 2px solid var(--contacts-bg, var(--bg)); border-radius: 50%; }
+.topic-avatars em { margin-left: 9px; font-style: normal; }
+.topic-working { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; color: var(--accent); }
+.topic-working i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: topic-pulse 1.4s ease-in-out infinite; }
+@keyframes topic-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .topic-working i { animation: none; } }
+.topic-unread { position: absolute; top: 34px; left: 38px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px; border: 2px solid var(--contacts-bg, var(--bg)); background: var(--red); color: #fff; font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; box-sizing: content-box; }
+.topic-card-actions { position: absolute; top: 6px; right: 6px; display: none; gap: 2px; padding: 2px; border-radius: 7px; background: var(--bg); box-shadow: 0 1px 4px #0001; }
+.topic-card:hover .topic-card-actions, .topic-card:focus-within .topic-card-actions { display: flex; }
+.topic-card-actions .icon-button { width: 26px; height: 26px; }
+@media (pointer: coarse) { .topic-card-actions { display: none !important; } }
+
+.topic-participants { padding: 0 10px 8px 56px; }
+.topic-participants > .text-button { font-size: 12px; }
+.topic-participants ul { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; }
+.topic-participants li button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 6px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.topic-participants li button:hover { background: var(--hover); }
+.topic-participants li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+.topic-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 48px 20px; text-align: center; color: var(--muted); }
+.topic-empty svg { color: var(--faint); }
+.topic-empty h3 { margin: 0; font-size: 14px; color: var(--text); }
+.topic-empty p { margin: 0; max-width: 260px; font-size: 12.5px; line-height: 1.6; }
+.topic-archive-toggle { align-self: center; margin: 8px 0 16px; font-size: 12px; }
+
+/* Topic thread (GroupChat variant). */
+.topic-title-mark { margin-right: 4px; color: var(--accent); font-weight: 700; }
+.group-message.topic-opening .bubble { border-left: 3px solid var(--accent); }
+.message-via { margin-left: 6px; font-size: 11.5px; }
+.mention-menu .mention-fork { margin-left: auto; font-size: 11px; opacity: .75; }
+
+/* Publish / add participants. */
+.topic-dialog { display: grid; gap: 14px; }
+.topic-dialog textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; line-height: 1.55; }
+.topic-participant-picker { display: grid; gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.topic-participant-picker legend { padding: 0 4px; font-size: 13px; font-weight: 600; }
+.topic-participant-picker .search-field { width: 100%; }
+.topic-candidates { display: grid; gap: 2px; max-height: 240px; margin: 0; padding: 0; overflow: auto; list-style: none; overscroll-behavior: contain; }
+.topic-candidates label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
+.topic-candidates label:hover { background: var(--hover); }
+.topic-candidates label.disabled { opacity: .55; cursor: not-allowed; }
+.topic-candidate-name { display: grid; min-width: 0; flex: 1; }
+.topic-candidate-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.topic-candidate-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--faint); }
+.topic-fork-mark { flex-shrink: 0; color: var(--faint); }
+.topic-candidates-empty { padding: 12px; font-size: 12.5px; color: var(--faint); text-align: center; }
+.topic-new-participant { display: grid; grid-template-columns: 120px 1fr auto; gap: 8px; align-items: center; padding: 10px; border-radius: 8px; background: var(--subtle); }
+.topic-new-participant > :last-child { grid-column: 1 / -1; }
+.topic-new-participant select, .topic-new-participant input { min-width: 0; }
+@media (max-width: 640px) {
+  .topic-board-head p { display: none; }
+  .topic-new-participant { grid-template-columns: 1fr auto; }
+  .topic-new-participant select { grid-column: 1 / -1; }
+}
