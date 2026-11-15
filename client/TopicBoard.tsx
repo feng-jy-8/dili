@@ -2,59 +2,69 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { Archive, ArchiveRestore, ChevronDown, ChevronRight, GitFork, Hash, LoaderCircle, Pin, PinOff, Plus, Search, Trash2 } from 'lucide-react';
 import type { AppState, Backend, Group, GroupMessage, Session } from '../shared/types';
 import { api } from './api';
-import { BACKEND, BackendAvatar, StatusBadge } from './App';
+import { BACKEND, BackendAvatar } from './App';
 import DirectoryField from './DirectoryField';
-import { relativeTime } from './format';
 import ModalShell from './Modal';
 import { t } from '../shared/i18n';
-import { canJoinTopic, forkTitle, topicPreview, sortTopics } from './topics';
+import { canJoinTopic, forkTitle, topicCategories, topicPreview } from './topics';
 import './topics.css';
 
-/** The topic board's list pane: every topic as a card, newest activity first.
- * The active topic unfolds its participants, which are also ordinary contacts. */
+const FOLDED_KEY = 'dili.topics.folded';
+const readFolded = () => { try { const value = JSON.parse(localStorage.getItem(FOLDED_KEY) ?? '[]'); return new Set<string>(Array.isArray(value) ? value.filter(item => typeof item === 'string') : []); } catch { return new Set<string>(); } };
+
+/** The topic board's channel sidebar: `# name` rows grouped by the working
+ * directory of their participants, like a server's categories. The active
+ * channel lists its participants, which are also ordinary contacts. */
 export function TopicList({ topics, sessions, activeId, showArchived, setShowArchived, query, open, openSession, publish, pin, archive }: {
   topics: Group[]; sessions: Session[]; activeId: string | null; showArchived: boolean; setShowArchived: (value: boolean) => void; query: string;
   open: (id: string) => void; openSession: (session: Session) => void; publish: () => void; pin: (topic: Group) => void; archive: (topic: Group) => void;
 }) {
-  const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  const [folded, setFolded] = useState(readFolded);
+  const toggle = (key: string) => setFolded(current => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    try { localStorage.setItem(FOLDED_KEY, JSON.stringify([...next])); } catch { /* folding is a convenience */ }
+    return next;
+  });
   const needle = query.trim().toLowerCase();
-  const shown = useMemo(() => sortTopics(topics.filter(topic => !!topic.archived === showArchived
-    && `${topic.title} ${topic.goal} ${topic.lastMessage?.text ?? ''}`.toLowerCase().includes(needle))), [topics, showArchived, needle]);
+  const shown = useMemo(() => topics.filter(topic => !!topic.archived === showArchived
+    && `${topic.title} ${topic.goal} ${topic.lastMessage?.text ?? ''}`.toLowerCase().includes(needle)), [topics, showArchived, needle]);
+  const categories = useMemo(() => topicCategories(shown, sessions), [shown, sessions]);
   const archivedCount = topics.filter(topic => topic.archived).length;
   return <div className="topic-board">
     <div className="topic-board-head">
-      <div><h2><Hash size={16} />{t('topic.board')}</h2><p>{t('topic.boardNote')}</p></div>
-      <button className="button primary small-button" onClick={publish}><Plus size={14} />{t('topic.publish')}</button>
+      <h2><Hash size={16} />{t('topic.board')}</h2>
+      <button className="icon-button" aria-label={t('topic.publish')} title={t('topic.publish')} onClick={publish}><Plus size={16} /></button>
     </div>
-    {shown.length ? <ul className="topic-list" aria-label={t(showArchived ? 'topic.archivedList' : 'topic.list')}>{shown.map(topic => {
-      const members = sessions.filter(session => session.groupId === topic.id && !session.archived);
-      const active = topic.id === activeId;
-      const expanded = active && !folded.has(topic.id);
-      const working = members.some(member => member.status === 'running');
-      return <li key={topic.id} className={`topic-card${active ? ' active' : ''}${topic.pinned ? ' pinned' : ''}`}>
-        <button className="topic-card-main" aria-current={active ? 'true' : undefined} onClick={() => open(topic.id)}>
-          <span className="topic-mark" aria-hidden="true"><Hash size={16} /></span>
-          <span className="topic-card-text">
-            <span className="topic-card-title"><strong title={topic.title}>{topic.title}</strong><time>{relativeTime(topic.lastMessage?.at ?? topic.createdAt)}</time></span>
-            <span className="topic-card-preview">{topicPreview(topic)}</span>
-            <span className="topic-card-meta">
-              <span className="topic-avatars" aria-label={t('topic.participantCount', { count: members.length })}>{members.slice(0, 4).map(member => <BackendAvatar key={member.id} backend={member.backend} small />)}{members.length > 4 && <em>+{members.length - 4}</em>}</span>
-              {working && <span className="topic-working"><i />{t('topic.working')}</span>}
-              {!members.length && <span className="topic-empty-note">{t('topic.noParticipants')}</span>}
+    {categories.length ? <nav className="topic-channels" aria-label={t(showArchived ? 'topic.archivedList' : 'topic.list')}>{categories.map(category => {
+      // A search or the active channel always shows through a folded category.
+      const closed = folded.has(category.key) && !needle;
+      const rows = closed ? category.topics.filter(topic => topic.id === activeId || !!topic.unread) : category.topics;
+      return <section key={category.key} className="topic-category">
+        <button className="topic-category-head" aria-expanded={!closed} title={category.path || undefined} aria-label={t(closed ? 'topic.expand' : 'topic.collapse', { name: category.label })} onClick={() => toggle(category.key)}>{closed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}<span>{category.label}</span></button>
+        <ul>{rows.map(topic => {
+          const members = sessions.filter(session => session.groupId === topic.id && !session.archived);
+          const active = topic.id === activeId;
+          const working = members.some(member => member.status === 'running');
+          const waiting = members.some(member => !member.archived && member.unread > 0 && (member.status === 'waiting_approval' || member.status === 'error'));
+          return <li key={topic.id} className={`topic-channel${active ? ' active' : ''}${topic.unread ? ' unread' : ''}`}>
+            <button className="topic-channel-main" aria-current={active ? 'true' : undefined} title={topicPreview(topic)} onClick={() => open(topic.id)}>
+              <Hash size={15} className="topic-channel-hash" aria-hidden="true" />
+              <span className="topic-channel-name">{topic.title}</span>
+              {topic.pinned && <Pin size={11} className="topic-channel-pin" aria-label={t('topic.unpin')} />}
+              {working && <i className="topic-channel-working" title={t('topic.working')} aria-label={t('topic.working')} />}
+              {waiting && <i className="topic-channel-waiting" aria-hidden="true" />}
+              {!!topic.unread && <b className="topic-channel-unread" aria-label={t('topic.newReplies', { count: topic.unread })}>{topic.unread > 99 ? '99+' : topic.unread}</b>}
+            </button>
+            <span className="topic-channel-actions">
+              <button className="icon-button" aria-label={t(topic.pinned ? 'topic.unpin' : 'topic.pin')} title={t(topic.pinned ? 'topic.unpin' : 'topic.pin')} onClick={() => pin(topic)}>{topic.pinned ? <PinOff size={12} /> : <Pin size={12} />}</button>
+              <button className="icon-button" aria-label={t(topic.archived ? 'topic.restore' : 'topic.archive')} title={t(topic.archived ? 'topic.restore' : 'topic.archive')} onClick={() => archive(topic)}>{topic.archived ? <ArchiveRestore size={12} /> : <Archive size={12} />}</button>
             </span>
-          </span>
-          {!!topic.unread && <b className="topic-unread" aria-label={t('topic.newReplies', { count: topic.unread })}>{topic.unread > 99 ? '99+' : topic.unread}</b>}
-        </button>
-        <span className="topic-card-actions">
-          <button className="icon-button" aria-label={t(topic.pinned ? 'topic.unpin' : 'topic.pin')} title={t(topic.pinned ? 'topic.unpin' : 'topic.pin')} onClick={() => pin(topic)}>{topic.pinned ? <PinOff size={13} /> : <Pin size={13} />}</button>
-          <button className="icon-button" aria-label={t(topic.archived ? 'topic.restore' : 'topic.archive')} title={t(topic.archived ? 'topic.restore' : 'topic.archive')} onClick={() => archive(topic)}>{topic.archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}</button>
-        </span>
-        {active && members.length > 0 && <div className="topic-participants">
-          <button className="text-button" aria-expanded={expanded} onClick={() => setFolded(current => { const next = new Set(current); if (next.has(topic.id)) next.delete(topic.id); else next.add(topic.id); return next; })}>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}{t('topic.participants', { count: members.length })}</button>
-          {expanded && <ul>{members.map(member => <li key={member.id}><button onClick={() => openSession(member)} title={t('topic.openSession', { name: member.title })}><BackendAvatar backend={member.backend} small /><span>{member.title}</span><StatusBadge session={member} /></button></li>)}</ul>}
-        </div>}
-      </li>;
-    })}</ul> : <div className="topic-empty">{needle ? <><Search size={24} /><p>{t('topic.noMatch')}</p></> : showArchived ? <p>{t('topic.noArchived')}</p> : <><Hash size={28} /><h3>{t('topic.firstTitle')}</h3><p>{t('topic.firstNote')}</p><button className="button primary small-button" onClick={publish}><Plus size={14} />{t('topic.publish')}</button></>}</div>}
+            {active && members.length > 0 && <ul className="topic-channel-members" aria-label={t('topic.members', { count: members.length })}>{members.map(member => <li key={member.id}><button onClick={() => openSession(member)} title={t('topic.openSession', { name: member.title })}><BackendAvatar backend={member.backend} small /><span>{member.title}</span>{member.status === 'running' && <i className="topic-channel-working" aria-hidden="true" />}</button></li>)}</ul>}
+          </li>;
+        })}</ul>
+      </section>;
+    })}</nav> : <div className="topic-empty">{needle ? <><Search size={24} /><p>{t('topic.noMatch')}</p></> : showArchived ? <p>{t('topic.noArchived')}</p> : <><Hash size={28} /><h3>{t('topic.firstTitle')}</h3><p>{t('topic.firstNote')}</p><button className="button primary small-button" onClick={publish}><Plus size={14} />{t('topic.publish')}</button></>}</div>}
     {(archivedCount > 0 || showArchived) && <button className="text-button topic-archive-toggle" onClick={() => setShowArchived(!showArchived)}><Archive size={13} />{showArchived ? t('topic.backToList') : t('topic.archivedCount', { count: archivedCount })}</button>}
   </div>;
 }
