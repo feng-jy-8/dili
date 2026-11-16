@@ -17,6 +17,7 @@ import { parseServicePreviewUrl } from '../shared/service-preview.ts';
 import { SseReplayBuffer } from './sse-replay.ts';
 import { shellQuote } from './shell-quote.ts';
 import { IDLE_SLEEP_ENV, idleSleepMinutes, shouldSleep } from './idle-sleep.ts';
+import { openInEditor } from './editor.ts';
 import { FunAsr, VoiceConnections } from './voice.ts';
 import { VOICE_MAX_FRAME } from '../shared/voice.ts';
 import { ScratchpadStore } from './scratchpad.ts';
@@ -981,6 +982,17 @@ app.get(['/api/groups/:id/workspace/git/diff', '/api/sessions/:id/workspace/git/
     ? (principalOf(res).kind === 'owner' ? directory(String(req.params.root)) : fail('仅所有者可以打开目录', 403))
     : req.path.startsWith('/api/groups/') ? (store.group(String(req.params.id))?.workspace || fail('群工作区尚未设置', 409)) : session(String(req.params.id)).cwd;
   res.json(await gitDiff(cwd, req.query.path));
+});
+app.post(['/api/groups/:id/workspace/open-editor', '/api/sessions/:id/workspace/open-editor', '/api/workspaces/:root/workspace/open-editor'], async (req, res) => {
+  const cwd = req.params.root !== undefined
+    ? (principalOf(res).kind === 'owner' ? directory(String(req.params.root)) : fail('仅所有者可以打开目录', 403))
+    : req.path.startsWith('/api/groups/') ? (store.group(String(req.params.id))?.workspace || fail('群工作区尚未设置', 409)) : session(String(req.params.id)).cwd;
+  if (demo) fail('演示模式没有可打开的本机工作区', 409);
+  // The path is one argv entry: no shell, no quoting, no interpolation.
+  const launch = await openInEditor(cwd).catch((error: unknown) => {
+    fail(error instanceof Error ? error.message : '无法启动编辑器', (error as { status?: number })?.status ?? 501);
+  });
+  res.json(launch);
 });
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');

@@ -243,6 +243,11 @@ export const zh = {
   'setup.managedModel': '例如 deepseek-v4-flash',
   'setup.managedApiNote': '保存为 Dili 托管的 OpenAI 兼容提供商（dili）。API 地址和模型需同时填写；留空二者会移除托管配置。写入原生配置文件并自动备份。API Key 留空会保留已有凭据，保存时不调用模型。',
   'setup.credentialPath': '凭据：{path}',
+  'editor.open': '在 VS Code 中打开当前工作区',
+  'editor.opened': '已在 {command} 中打开 {path}',
+  'editor.requested': '已请求 {command} 打开当前工作区，但它还没有返回结果；请确认窗口是否已打开。',
+  'editor.failed': '无法启动编辑器',
+  'editor.copied': '已复制 vscode:// 链接，安装 VS Code 后粘贴到浏览器地址栏即可打开。',
 } as const;
 
 export type MessageKey = keyof typeof zh;

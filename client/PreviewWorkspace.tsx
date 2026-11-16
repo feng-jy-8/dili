@@ -42,7 +42,7 @@ function WorkspaceTabContent({ tab, sessions, controller, close }: {
     <button className="icon-button" aria-label="打开任意目录" title="打开目录" onClick={() => setChoosing(true)}><FolderOpen size={16} /></button>
     {choosing && <DirectoryDialog initialPath={tab.cwd} parent={null} close={() => setChoosing(false)} choose={path => { controller.openDirectory(session, path); setChoosing(false); }} />}
   </div>;
-  return <WorkspaceExplorer session={session} root={tab.custom ? tab.cwd : undefined} embedded close={close} picker={picker}
+  return <WorkspaceExplorer session={session} root={tab.custom ? tab.cwd : undefined} embedded close={close} picker={picker} canOpenEditor
     selection={tab.selection} treeCollapsed={tab.treeCollapsed ?? false}
     onTreeCollapsed={value => controller.collapseTree(tab.id, value)}
     onSelectFile={selection => controller.selectFile(tab.id, selection)} />;

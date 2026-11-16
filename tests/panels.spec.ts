@@ -79,6 +79,9 @@ test('workspace keeps its tree beside files and diffs with a collapsible resizab
     const panel = page.getByRole('complementary', { name: '统一预览面板' });
     const explorer = page.getByRole('complementary', { name: '资源管理器' });
     await expect(panel).toBeVisible();
+    // The button never claims a launch by itself; the test only proves it is wired
+    // up for the owner, so no editor is started on the machine running the suite.
+    await expect(explorer.getByRole('button', { name: '在 VS Code 中打开当前工作区', exact: true })).toBeVisible();
     await explorer.getByRole('button', { name: /README\.md/ }).click();
     await expect(panel.getByRole('heading', { name: 'Sidebar preview' })).toBeVisible();
     await expect(panel.getByRole('tab', { name: `文件 · ${session.title}`, exact: true })).toHaveAttribute('aria-selected', 'true');

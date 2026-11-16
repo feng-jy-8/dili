@@ -1,5 +1,15 @@
 # Dili 本地迭代记录
 
+## 2026-11-16：资源管理器用 VS Code 打开当前工作区
+
+- 背景：群任务 T-22a154 要求加一个按钮，在 Dili 的工作区面板上直接用 VS Code 打开当前工作目录。目标是「在你自己已经工作的地方打开同一个文件夹」，因此调用编辑器自己的 CLI，而不是在网页里新起一个编辑器或伪造文件编辑能力。
+- 服务端：`server/editor.ts` 负责解析命令（`SESSIONDECK_EDITOR_COMMAND` → `code` → `code-insiders`，按 `PATH` 逐项找可执行文件，不靠 spawn 试探）、以单个参数传入目录（不拼 shell、不写临时脚本）、detached + unref 启动（关掉 Dili 不关窗口，窗口不占用 Dili 的 stdio）。新增 `POST /api/{sessions/:id,groups/:id,workspaces/:root}/workspace/open-editor`，与既有 `/workspace/*` 同前缀；三个成员同一 handler，在 `server/access.ts` 登记为 `owner`。
+- 诚实边界：`code` 的退出码非 0、找不到命令、目录不存在分别报 501／501／404，并带上真实原因与最近几行 stderr；CLI 在超时内没返回只报「已请求打开」，不断言「已打开」；演示实例直接 409，避免测试或演示在宿主上真的弹出编辑器；启动失败时前端把 `vscode://file<path>` 复制到剪贴板作为原生回退，而不是留一个死胡同。
+- 客户端：`client/WorkspaceExplorer.tsx` 的两处标题栏（内嵌合并工具栏与独立面板）各加一个按钮，只在 `canOpenEditor`（默认仅 `PreviewWorkspace` 传入）时渲染，分享视图不出现。新文案进 `shared/i18n.ts` 的 `editor.*`；面板里用 `workspace-note`／`workspace-error` 显示结果，成功与失败用 `role=status` / `role=alert` 区分。
+- 三个问题：1）跨后端中立——它只认目录，不认识任何后端；公共契约没有新增字段。2）四个后端都诚实成立——与 Claude／Codex／dsh／Pi 无关，是对工作目录的操作，WSL 下由 `code` 自己转给 Windows 窗口；没有 `code` 的机器给出可执行的下一步（安装命令或配置变量）。3）不是界面假象——成功只来自 CLI 的退出码，未返回结果就说未返回，失败附带 `vscode://` 回退。
+- 验证：`npm run check` 通过；新增 `server/editor.test.ts` 7 项（PATH 解析忽略不可执行文件与目录、配置覆盖、含空格/引号/`$(...)`/`;` 的目录名作为单个参数传递且未被解释执行、非零退出码报错、超时不谎称已打开、无编辑器、目录不存在时不启动任何进程）；`server/access.test.ts` 新增该路由 owner-only（可写分享也拒绝）；`server/api.test.ts` 演示模式 409；`npx playwright test tests/panels.spec.ts` 6 项通过（新增按钮仅在所有者视图可见，浏览器测试只断言可见、不点击，避免在跑测机器上真的拉起编辑器）。完整 `npm test` 541 项 / 536 通过 / 1 失败 / 4 跳过，失败项是 `server/codex-chat-api.test.ts` 的「Workspace observer did not reconnect」，单独重跑该文件 25 项全通过，判定为全量并发下的既有偶发，与本次改动无关。
+- 未验证：没有在真实 Windows VS Code / Remote-WSL 窗口上点过一次（本机只验证了假 `code` 脚本的 argv 与退出码语义）；`code-insiders` 与 Cursor 只按同一 CLI 语义推断。
+
 ## 2026-11-15：话题协调员嘀哩，微信 ClawBot 与飞书接入
 
 - 背景：用户要在话题群里有一个固定的协调员，不 @ 时作为普通 Agent 聊天并管理上下文，并作为 IM 绑定后的默认入口；模型默认 deepseek-v4-flash，复用设置页里 dsh/Pi 的 Key。讨论后决定自己维护一个只做路由的薄循环，而不是借用现有编码 Agent（安全边界、常驻性和上下文都需要自己掌握）。
