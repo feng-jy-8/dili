@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Code2, FileDiff, FileText, Folder, PanelLeftClose, PanelLeftOpen, LoaderCircle, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileDiff, FileText, Folder, PanelLeftClose, PanelLeftOpen, LoaderCircle, RefreshCw, X } from 'lucide-react';
 import { workspaceBase, EntryIcon, formatSize, gitStatusClass, gitStatusLabel, htmlPath, mediaKind, type Entry, type Tree, type FileResult, type DiffResult, type GitStatus, type Preview } from './workspace-files';
 import WorkspaceFilePreview, { WorkspacePreviewContent } from './WorkspacePreview';
+import VscodeLogo from './VscodeLogo';
 import type { FileSelection } from './usePreviewWorkspace';
 import type { Session } from '../shared/types';
 import { t } from '../shared/i18n';
@@ -247,14 +248,14 @@ function WorkspaceExplorerPanel({ groupId, session, close, picker, root, embedde
     {embedded && <div className="workspace-combined-toolbar">
       <button className="icon-button" aria-label={treeCollapsed ? '展开目录' : '收起目录'} title={treeCollapsed ? '展开目录' : '收起目录'} aria-expanded={!treeCollapsed} onClick={() => onTreeCollapsed?.(!treeCollapsed)}>{treeCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button>
       {picker || <span title={root || session.cwd}><bdi>{root || session.cwd}</bdi></span>}
-      {canOpenEditor && <button className="icon-button" aria-label={t('editor.open')} title={t('editor.open')} onClick={openEditor}><Code2 size={15} /></button>}
+      {canOpenEditor && <button className="icon-button" aria-label={t('editor.open')} title={t('editor.open')} onClick={openEditor}><VscodeLogo /></button>}
       <button className="icon-button" aria-label="刷新资源管理器" title="刷新目录" onClick={refresh}><RefreshCw size={14} /></button>
       {selection && <><button className="icon-button" aria-label="重新读取文件" title="重新读取文件" onClick={() => setPreviewRevision(value => value + 1)}><RefreshCw size={14} /></button><button className="icon-button" aria-label="关闭文件预览" title="关闭文件预览" onClick={clearPreview}><X size={14} /></button></>}
     </div>}
     {editorNote && <p className={editorNote.kind === 'error' ? 'workspace-error' : 'workspace-note'} role={editorNote.kind === 'error' ? 'alert' : 'status'}>{editorNote.text}</p>}
     <div className="workspace-explorer-body">
     <div className="workspace-list-pane" hidden={embedded && treeCollapsed}>
-      {!embedded && <header className="workspace-explorer-header">{picker || <div><strong>资源管理器</strong><small title={root || session.cwd}><bdi>{root || session.cwd}</bdi></small></div>}{canOpenEditor && <button className="icon-button" aria-label={t('editor.open')} title={t('editor.open')} onClick={openEditor}><Code2 size={15} /></button>}<button className="icon-button" aria-label="刷新资源管理器" title="刷新" onClick={refresh}><RefreshCw size={14} /></button><button className="icon-button" aria-label="关闭资源管理器" title="关闭" onClick={close}><X size={16} /></button></header>}
+      {!embedded && <header className="workspace-explorer-header">{picker || <div><strong>资源管理器</strong><small title={root || session.cwd}><bdi>{root || session.cwd}</bdi></small></div>}{canOpenEditor && <button className="icon-button" aria-label={t('editor.open')} title={t('editor.open')} onClick={openEditor}><VscodeLogo /></button>}<button className="icon-button" aria-label="刷新资源管理器" title="刷新" onClick={refresh}><RefreshCw size={14} /></button><button className="icon-button" aria-label="关闭资源管理器" title="关闭" onClick={close}><X size={16} /></button></header>}
       <nav className="workspace-tabs" aria-label="资源管理器视图"><button className={tab === 'files' ? 'active' : ''} aria-pressed={tab === 'files'} onClick={() => selectTab('files')}><Folder size={14} />文件</button><button className={tab === 'git' ? 'active' : ''} aria-pressed={tab === 'git'} onClick={() => selectTab('git')}><FileDiff size={14} />Git diff{!!git?.entries.length && <b>{git.entries.length}</b>}</button></nav>
       {visibleErrors.filter(([scope]) => scope !== 'preview').map(([scope, message]) => <div key={scope} className="workspace-error" role="alert">{message}</div>)}
       {loading && <div className="workspace-loading" role="status"><LoaderCircle size={14} className="spin" />读取中…</div>}
